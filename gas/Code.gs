@@ -13,6 +13,9 @@
  * 6. 発行された「ウェブアプリ URL」をコピーし、Smart Closet アプリのクラウド設定に貼り付けます。
  */
 
+// アプリからコピーする際に、ユーザー固有のシークレットトークンに自動置換されます
+const DEFAULT_SECRET_TOKEN = '__SMART_CLOSET_SECRET_TOKEN__';
+
 const SHEET_NAMES = {
   WEAR_HISTORY: 'wear_history',
   WIFE_NG: 'wife_ng',
@@ -21,50 +24,60 @@ const SHEET_NAMES = {
 };
 
 /**
- * 初回実行用: 必要なシートとヘッダー書式を自動構築
+ * 初回・再設定用: 必要なシートとヘッダー書式を冪等に構築（既存データは消去しません）
  */
 function setupSpreadsheet() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
 
   // 1. wear_history シート
-  const wearSheet = getOrCreateSheet(ss, SHEET_NAMES.WEAR_HISTORY);
-  wearSheet.clear();
   const wearHeaders = ['ID', '日付', 'シーン', 'シャツID', 'シャツ名', 'パンツID', 'パンツ名', 'タイムスタンプ'];
-  wearSheet.getRange(1, 1, 1, wearHeaders.length).setValues([wearHeaders])
-    .setBackground('#1e293b').setFontColor('#f8fafc').setFontWeight('bold');
-  wearSheet.setFrozenRows(1);
+  ensureSheetWithHeaders(ss, SHEET_NAMES.WEAR_HISTORY, wearHeaders, '#1e293b', '#f8fafc');
 
   // 2. wife_ng シート
-  const ngSheet = getOrCreateSheet(ss, SHEET_NAMES.WIFE_NG);
-  ngSheet.clear();
   const ngHeaders = ['シャツID', 'シャツ名', 'パンツID', 'パンツ名', 'NG理由', '登録日時'];
-  ngSheet.getRange(1, 1, 1, ngHeaders.length).setValues([ngHeaders])
-    .setBackground('#881337').setFontColor('#ffe4e6').setFontWeight('bold');
-  ngSheet.setFrozenRows(1);
+  ensureSheetWithHeaders(ss, SHEET_NAMES.WIFE_NG, ngHeaders, '#881337', '#ffe4e6');
 
   // 3. analytics (断捨離・稼働率分析) シート
-  const analyticsSheet = getOrCreateSheet(ss, SHEET_NAMES.ANALYTICS);
-  analyticsSheet.clear();
   const analyticsHeaders = ['アイテムID', 'カテゴリ', 'アイテム名', '累計着用回数', '直近30日着用回数', '最終着用日', '稼働ステータス'];
-  analyticsSheet.getRange(1, 1, 1, analyticsHeaders.length).setValues([analyticsHeaders])
-    .setBackground('#0f172a').setFontColor('#38bdf8').setFontWeight('bold');
-  analyticsSheet.setFrozenRows(1);
+  ensureSheetWithHeaders(ss, SHEET_NAMES.ANALYTICS, analyticsHeaders, '#0f172a', '#38bdf8');
 
   // 4. meta_config シート
-  const metaSheet = getOrCreateSheet(ss, SHEET_NAMES.META_CONFIG);
-  metaSheet.clear();
   const metaHeaders = ['キー', '値', '最終更新日時'];
-  metaSheet.getRange(1, 1, 1, metaHeaders.length).setValues([metaHeaders])
-    .setBackground('#334155').setFontColor('#f1f5f9').setFontWeight('bold');
-  metaSheet.setFrozenRows(1);
+  const metaSheet = ensureSheetWithHeaders(ss, SHEET_NAMES.META_CONFIG, metaHeaders, '#334155', '#f1f5f9');
 
-  // デフォルトのシート1があれば削除
-  const sheet1 = ss.getSheetByName('シート1') || ss.getSheetByName('Sheet1');
-  if (sheet1 && ss.getSheets().length > 1) {
-    ss.deleteSheet(sheet1);
+  // 初期シークレットトークンの登録（未登録かつプレースホルダーでない場合）
+  if (DEFAULT_SECRET_TOKEN && DEFAULT_SECRET_TOKEN !== '__SMART_CLOSET_SECRET_TOKEN__') {
+    const existingToken = readConfigValue(ss, 'secretToken');
+    if (!existingToken) {
+      writeConfigValue(ss, 'secretToken', DEFAULT_SECRET_TOKEN);
+      Logger.log('🔑 シークレットトークンを meta_config に初期登録しました');
+    }
   }
 
-  Logger.log('✅ Smart Closet スプレッドシートの初期セットアップが完了しました！');
+  // デフォルトの余分なシート1があれば削除（データがない場合のみ）
+  const sheet1 = ss.getSheetByName('シート1') || ss.getSheetByName('Sheet1');
+  if (sheet1 && ss.getSheets().length > 1 && sheet1.getLastRow() <= 1) {
+    try {
+      ss.deleteSheet(sheet1);
+    } catch (e) {
+      // 無視
+    }
+  }
+
+  Logger.log('✅ Smart Closet スプレッドシートのセットアップが完了しました（既存データは保護されています）');
+}
+
+/**
+ * 危険: 全データを完全に消去して初期化したい場合のみ手動実行する関数
+ */
+function resetAllDataDangerously() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  [SHEET_NAMES.WEAR_HISTORY, SHEET_NAMES.WIFE_NG, SHEET_NAMES.ANALYTICS, SHEET_NAMES.META_CONFIG].forEach(name => {
+    const s = ss.getSheetByName(name);
+    if (s) s.clear();
+  });
+  setupSpreadsheet();
+  Logger.log('⚠️ 全シートのデータを消去して初期化しました');
 }
 
 /**
@@ -75,9 +88,9 @@ function doGet(e) {
     const ss = SpreadsheetApp.getActiveSpreadsheet();
     const token = e && e.parameter ? e.parameter.token : null;
     
-    // オプションのシークレットトークンチェック
+    // Fail-Closed 認証検証
     if (!validateToken(ss, token)) {
-      return createJsonResponse({ ok: false, error: '認証エラー: トークンが無効です' });
+      return createJsonResponse({ ok: false, error: '認証エラー: トークンが無効または未設定です' });
     }
 
     const wearHistory = readWearHistory(ss);
@@ -97,7 +110,7 @@ function doGet(e) {
 }
 
 /**
- * POST リクエストハンドラ (Push: アプリからの最新データをスプレッドシートに保存)
+ * POST リクエストハンドラ (Push: 端末間競合を防ぐ双方向スマートマージ保存)
  */
 function doPost(e) {
   try {
@@ -109,32 +122,49 @@ function doPost(e) {
     const payload = JSON.parse(e.postData.contents);
     const token = payload.token || null;
 
+    // Fail-Closed 認証検証
     if (!validateToken(ss, token)) {
-      return createJsonResponse({ ok: false, error: '認証エラー: トークンが無効です' });
+      return createJsonResponse({ ok: false, error: '認証エラー: トークンが無効または未設定です' });
     }
 
     const itemNamesMap = payload.itemNamesMap || {};
 
-    // 1. wearHistory の同期
-    if (Array.isArray(payload.wearHistory)) {
-      writeWearHistory(ss, payload.wearHistory, itemNamesMap);
-    }
+    // 1. wearHistory の双方向マージ & Tombstone 削除
+    const existingWearHistory = readWearHistory(ss);
+    const mergedWearHistory = mergeWearHistory(
+      existingWearHistory,
+      Array.isArray(payload.wearHistory) ? payload.wearHistory : [],
+      Array.isArray(payload.deletedWearIds) ? payload.deletedWearIds : [],
+      payload.wearHistoryClearedAt
+    );
+    writeWearHistory(ss, mergedWearHistory, itemNamesMap);
 
-    // 2. wifeNgPairs の同期
-    if (Array.isArray(payload.wifeNgPairs)) {
-      writeWifeNg(ss, payload.wifeNgPairs, itemNamesMap);
-    }
+    // 2. wifeNgPairs の双方向マージ & Tombstone 削除
+    const existingWifeNg = readWifeNg(ss);
+    const mergedWifeNg = mergeWifeNg(
+      existingWifeNg,
+      Array.isArray(payload.wifeNgPairs) ? payload.wifeNgPairs : [],
+      Array.isArray(payload.deletedWifeNgKeys) ? payload.deletedWifeNgKeys : []
+    );
+    writeWifeNg(ss, mergedWifeNg, itemNamesMap);
 
-    // 3. customClosetData の同期
-    if (payload.customClosetData !== undefined) {
+    // 3. customClosetData の保護更新
+    if (payload.clearCustomClosetData === true) {
+      writeCustomData(ss, null);
+    } else if (payload.customClosetData && Array.isArray(payload.customClosetData.items)) {
       writeCustomData(ss, payload.customClosetData);
     }
+    // undefined の場合は既存のカスタムデータを保護（何もしない）
 
     // 4. analytics シートの再集計
-    updateAnalyticsSheet(ss, payload.wearHistory || readWearHistory(ss), itemNamesMap);
+    updateAnalyticsSheet(ss, mergedWearHistory, itemNamesMap);
 
+    // マージ後の最新データを返却（古い状態の端末もこれで最新化される）
     return createJsonResponse({
       ok: true,
+      wearHistory: mergedWearHistory,
+      wifeNgPairs: mergedWifeNg,
+      customClosetData: readCustomData(ss),
       syncedAt: new Date().toISOString()
     });
   } catch (err) {
@@ -143,8 +173,88 @@ function doPost(e) {
 }
 
 // -------------------------------------------------------------
+// マージ・Tombstone ロジック
+// -------------------------------------------------------------
+
+/**
+ * 着用履歴のマージ
+ * - 同一日付または同一IDは timestamp が新しい方を採用
+ * - deletedWearIds に含まれるレコードを除外
+ * - clearedAt がある場合、それ以前の古いレコードを除外
+ */
+function mergeWearHistory(existingList, incomingList, deletedWearIds, clearedAt) {
+  const deletedSet = new Set(deletedWearIds || []);
+  const map = new Map();
+
+  const addRecord = (r) => {
+    if (!r || !r.id || !r.date) return;
+    if (deletedSet.has(r.id)) return;
+    if (clearedAt && r.timestamp && r.timestamp <= clearedAt) return;
+
+    // 日付を主キーとして最新タイムスタンプを優先
+    const key = r.date;
+    const existing = map.get(key);
+    if (!existing || (r.timestamp || 0) >= (existing.timestamp || 0)) {
+      map.set(key, r);
+    }
+  };
+
+  (existingList || []).forEach(addRecord);
+  (incomingList || []).forEach(addRecord);
+
+  return Array.from(map.values()).sort((a, b) => b.date.localeCompare(a.date));
+}
+
+/**
+ * 奥様NGペアのマージ
+ * - 複合キー (shirtId_pantsId) で管理
+ * - deletedWifeNgKeys に含まれるペアを除外
+ * - createdAt が新しい方を採用
+ */
+function mergeWifeNg(existingList, incomingList, deletedKeys) {
+  const deletedSet = new Set(deletedKeys || []);
+  const map = new Map();
+
+  const addPair = (p) => {
+    if (!p || !p.shirtId || !p.pantsId) return;
+    const key = p.shirtId + '_' + p.pantsId;
+    if (deletedSet.has(key)) return;
+
+    const existing = map.get(key);
+    if (!existing) {
+      map.set(key, p);
+    } else {
+      const existingTime = existing.createdAt ? new Date(existing.createdAt).getTime() : 0;
+      const incomingTime = p.createdAt ? new Date(p.createdAt).getTime() : 0;
+      if (incomingTime >= existingTime) {
+        map.set(key, p);
+      }
+    }
+  };
+
+  (existingList || []).forEach(addPair);
+  (incomingList || []).forEach(addPair);
+
+  return Array.from(map.values());
+}
+
+// -------------------------------------------------------------
 // ヘルパー関数群
 // -------------------------------------------------------------
+
+function ensureSheetWithHeaders(ss, name, headers, bgColor, fontColor) {
+  let sheet = ss.getSheetByName(name);
+  if (!sheet) {
+    sheet = ss.insertSheet(name);
+  }
+
+  // 1行目のヘッダーを設定（既存データ行は消去しない）
+  sheet.getRange(1, 1, 1, headers.length).setValues([headers])
+    .setBackground(bgColor).setFontColor(fontColor).setFontWeight('bold');
+  sheet.setFrozenRows(1);
+
+  return sheet;
+}
 
 function getOrCreateSheet(ss, name) {
   let sheet = ss.getSheetByName(name);
@@ -159,17 +269,55 @@ function createJsonResponse(obj) {
     .setMimeType(ContentService.MimeType.JSON);
 }
 
+/**
+ * Fail-Closed 認証:
+ * トークン未指定、または meta_config の secretToken が未設定/不一致の場合はすべて拒否
+ */
 function validateToken(ss, token) {
+  if (!token || typeof token !== 'string' || token.trim() === '') {
+    return false;
+  }
+
+  const storedToken = readConfigValue(ss, 'secretToken');
+  if (!storedToken || storedToken === '__SMART_CLOSET_SECRET_TOKEN__') {
+    return false; // Fail-Closed
+  }
+
+  return storedToken === token.trim();
+}
+
+function readConfigValue(ss, key) {
   const metaSheet = ss.getSheetByName(SHEET_NAMES.META_CONFIG);
-  if (!metaSheet || metaSheet.getLastRow() < 2) return true; // 未設定ならパス
-  
+  if (!metaSheet || metaSheet.getLastRow() < 2) return null;
   const values = metaSheet.getRange(2, 1, metaSheet.getLastRow() - 1, 2).getValues();
   for (let i = 0; i < values.length; i++) {
-    if (values[i][0] === 'secretToken' && values[i][1]) {
-      return values[i][1] === token;
+    if (values[i][0] === key) {
+      return String(values[i][1] || '').trim();
     }
   }
-  return true;
+  return null;
+}
+
+function writeConfigValue(ss, key, val) {
+  const sheet = getOrCreateSheet(ss, SHEET_NAMES.META_CONFIG);
+  const now = new Date().toISOString();
+  let foundRow = -1;
+
+  if (sheet.getLastRow() > 1) {
+    const values = sheet.getRange(2, 1, sheet.getLastRow() - 1, 1).getValues();
+    for (let i = 0; i < values.length; i++) {
+      if (values[i][0] === key) {
+        foundRow = i + 2;
+        break;
+      }
+    }
+  }
+
+  if (foundRow > 0) {
+    sheet.getRange(foundRow, 2, 1, 2).setValues([[val, now]]);
+  } else {
+    sheet.appendRow([key, val, now]);
+  }
 }
 
 function readWearHistory(ss) {
@@ -253,42 +401,18 @@ function writeWifeNg(ss, list, itemNamesMap) {
 }
 
 function readCustomData(ss) {
-  const sheet = ss.getSheetByName(SHEET_NAMES.META_CONFIG);
-  if (!sheet || sheet.getLastRow() < 2) return null;
-  const values = sheet.getRange(2, 1, sheet.getLastRow() - 1, 2).getValues();
-  for (let i = 0; i < values.length; i++) {
-    if (values[i][0] === 'customClosetData' && values[i][1]) {
-      try {
-        return JSON.parse(values[i][1]);
-      } catch (e) {
-        return null;
-      }
-    }
+  const val = readConfigValue(ss, 'customClosetData');
+  if (!val) return null;
+  try {
+    return JSON.parse(val);
+  } catch (e) {
+    return null;
   }
-  return null;
 }
 
 function writeCustomData(ss, data) {
-  const sheet = getOrCreateSheet(ss, SHEET_NAMES.META_CONFIG);
-  const now = new Date().toISOString();
   const jsonStr = data ? JSON.stringify(data) : '';
-
-  let foundRow = -1;
-  if (sheet.getLastRow() > 1) {
-    const values = sheet.getRange(2, 1, sheet.getLastRow() - 1, 1).getValues();
-    for (let i = 0; i < values.length; i++) {
-      if (values[i][0] === 'customClosetData') {
-        foundRow = i + 2;
-        break;
-      }
-    }
-  }
-
-  if (foundRow > 0) {
-    sheet.getRange(foundRow, 2, 1, 2).setValues([[jsonStr, now]]);
-  } else {
-    sheet.appendRow(['customClosetData', jsonStr, now]);
-  }
+  writeConfigValue(ss, 'customClosetData', jsonStr);
 }
 
 /**
@@ -306,23 +430,20 @@ function updateAnalyticsSheet(ss, wearHistory, itemNamesMap) {
   const sixtyDaysAgo = new Date(now.getTime() - (60 * 24 * 60 * 60 * 1000));
   const sixtyDaysStr = formatDateString(sixtyDaysAgo);
 
-  // アイテムごとの集計マップ
   const stats = {};
   
-  // 登録されているアイテムIDを網羅
-  Object.keys(itemNamesMap).forEach(id => {
+  Object.keys(itemNamesMap || {}).forEach(id => {
     const category = id.startsWith('S') ? 'シャツ' : 'パンツ';
     stats[id] = {
       id: id,
       category: category,
-      name: itemNamesMap[id],
+      name: itemNamesMap[id] || '',
       totalCount: 0,
       recentCount: 0,
       lastDate: '-'
     };
   });
 
-  // 着用履歴から集計
   (wearHistory || []).forEach(record => {
     [record.shirtId, record.pantsId].forEach(id => {
       if (!id) return;
@@ -330,7 +451,7 @@ function updateAnalyticsSheet(ss, wearHistory, itemNamesMap) {
         stats[id] = {
           id: id,
           category: id.startsWith('S') ? 'シャツ' : 'パンツ',
-          name: itemNamesMap[id] || '',
+          name: (itemNamesMap && itemNamesMap[id]) || '',
           totalCount: 0,
           recentCount: 0,
           lastDate: '-'

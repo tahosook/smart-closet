@@ -15,7 +15,7 @@ import {
   ShieldCheck,
   Sparkles,
 } from 'lucide-react';
-import { useClosetStore } from '../hooks/useClosetStore';
+import { useClosetStore, generateSecretToken } from '../hooks/useClosetStore';
 import { GAS_SCRIPT_TEMPLATE } from '../data/gasScriptTemplate';
 
 interface GasSyncModalProps {
@@ -34,7 +34,7 @@ export const GasSyncModal: React.FC<GasSyncModalProps> = ({ isOpen, onClose }) =
   } = useClosetStore();
 
   const [urlInput, setUrlInput] = useState(gasConfig.webAppUrl);
-  const [tokenInput, setTokenInput] = useState(gasConfig.secretToken || '');
+  const [tokenInput, setTokenInput] = useState(() => gasConfig.secretToken || generateSecretToken());
   const [autoSyncInput, setAutoSyncInput] = useState(gasConfig.autoSync);
   const [copiedScript, setCopiedScript] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
@@ -43,11 +43,20 @@ export const GasSyncModal: React.FC<GasSyncModalProps> = ({ isOpen, onClose }) =
 
   if (!isOpen) return null;
 
+  const handleRegenerateToken = () => {
+    const newToken = generateSecretToken();
+    setTokenInput(newToken);
+  };
+
   const handleSaveConfig = (e: React.FormEvent) => {
     e.preventDefault();
+    const finalToken = tokenInput.trim() || generateSecretToken();
+    if (!tokenInput.trim()) {
+      setTokenInput(finalToken);
+    }
     updateGasConfig({
       webAppUrl: urlInput.trim(),
-      secretToken: tokenInput.trim(),
+      secretToken: finalToken,
       autoSync: autoSyncInput,
     });
     setSaveSuccess(true);
@@ -56,7 +65,15 @@ export const GasSyncModal: React.FC<GasSyncModalProps> = ({ isOpen, onClose }) =
 
   const handleCopyScript = async () => {
     try {
-      await navigator.clipboard.writeText(GAS_SCRIPT_TEMPLATE);
+      const finalToken = tokenInput.trim() || generateSecretToken();
+      if (!tokenInput.trim()) {
+        setTokenInput(finalToken);
+      }
+      const customizedScript = GAS_SCRIPT_TEMPLATE.replace(
+        '__SMART_CLOSET_SECRET_TOKEN__',
+        finalToken
+      );
+      await navigator.clipboard.writeText(customizedScript);
       setCopiedScript(true);
       setTimeout(() => setCopiedScript(false), 2500);
     } catch (err) {
@@ -217,19 +234,29 @@ export const GasSyncModal: React.FC<GasSyncModalProps> = ({ isOpen, onClose }) =
 
             <div>
               <label className="block text-xs font-bold text-slate-300 mb-1 flex items-center justify-between">
-                <span>シークレット合言葉（任意・未設定可）</span>
-                <span className="text-[10px] text-slate-500">セキュリティ強化用</span>
+                <span>シークレット合言葉（必須・自動設定済）</span>
+                <button
+                  type="button"
+                  onClick={handleRegenerateToken}
+                  className="text-[10px] text-blue-400 hover:text-blue-300 underline font-normal"
+                >
+                  再生成
+                </button>
               </label>
               <div className="relative">
                 <input
                   type="text"
+                  required
                   value={tokenInput}
                   onChange={(e) => setTokenInput(e.target.value)}
-                  placeholder="任意の英数字（例: my-secret-pass-2026）"
-                  className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
+                  placeholder="英数字トークン（例: sc_abcdef123456）"
+                  className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 font-mono"
                 />
                 <Key className="w-3.5 h-3.5 text-slate-500 absolute right-3 top-2.5" />
               </div>
+              <p className="text-[10px] text-slate-400 mt-1">
+                「GASコードをコピー」時にこの合言葉が自動でスクリプトに組み込まれます。
+              </p>
             </div>
 
             <div className="flex items-center justify-between pt-1">

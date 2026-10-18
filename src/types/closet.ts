@@ -57,12 +57,23 @@ export interface GasSyncConfig {
   lastSyncedAt?: string;
 }
 
+export interface SyncTombstones {
+  deletedWearIds: string[];
+  wearHistoryClearedAt?: number;
+  deletedWifeNgKeys: string[];
+  clearCustomClosetData?: boolean;
+}
+
 export interface GasSyncPayload {
   action: 'push' | 'pull';
   token?: string;
   wearHistory?: WearRecord[];
   wifeNgPairs?: WifeNgPair[];
-  customClosetData?: ClosetData | null;
+  customClosetData?: ClosetData;
+  clearCustomClosetData?: boolean;
+  deletedWearIds?: string[];
+  wearHistoryClearedAt?: number;
+  deletedWifeNgKeys?: string[];
   itemNamesMap?: Record<string, string>;
 }
 
@@ -74,4 +85,5 @@ export interface GasSyncResponse {
   customClosetData?: ClosetData | null;
   syncedAt?: string;
 }
+
 

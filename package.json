@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "sync-images": "bash scripts/sync-images.sh",
     "validate-data": "node scripts/validate-closet.mjs",
-    "check": "npm run validate-data && npm run build"
+    "test-sync": "node scripts/test-gas-sync.mjs",
+    "check": "npm run validate-data && npm run test-sync && npm run build"
   },
   "dependencies": {
     "lucide-react": "^0.453.0",

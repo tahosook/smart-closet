@@ -10,6 +10,7 @@ import {
   GasSyncConfig,
   GasSyncPayload,
   GasSyncResponse,
+  SyncTombstones,
 } from '../types/closet';
 import defaultClosetData from '../data/closet.json';
 
@@ -19,6 +20,7 @@ const STORAGE_KEYS = {
   WIFE_NG: 'smart_closet_wife_ng',
   GAS_CONFIG: 'smart_closet_gas_config',
   SYNC_DIRTY: 'smart_closet_sync_dirty',
+  SYNC_TOMBSTONES: 'smart_closet_sync_tombstones',
 };
 
 function getTodayString(): string {
@@ -36,6 +38,15 @@ function getYesterdayString(): string {
   const month = String(d.getMonth() + 1).padStart(2, '0');
   const day = String(d.getDate()).padStart(2, '0');
   return `${year}-${month}-${day}`;
+}
+
+export function generateSecretToken(): string {
+  const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
+  let result = 'sc_';
+  for (let i = 0; i < 16; i++) {
+    result += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return result;
 }
 
 export interface ClosetStoreContextType {
@@ -67,7 +78,7 @@ export interface ClosetStoreContextType {
   resetToDefaultData: () => void;
   updateGasConfig: (newConfig: Partial<GasSyncConfig>) => void;
   pullFromGas: () => Promise<boolean>;
-  pushToGas: (manual?: boolean) => Promise<boolean>;
+  pushToGas: () => Promise<boolean>;
 }
 
 const ClosetContext = createContext<ClosetStoreContextType | null>(null);
@@ -118,20 +129,37 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     try {
       const saved = localStorage.getItem(STORAGE_KEYS.GAS_CONFIG);
       if (saved) {
-        return JSON.parse(saved);
+        const parsed = JSON.parse(saved);
+        if (parsed && typeof parsed === 'object') {
+          return {
+            ...parsed,
+            secretToken: parsed.secretToken || generateSecretToken(),
+          };
+        }
       }
     } catch (e) {
       console.error('Failed to parse GAS config:', e);
     }
     return {
       webAppUrl: '',
-      secretToken: '',
+      secretToken: generateSecretToken(),
       autoSync: true,
       lastSyncedAt: undefined,
     };
   });
 
-  // 5. Sync runtime status
+  // 5. Tombstones for deleted records and custom data reset
+  const [tombstones, setTombstones] = useState<SyncTombstones>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEYS.SYNC_TOMBSTONES);
+      if (saved) return JSON.parse(saved);
+    } catch (e) {
+      console.error('Failed to parse tombstones:', e);
+    }
+    return { deletedWearIds: [], deletedWifeNgKeys: [] };
+  });
+
+  // 6. Sync runtime status
   const [syncStatus, setSyncStatus] = useState<SyncStatus>(() => {
     return gasConfig.webAppUrl ? 'idle' : 'unconfigured';
   });
@@ -143,10 +171,11 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     wearHistory,
     wifeNgPairs,
     gasConfig,
+    tombstones,
   });
   useEffect(() => {
-    stateRef.current = { closetData, wearHistory, wifeNgPairs, gasConfig };
-  }, [closetData, wearHistory, wifeNgPairs, gasConfig]);
+    stateRef.current = { closetData, wearHistory, wifeNgPairs, gasConfig, tombstones };
+  }, [closetData, wearHistory, wifeNgPairs, gasConfig, tombstones]);
 
   // Sync to localStorage
   useEffect(() => {
@@ -160,6 +189,10 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   useEffect(() => {
     localStorage.setItem(STORAGE_KEYS.GAS_CONFIG, JSON.stringify(gasConfig));
   }, [gasConfig]);
+
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEYS.SYNC_TOMBSTONES, JSON.stringify(tombstones));
+  }, [tombstones]);
 
   // Merged ClosetData incorporating wifeNgPairs
   const mergedClosetData = useMemo<ClosetData>(() => {
@@ -200,7 +233,6 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     };
   }, [closetData, wifeNgPairs]);
 
-  // Separate shirts and pants
   const shirts = useMemo(
     () => closetData.items.filter((item) => item.category === 'shirt'),
     [closetData]
@@ -216,7 +248,6 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     return map;
   }, [closetData]);
 
-  // Name map for spreadsheet readability
   const itemNamesMap = useMemo(() => {
     const map: Record<string, string> = {};
     closetData.items.forEach((item) => {
@@ -225,7 +256,6 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     return map;
   }, [closetData]);
 
-  // Today and Yesterday records
   const todayStr = getTodayString();
   const yesterdayStr = getYesterdayString();
 
@@ -251,7 +281,6 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     return ids;
   }, [wearHistory, yesterdayStr, todayStr]);
 
-  // Check if a shirt and pants pair is NG
   const isNgPair = useCallback(
     (shirtId: string, pantsId: string): { isNg: boolean; reason: string; isWifeNg: boolean } => {
       const wifeNg = wifeNgPairs.find(
@@ -276,7 +305,6 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     [itemMap, wifeNgPairs]
   );
 
-  // Generate affinity reason text
   const getAffinityReason = useCallback(
     (shirt: ClosetItem, pantsItem: ClosetItem, scene: SceneMode): string => {
       if (scene === 'office') {
@@ -303,7 +331,6 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     []
   );
 
-  // Get recommendations and NG items for a shirt
   const getRecommendationsForShirt = useCallback(
     (shirtId: string, scene: SceneMode) => {
       const shirt = itemMap.get(shirtId);
@@ -326,7 +353,6 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           return;
         }
 
-        // Office TPO rule: Exclude sweatpants/joggers (dressScore < 3.0)
         if (scene === 'office' && p.dressScore < 3.0) {
           ngList.push({
             pants: p,
@@ -398,68 +424,97 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   // GAS クラウド同期ロジック (Push / Pull)
   // -------------------------------------------------------------
 
-  const pushToGas = useCallback(
-    async (): Promise<boolean> => {
-      const { webAppUrl, secretToken } = stateRef.current.gasConfig;
-      if (!webAppUrl || !webAppUrl.startsWith('http')) {
-        setSyncStatus('unconfigured');
-        return false;
+  const pushToGas = useCallback(async (): Promise<boolean> => {
+    const { webAppUrl, secretToken } = stateRef.current.gasConfig;
+    if (!webAppUrl || !webAppUrl.startsWith('http')) {
+      setSyncStatus('unconfigured');
+      return false;
+    }
+
+    setSyncStatus('syncing');
+    setLastSyncError(null);
+
+    const hasCustomData = localStorage.getItem(STORAGE_KEYS.CUSTOM_DATA) !== null;
+    const currentTombstones = stateRef.current.tombstones;
+
+    const payload: GasSyncPayload = {
+      action: 'push',
+      token: secretToken || undefined,
+      wearHistory: stateRef.current.wearHistory,
+      wifeNgPairs: stateRef.current.wifeNgPairs,
+      customClosetData: hasCustomData ? stateRef.current.closetData : undefined,
+      clearCustomClosetData: currentTombstones.clearCustomClosetData,
+      deletedWearIds: currentTombstones.deletedWearIds,
+      wearHistoryClearedAt: currentTombstones.wearHistoryClearedAt,
+      deletedWifeNgKeys: currentTombstones.deletedWifeNgKeys,
+      itemNamesMap,
+    };
+
+    try {
+      const res = await fetch(webAppUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'text/plain;charset=utf-8',
+        },
+        body: JSON.stringify(payload),
+        redirect: 'follow',
+      });
+
+      if (!res.ok) {
+        throw new Error(`HTTP error ${res.status}`);
       }
 
-      setSyncStatus('syncing');
-      setLastSyncError(null);
-
-      const hasCustomData = localStorage.getItem(STORAGE_KEYS.CUSTOM_DATA) !== null;
-      const payload: GasSyncPayload = {
-        action: 'push',
-        token: secretToken || undefined,
-        wearHistory: stateRef.current.wearHistory,
-        wifeNgPairs: stateRef.current.wifeNgPairs,
-        customClosetData: hasCustomData ? stateRef.current.closetData : null,
-        itemNamesMap,
-      };
-
-      try {
-        // Simple Request (text/plain) to avoid CORS preflight options rejection by GAS
-        const res = await fetch(webAppUrl, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'text/plain;charset=utf-8',
-          },
-          body: JSON.stringify(payload),
-          redirect: 'follow',
-        });
-
-        if (!res.ok) {
-          throw new Error(`HTTP error ${res.status}`);
-        }
-
-        const data: GasSyncResponse = await res.json();
-        if (!data.ok) {
-          throw new Error(data.error || 'GASからのエラーレスポンス');
-        }
-
-        const syncedAt = data.syncedAt || new Date().toISOString();
-        setGasConfig((prev) => ({ ...prev, lastSyncedAt: syncedAt }));
-        setSyncStatus('synced');
-        localStorage.removeItem(STORAGE_KEYS.SYNC_DIRTY);
-        return true;
-      } catch (err: any) {
-        console.warn('GAS Push failed (will retry on next connection):', err);
-        setLastSyncError(err?.message || '同期通信エラー');
-        setSyncStatus(navigator.onLine ? 'error' : 'offline_pending');
-        localStorage.setItem(STORAGE_KEYS.SYNC_DIRTY, 'true');
-        return false;
+      const data: GasSyncResponse = await res.json();
+      if (!data.ok) {
+        throw new Error(data.error || 'GASからのエラーレスポンス');
       }
-    },
-    [itemNamesMap]
-  );
+
+      // GAS 側でマージされた最新データを取り込んでローカル状態も同期
+      if (Array.isArray(data.wearHistory)) {
+        setWearHistory(data.wearHistory);
+        localStorage.setItem(STORAGE_KEYS.WEAR_HISTORY, JSON.stringify(data.wearHistory));
+      }
+      if (Array.isArray(data.wifeNgPairs)) {
+        setWifeNgPairs(data.wifeNgPairs);
+        localStorage.setItem(STORAGE_KEYS.WIFE_NG, JSON.stringify(data.wifeNgPairs));
+      }
+      if (data.customClosetData && Array.isArray(data.customClosetData.items)) {
+        setClosetData(data.customClosetData);
+        localStorage.setItem(STORAGE_KEYS.CUSTOM_DATA, JSON.stringify(data.customClosetData));
+      } else if (currentTombstones.clearCustomClosetData) {
+        setClosetData(defaultClosetData as ClosetData);
+        localStorage.removeItem(STORAGE_KEYS.CUSTOM_DATA);
+      }
+
+      // 送信完了した Tombstones をクリア
+      setTombstones({ deletedWearIds: [], deletedWifeNgKeys: [] });
+      localStorage.removeItem(STORAGE_KEYS.SYNC_TOMBSTONES);
+
+      const syncedAt = data.syncedAt || new Date().toISOString();
+      setGasConfig((prev) => ({ ...prev, lastSyncedAt: syncedAt }));
+      setSyncStatus('synced');
+      localStorage.removeItem(STORAGE_KEYS.SYNC_DIRTY);
+      return true;
+    } catch (err: any) {
+      console.warn('GAS Push failed (will retry on next connection):', err);
+      setLastSyncError(err?.message || '同期通信エラー');
+      setSyncStatus(navigator.onLine ? 'error' : 'offline_pending');
+      localStorage.setItem(STORAGE_KEYS.SYNC_DIRTY, 'true');
+      return false;
+    }
+  }, [itemNamesMap]);
 
   const pullFromGas = useCallback(async (): Promise<boolean> => {
     const { webAppUrl, secretToken } = stateRef.current.gasConfig;
     if (!webAppUrl || !webAppUrl.startsWith('http')) {
       setSyncStatus('unconfigured');
       return false;
+    }
+
+    // ローカルに未送信の変更がある場合、Pull すると上書き消失するため Push (双方向マージ) に切り替える
+    const isDirty = localStorage.getItem(STORAGE_KEYS.SYNC_DIRTY) === 'true';
+    if (isDirty) {
+      return pushToGas();
     }
 
     setSyncStatus('syncing');
@@ -486,19 +541,16 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         throw new Error(data.error || 'GASからのエラーレスポンス');
       }
 
-      // Merge wearHistory from GAS
       if (Array.isArray(data.wearHistory)) {
         setWearHistory(data.wearHistory);
         localStorage.setItem(STORAGE_KEYS.WEAR_HISTORY, JSON.stringify(data.wearHistory));
       }
 
-      // Merge wifeNgPairs from GAS
       if (Array.isArray(data.wifeNgPairs)) {
         setWifeNgPairs(data.wifeNgPairs);
         localStorage.setItem(STORAGE_KEYS.WIFE_NG, JSON.stringify(data.wifeNgPairs));
       }
 
-      // Custom data if provided
       if (data.customClosetData && Array.isArray(data.customClosetData.items)) {
         setClosetData(data.customClosetData);
         localStorage.setItem(STORAGE_KEYS.CUSTOM_DATA, JSON.stringify(data.customClosetData));
@@ -515,36 +567,40 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       setSyncStatus(navigator.onLine ? 'error' : 'offline_pending');
       return false;
     }
-  }, []);
+  }, [pushToGas]);
 
   const triggerBackgroundPush = useCallback(() => {
+    localStorage.setItem(STORAGE_KEYS.SYNC_DIRTY, 'true');
     if (stateRef.current.gasConfig.webAppUrl && stateRef.current.gasConfig.autoSync) {
       setTimeout(() => {
         pushToGas();
       }, 50);
-    } else {
-      localStorage.setItem(STORAGE_KEYS.SYNC_DIRTY, 'true');
     }
   }, [pushToGas]);
 
-  // Initial sync on app start and reconnect listener
+  // Initial sync on app start and reconnect listener (with strict autoSync check)
   useEffect(() => {
     if (!gasConfig.webAppUrl) {
       setSyncStatus('unconfigured');
       return;
     }
 
-    const isDirty = localStorage.getItem(STORAGE_KEYS.SYNC_DIRTY) === 'true';
-    if (isDirty) {
-      pushToGas();
-    } else {
-      pullFromGas();
+    if (gasConfig.autoSync) {
+      const isDirty = localStorage.getItem(STORAGE_KEYS.SYNC_DIRTY) === 'true';
+      if (isDirty) {
+        pushToGas();
+      } else {
+        pullFromGas();
+      }
     }
 
     const handleOnline = () => {
-      const stillDirty = localStorage.getItem(STORAGE_KEYS.SYNC_DIRTY) === 'true';
-      if (stillDirty && stateRef.current.gasConfig.webAppUrl) {
-        pushToGas();
+      const cfg = stateRef.current.gasConfig;
+      if (cfg.webAppUrl && cfg.autoSync) {
+        const stillDirty = localStorage.getItem(STORAGE_KEYS.SYNC_DIRTY) === 'true';
+        if (stillDirty) {
+          pushToGas();
+        }
       }
     };
 
@@ -552,7 +608,7 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     return () => {
       window.removeEventListener('online', handleOnline);
     };
-  }, [gasConfig.webAppUrl, pushToGas, pullFromGas]);
+  }, [gasConfig.webAppUrl, gasConfig.autoSync, pushToGas, pullFromGas]);
 
   // Actions
   const recordWear = useCallback(
@@ -567,8 +623,7 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           scene,
           timestamp: Date.now(),
         };
-        const updated = [newRecord, ...filtered].sort((a, b) => b.date.localeCompare(a.date));
-        return updated;
+        return [newRecord, ...filtered].sort((a, b) => b.date.localeCompare(a.date));
       });
       triggerBackgroundPush();
     },
@@ -586,18 +641,29 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const removeWearRecord = useCallback(
     (id: string) => {
       setWearHistory((prev) => prev.filter((r) => r.id !== id));
+      setTombstones((prev) => ({
+        ...prev,
+        deletedWearIds: Array.from(new Set([...prev.deletedWearIds, id])),
+      }));
       triggerBackgroundPush();
     },
     [triggerBackgroundPush]
   );
 
   const clearAllWearHistory = useCallback(() => {
+    const now = Date.now();
     setWearHistory([]);
+    setTombstones((prev) => ({
+      ...prev,
+      wearHistoryClearedAt: now,
+      deletedWearIds: [],
+    }));
     triggerBackgroundPush();
   }, [triggerBackgroundPush]);
 
   const registerWifeNg = useCallback(
     (shirtId: string, pantsId: string, customReason = '🚨 奥様からNG指定') => {
+      const key = `${shirtId}_${pantsId}`;
       setWifeNgPairs((prev) => {
         const exists = prev.some((p) => p.shirtId === shirtId && p.pantsId === pantsId);
         if (exists) return prev;
@@ -611,6 +677,10 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           ...prev,
         ];
       });
+      setTombstones((prev) => ({
+        ...prev,
+        deletedWifeNgKeys: prev.deletedWifeNgKeys.filter((k) => k !== key),
+      }));
       triggerBackgroundPush();
     },
     [triggerBackgroundPush]
@@ -618,9 +688,14 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const removeWifeNg = useCallback(
     (shirtId: string, pantsId: string) => {
+      const key = `${shirtId}_${pantsId}`;
       setWifeNgPairs((prev) =>
         prev.filter((p) => !(p.shirtId === shirtId && p.pantsId === pantsId))
       );
+      setTombstones((prev) => ({
+        ...prev,
+        deletedWifeNgKeys: Array.from(new Set([...prev.deletedWifeNgKeys, key])),
+      }));
       triggerBackgroundPush();
     },
     [triggerBackgroundPush]
@@ -635,6 +710,7 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         }
         localStorage.setItem(STORAGE_KEYS.CUSTOM_DATA, jsonString);
         setClosetData(parsed);
+        setTombstones((prev) => ({ ...prev, clearCustomClosetData: false }));
         triggerBackgroundPush();
         return { success: true };
       } catch (e: any) {
@@ -647,6 +723,7 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const resetToDefaultData = useCallback(() => {
     localStorage.removeItem(STORAGE_KEYS.CUSTOM_DATA);
     setClosetData(defaultClosetData as ClosetData);
+    setTombstones((prev) => ({ ...prev, clearCustomClosetData: true }));
     triggerBackgroundPush();
   }, [triggerBackgroundPush]);
 
