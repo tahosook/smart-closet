@@ -11,7 +11,8 @@ import {
  */
 export function pruneCompletedTombstones(
   current: SyncTombstones,
-  sent: SyncTombstones
+  sent: SyncTombstones,
+  hasInFlightCustomDataChange = false
 ): SyncTombstones {
   const nextDeletedWearMap: Record<string, number> = {};
   for (const [id, currentTs] of Object.entries(current.deletedWearMap || {})) {
@@ -40,12 +41,20 @@ export function pruneCompletedTombstones(
     }
   }
 
-  let nextClearCustomClosetData: boolean | undefined = undefined;
-  if (current.clearCustomClosetData) {
-    if (!sent.clearCustomClosetData) {
-      nextClearCustomClosetData = true;
+  let nextCustomClosetDataClearedAt: number | undefined = undefined;
+  if (current.clearCustomClosetData || current.customClosetDataClearedAt !== undefined) {
+    const currentTs = current.customClosetDataClearedAt;
+    const sentTs = sent.customClosetDataClearedAt;
+    if (
+      hasInFlightCustomDataChange ||
+      !sent.clearCustomClosetData ||
+      (currentTs !== undefined && (sentTs === undefined || currentTs > sentTs))
+    ) {
+      nextCustomClosetDataClearedAt = currentTs ?? (current.customClosetDataClearedAt || Date.now());
     }
   }
+  const nextClearCustomClosetData =
+    nextCustomClosetDataClearedAt !== undefined ? true : undefined;
 
   return {
     deletedWearMap: nextDeletedWearMap,
@@ -54,6 +63,7 @@ export function pruneCompletedTombstones(
     deletedWifeNgMap: nextDeletedWifeNgMap,
     deletedWifeNgKeys: Object.keys(nextDeletedWifeNgMap),
     clearCustomClosetData: nextClearCustomClosetData,
+    customClosetDataClearedAt: nextCustomClosetDataClearedAt,
   };
 }
 
@@ -64,7 +74,7 @@ export function hasRemainingTombstones(tombstones: SyncTombstones): boolean {
   if (tombstones.deletedWearMap && Object.keys(tombstones.deletedWearMap).length > 0) return true;
   if (tombstones.deletedWifeNgMap && Object.keys(tombstones.deletedWifeNgMap).length > 0) return true;
   if (tombstones.wearHistoryClearedAt !== undefined) return true;
-  if (Boolean(tombstones.clearCustomClosetData)) return true;
+  if (Boolean(tombstones.clearCustomClosetData) || tombstones.customClosetDataClearedAt !== undefined) return true;
   return false;
 }
 
@@ -103,7 +113,11 @@ export function reconcileSyncResponse({
   hasInFlightCustomDataChange = false,
   defaultClosetData,
 }: ReconcileParams): ReconcileResult {
-  const remainingTombstones = pruneCompletedTombstones(currentLocal.tombstones, sentTombstones);
+  const remainingTombstones = pruneCompletedTombstones(
+    currentLocal.tombstones,
+    sentTombstones,
+    hasInFlightCustomDataChange
+  );
   const remainingTombstonesPresent = hasRemainingTombstones(remainingTombstones);
 
   // 通信中にローカル操作がなく、未送信 Tombstone も残っていない場合はサーバーレスポンスをそのまま採用
@@ -114,7 +128,7 @@ export function reconcileSyncResponse({
     if (serverResponse.customClosetData && Array.isArray(serverResponse.customClosetData.items)) {
       closetData = serverResponse.customClosetData;
       isCustomDataPresent = true;
-    } else if (sentTombstones.clearCustomClosetData) {
+    } else if (sentTombstones.clearCustomClosetData || sentTombstones.customClosetDataClearedAt !== undefined) {
       closetData = defaultClosetData;
       isCustomDataPresent = false;
     }
@@ -216,13 +230,13 @@ export function reconcileSyncResponse({
     // 通信中にローカルでカスタムデータ操作があった場合はローカルを優先
     closetData = currentLocal.closetData;
     isCustomDataPresent = currentLocal.hasCustomData;
-  } else if (remainingTombstones.clearCustomClosetData) {
+  } else if (remainingTombstones.clearCustomClosetData || remainingTombstones.customClosetDataClearedAt !== undefined) {
     closetData = defaultClosetData;
     isCustomDataPresent = false;
   } else if (serverResponse.customClosetData && Array.isArray(serverResponse.customClosetData.items)) {
     closetData = serverResponse.customClosetData;
     isCustomDataPresent = true;
-  } else if (sentTombstones.clearCustomClosetData && !serverResponse.customClosetData) {
+  } else if ((sentTombstones.clearCustomClosetData || sentTombstones.customClosetDataClearedAt !== undefined) && !serverResponse.customClosetData) {
     closetData = defaultClosetData;
     isCustomDataPresent = false;
   }

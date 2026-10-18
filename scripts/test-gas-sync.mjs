@@ -541,21 +541,24 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
     deletedWifeNgMap: { S1_P1: 1000 },
     wearHistoryClearedAt: 1000,
     clearCustomClosetData: true,
+    customClosetDataClearedAt: 1000,
   };
   const currentTombstones = {
     deletedWearMap: { rec_sent: 1000, rec_inflight: 1500 },
     deletedWifeNgMap: { S1_P1: 1000, S2_P2: 1600 },
     wearHistoryClearedAt: 1000,
     clearCustomClosetData: true,
+    customClosetDataClearedAt: 1500,
   };
 
-  const pruned = pruneCompletedTombstones(currentTombstones, sentTombstones);
+  const pruned = pruneCompletedTombstones(currentTombstones, sentTombstones, true);
   assert.equal(pruned.deletedWearMap.rec_sent, undefined, 'Sent wear tombstone must be pruned');
   assert.equal(pruned.deletedWearMap.rec_inflight, 1500, 'In-flight wear tombstone must be preserved');
   assert.equal(pruned.deletedWifeNgMap.S1_P1, undefined, 'Sent wife NG tombstone must be pruned');
   assert.equal(pruned.deletedWifeNgMap.S2_P2, 1600, 'In-flight wife NG tombstone must be preserved');
   assert.equal(pruned.wearHistoryClearedAt, undefined, 'Sent clearedAt must be pruned');
-  assert.equal(pruned.clearCustomClosetData, undefined, 'Sent clearCustomClosetData must be pruned');
+  assert.equal(pruned.clearCustomClosetData, true, 'In-flight clearCustomClosetData must be preserved');
+  assert.equal(pruned.customClosetDataClearedAt, 1500, 'In-flight customClosetDataClearedAt must be preserved');
   assert.equal(hasRemainingTombstones(pruned), true, 'Remaining tombstones must be detected');
 
   // 2. Push 通信中の新規削除 (Tombstone 保護) & 新規着用記録の保護
@@ -754,7 +757,93 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
   const retryResult = JSON.parse(
     vm.runInContext(`doPost({ postData: { contents: ${JSON.stringify(JSON.stringify(conflictPayload))} } })`, concurrentContext).getContent()
   );
-  assert.equal(retryResult.ok, true);
+  // 5. カスタムデータ削除指示 (clearCustomClosetData) の通信中再リセット競合テスト (P1第4回レビュー対応)
+  const t_custom_reset1 = baseTime + 5000;
+  const t_custom_reset2 = baseTime + 6000;
+
+  // サーバーにカスタムデータを登録
+  const customInitPayload = {
+    action: 'push',
+    token: 'sync-token-111',
+    customClosetData: {
+      items: [{ id: 'P99', name: '特注パンツ', category: 'pants', dressScore: 4.0, comfortScore: 4.0 }],
+    },
+  };
+  const customInitRes = JSON.parse(
+    vm.runInContext(`doPost({ postData: { contents: ${JSON.stringify(JSON.stringify(customInitPayload))} } })`, context).getContent()
+  );
+  assert.equal(customInitRes.ok, true);
+  assert.equal(customInitRes.customClosetData.items.length, 1);
+
+  // クライアントで1回目のリセットを実行し、Push #1 を開始
+  const pushCustom1SentTombstones = {
+    deletedWearMap: {},
+    deletedWifeNgMap: {},
+    clearCustomClosetData: true,
+    customClosetDataClearedAt: t_custom_reset1,
+  };
+
+  // Push #1 の通信中にユーザーが再度リセット (またはインポート後に再リセット)
+  const localStateDuringPushCustom1 = {
+    wearHistory: [],
+    wifeNgPairs: [],
+    closetData: defaultClosetMock,
+    hasCustomData: false,
+    tombstones: {
+      deletedWearMap: {},
+      deletedWifeNgMap: {},
+      clearCustomClosetData: true,
+      customClosetDataClearedAt: t_custom_reset2, // t_custom_reset2 > t_custom_reset1
+    },
+  };
+
+  // Push #1 のレスポンス到着
+  const serverPushCustom1Response = {
+    ok: true,
+    customClosetData: null, // サーバー側では1回目のリセットが反映された
+  };
+
+  const reconcileCustom = reconcileSyncResponse({
+    serverResponse: serverPushCustom1Response,
+    currentLocal: localStateDuringPushCustom1,
+    sentTombstones: pushCustom1SentTombstones,
+    hasInFlightMutations: true,
+    hasInFlightCustomDataChange: true,
+    defaultClosetData: defaultClosetMock,
+  });
+
+  // 検証: 通信中に再リセットされた削除指示が消去されず残っていること！
+  assert.equal(reconcileCustom.remainingTombstones.clearCustomClosetData, true, 'In-flight reset instruction must NOT be pruned');
+  assert.equal(reconcileCustom.remainingTombstones.customClosetDataClearedAt, t_custom_reset2);
+  assert.equal(reconcileCustom.stillDirty, true, 'stillDirty must remain true for follow-up push');
+
+  // 追随 Push #2 の送信 (再リセットの指示をサーバーへ)
+  const pushCustom2Payload = {
+    action: 'push',
+    token: 'sync-token-111',
+    clearCustomClosetData: true,
+  };
+  const pushCustom2Res = JSON.parse(
+    vm.runInContext(`doPost({ postData: { contents: ${JSON.stringify(JSON.stringify(pushCustom2Payload))} } })`, context).getContent()
+  );
+  assert.equal(pushCustom2Res.ok, true);
+  assert.equal(pushCustom2Res.customClosetData, null);
+
+  // Push #2 完了時の調停 (通信中の追加操作なし)
+  const reconcileCustom2 = reconcileSyncResponse({
+    serverResponse: pushCustom2Res,
+    currentLocal: {
+      ...localStateDuringPushCustom1,
+      tombstones: reconcileCustom.remainingTombstones,
+    },
+    sentTombstones: reconcileCustom.remainingTombstones,
+    hasInFlightMutations: false,
+    hasInFlightCustomDataChange: false,
+    defaultClosetData: defaultClosetMock,
+  });
+  // Push #2 が完了して初めて削除指示がクリアされること
+  assert.equal(hasRemainingTombstones(reconcileCustom2.remainingTombstones), false);
+  assert.equal(reconcileCustom2.stillDirty, false);
 
   console.log('  ✅ In-flight mutation reconciliation, selective tombstone pruning, and concurrent locking verified');
 }

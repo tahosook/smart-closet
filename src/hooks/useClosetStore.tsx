@@ -163,6 +163,7 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           deletedWifeNgMap: parsed.deletedWifeNgMap || {},
           wearHistoryClearedAt: parsed.wearHistoryClearedAt,
           clearCustomClosetData: parsed.clearCustomClosetData,
+          customClosetDataClearedAt: parsed.customClosetDataClearedAt,
         };
       }
     } catch (e) {
@@ -467,6 +468,7 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       deletedWifeNgMap: { ...stateRef.current.tombstones.deletedWifeNgMap },
       wearHistoryClearedAt: stateRef.current.tombstones.wearHistoryClearedAt,
       clearCustomClosetData: stateRef.current.tombstones.clearCustomClosetData,
+      customClosetDataClearedAt: stateRef.current.tombstones.customClosetDataClearedAt,
     };
 
     const payload: GasSyncPayload = {
@@ -475,7 +477,9 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       wearHistory: stateRef.current.wearHistory,
       wifeNgPairs: stateRef.current.wifeNgPairs,
       customClosetData: hasCustomData ? stateRef.current.closetData : undefined,
-      clearCustomClosetData: sentTombstones.clearCustomClosetData,
+      clearCustomClosetData: Boolean(
+        sentTombstones.clearCustomClosetData || sentTombstones.customClosetDataClearedAt !== undefined
+      ),
       deletedWearMap: sentTombstones.deletedWearMap,
       deletedWearIds: Object.keys(sentTombstones.deletedWearMap || {}),
       wearHistoryClearedAt: sentTombstones.wearHistoryClearedAt,
@@ -774,7 +778,7 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const removeWearRecord = useCallback(
     (id: string) => {
       mutationSeqRef.current++;
-      const now = Date.now();
+      const now = Math.max(Date.now(), (stateRef.current.tombstones.deletedWearMap?.[id] || 0) + 1);
       const updatedWear = stateRef.current.wearHistory.filter((r) => r.id !== id);
       const updatedTombstones: SyncTombstones = {
         ...stateRef.current.tombstones,
@@ -791,7 +795,7 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const clearAllWearHistory = useCallback(() => {
     mutationSeqRef.current++;
-    const now = Date.now();
+    const now = Math.max(Date.now(), (stateRef.current.tombstones.wearHistoryClearedAt || 0) + 1);
     const updatedTombstones: SyncTombstones = {
       ...stateRef.current.tombstones,
       wearHistoryClearedAt: now,
@@ -839,7 +843,7 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     (shirtId: string, pantsId: string) => {
       mutationSeqRef.current++;
       const key = `${shirtId}_${pantsId}`;
-      const now = Date.now();
+      const now = Math.max(Date.now(), (stateRef.current.tombstones.deletedWifeNgMap?.[key] || 0) + 1);
       const updatedWifeNg = stateRef.current.wifeNgPairs.filter((p) => !(p.shirtId === shirtId && p.pantsId === pantsId));
       const updatedTombstones: SyncTombstones = {
         ...stateRef.current.tombstones,
@@ -868,6 +872,7 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         const updatedTombstones: SyncTombstones = {
           ...stateRef.current.tombstones,
           clearCustomClosetData: false,
+          customClosetDataClearedAt: undefined,
         };
         stateRef.current.tombstones = updatedTombstones;
         setClosetData(parsed);
@@ -884,11 +889,13 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const resetToDefaultData = useCallback(() => {
     mutationSeqRef.current++;
     customDataSeqRef.current++;
+    const now = Math.max(Date.now(), (stateRef.current.tombstones.customClosetDataClearedAt || 0) + 1);
     localStorage.removeItem(STORAGE_KEYS.CUSTOM_DATA);
     stateRef.current.closetData = defaultClosetData as ClosetData;
     const updatedTombstones: SyncTombstones = {
       ...stateRef.current.tombstones,
       clearCustomClosetData: true,
+      customClosetDataClearedAt: now,
     };
     stateRef.current.tombstones = updatedTombstones;
     setClosetData(defaultClosetData as ClosetData);

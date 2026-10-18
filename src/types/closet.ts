@@ -64,6 +64,7 @@ export interface SyncTombstones {
   deletedWifeNgMap: Record<string, number>; // { [shirtId_pantsId]: deletedAtTimestamp }
   deletedWifeNgKeys?: string[];             // 下位互換用
   clearCustomClosetData?: boolean;
+  customClosetDataClearedAt?: number;       // カスタムデータリセット実行時刻タイムスタンプ
 }
 
 export interface GasSyncPayload {
