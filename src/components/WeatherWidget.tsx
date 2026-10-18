@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { CloudSun, Sun, CloudRain, Wind, MapPin, RefreshCw } from 'lucide-react';
 
-interface WeatherData {
+export interface WeatherData {
   city: string;
   tempCurrent: number;
   tempMax: number;
@@ -13,11 +13,17 @@ interface WeatherData {
 
 interface WeatherWidgetProps {
   onWeatherLoaded?: (data: WeatherData) => void;
+  activeCategory?: 'short' | 'seven' | 'long';
+  onCategoryChange?: (category: 'short' | 'seven' | 'long') => void;
 }
 
 const ABIKO_COORDS = { lat: 35.8644, lon: 139.9708, name: '千葉県 我孫子市' };
 
-export const WeatherWidget: React.FC<WeatherWidgetProps> = ({ onWeatherLoaded }) => {
+export const WeatherWidget: React.FC<WeatherWidgetProps> = ({
+  onWeatherLoaded,
+  activeCategory,
+  onCategoryChange,
+}) => {
   const [weather, setWeather] = useState<WeatherData | null>(null);
   const [loading, setLoading] = useState(true);
   const [useCurrentLocation, setUseCurrentLocation] = useState(false);
@@ -66,7 +72,6 @@ export const WeatherWidget: React.FC<WeatherWidgetProps> = ({ onWeatherLoaded })
     } catch (e: any) {
       console.error(e);
       setError('天気情報を取得できませんでした');
-      // Fallback sensible default for Abiko
       const fallback: WeatherData = {
         city: cityName,
         tempCurrent: 19,
@@ -115,6 +120,20 @@ export const WeatherWidget: React.FC<WeatherWidgetProps> = ({ onWeatherLoaded })
     return <Wind className="w-5 h-5 text-slate-400" />;
   };
 
+  const currentCategory = activeCategory || weather?.recommendedCategory || 'long';
+  const getSleeveText = (cat: 'short' | 'seven' | 'long') => {
+    if (cat === 'short') return '☀️ 半袖・七分袖推奨';
+    if (cat === 'seven') return '🌤️ 七分袖・長袖推奨';
+    return '🧥 長袖推奨（羽織プラス）';
+  };
+
+  const handleCycleCategory = () => {
+    if (!onCategoryChange) return;
+    const nextCat =
+      currentCategory === 'long' ? 'seven' : currentCategory === 'seven' ? 'short' : 'long';
+    onCategoryChange(nextCat);
+  };
+
   return (
     <div className="bg-slate-800/90 border border-slate-700/80 rounded-2xl p-3 shadow-lg backdrop-blur-md">
       <div className="flex items-center justify-between text-xs text-slate-400 mb-1.5">
@@ -124,7 +143,9 @@ export const WeatherWidget: React.FC<WeatherWidgetProps> = ({ onWeatherLoaded })
         >
           <MapPin className="w-3.5 h-3.5 text-blue-400" />
           <span className="font-medium text-slate-200">{weather?.city || '千葉県 我孫子市'}</span>
-          <span className="text-[10px] text-slate-500">({useCurrentLocation ? '現在地' : '我孫子'})</span>
+          <span className="text-[10px] text-slate-500">
+            ({useCurrentLocation ? '現在地' : '我孫子'})
+          </span>
         </button>
 
         <button
@@ -154,11 +175,14 @@ export const WeatherWidget: React.FC<WeatherWidgetProps> = ({ onWeatherLoaded })
           </div>
         </div>
 
-        {weather && (
-          <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-blue-950/70 text-blue-300 border border-blue-800/60 shadow-sm animate-pulse">
-            {weather.sleeveAdvice}
-          </span>
-        )}
+        <button
+          onClick={handleCycleCategory}
+          className="px-2.5 py-1 rounded-full text-xs font-semibold bg-blue-950/70 hover:bg-blue-900/80 text-blue-300 border border-blue-800/60 shadow-sm transition-all active:scale-95 flex items-center gap-1"
+          title="タップで袖丈判定を手動切替"
+        >
+          <span>{getSleeveText(currentCategory)}</span>
+          {onCategoryChange && <span className="text-[9px] text-blue-400/80 opacity-70">✎</span>}
+        </button>
       </div>
       {error && <div className="text-[10px] text-amber-400/80 mt-1">{error}</div>}
     </div>
