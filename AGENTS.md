@@ -17,6 +17,8 @@ This file serves as the operational contract for AI agents (Antigravity, Codex, 
 smart-closet/
 ├── AGENTS.md                    # This guideline (Constitution)
 ├── README.md                    # Human operator & deployment guide
+├── gas/
+│   └── Code.gs                  # Google Apps Script Web App (Spreadsheet backend)
 ├── docs/
 │   ├── SPECIFICATION.md         # UI, data model & scoring specifications
 │   └── STYLING_RULES.md         # 40s male styling principles & bias analysis
@@ -26,9 +28,11 @@ smart-closet/
 │   ├── sync-images.sh           # Image sync & ID normalization script
 │   └── validate-closet.mjs      # Data & asset integrity validation CLI
 ├── src/
-│   ├── data/closet.json         # Master database of 24 garments (Single Source of Truth)
-│   ├── types/closet.ts          # TypeScript type definitions
-│   ├── hooks/useClosetStore.ts  # State, cooling period & recommendation logic
+│   ├── data/
+│   │   ├── closet.json          # Master database of 24 garments (Single Source of Truth)
+│   │   └── gasScriptTemplate.ts # Embedded GAS script template for 1-click in-app setup
+│   ├── types/closet.ts          # TypeScript type definitions (incl. GasSync)
+│   ├── hooks/useClosetStore.tsx # Context Provider, state, cooling & GAS background sync
 │   ├── components/
 │   │   ├── ItemImage.tsx        # Smart image component with fallback
 │   │   ├── WeatherWidget.tsx    # Weather & sleeve advice widget
@@ -36,7 +40,8 @@ smart-closet/
 │   │   ├── AiSyncView.tsx       # Tab 2: Clothes addition & AI JSON sync
 │   │   ├── TravelPlannerView.tsx# Tab 3: Travel packing timeline
 │   │   ├── MatrixView.tsx       # Tab 4: 9x15 full matrix & insights
-│   │   └── HistoryModal.tsx     # Wear history inspection & test simulation
+│   │   ├── HistoryModal.tsx     # Wear history inspection & test simulation
+│   │   └── GasSyncModal.tsx     # Cloud sync & Google Spreadsheet integration modal
 │   ├── App.tsx                  # Root shell with bottom tab navigation & desktop layout
 │   ├── main.tsx
 │   └── index.css
@@ -47,14 +52,17 @@ smart-closet/
 ```
 
 ## 3. Architecture Invariants & Absolute Constraints
-1. **Serverless & API-Keyless:**
-   - **Never implement code that calls backend servers or external LLM APIs (e.g. Gemini API) directly.**
+1. **Serverless Frontend & Human-in-the-Loop AI:**
+   - **Never implement code that calls paid backend servers or external LLM APIs (e.g. Gemini API) directly from the client.**
    - Adding garments or recalculating compatibility matrix uses a **Human-in-the-loop** workflow: the app generates a prompt + active JSON, the user submits it to Google AI Pro (Gemini), and the resulting JSON is imported and committed to `src/data/closet.json`.
-2. **Single Source of Truth & LocalStorage Integration:**
+2. **Local-First & Optional GAS Cloud Synchronization:**
+   - **0-Second Decision Rule:** All morning decisions, wear recording, and recommendations operate locally via `localStorage` and memory with **0ms latency**. UI is never blocked by network calls.
+   - **Multi-Device Background Sync:** To seamlessly sync wear history and wife NG pairs between Pixel 9a and Mac mini, users can optionally connect their personal Google Apps Script (`gas/Code.gs`) Web App. All syncing occurs strictly in the background (asynchronous simple request POST without blocking).
+3. **Single Source of Truth & LocalStorage Integration:**
    - Master data is `src/data/closet.json` in Git.
    - User runtime state (`wearHistory`, emergency `wifeNgPairs`, custom imported data) is saved in browser `localStorage`.
    - Any runtime wife NG pairs (`smart_closet_wife_ng`) must be merged into exported/copied `closet.json` so that offline/backup data always preserves user decisions.
-3. **Asset Rules:**
+4. **Asset Rules:**
    - Garment images must be stored at `public/images/{ID}.jpg` (e.g. `/images/S1.jpg`, `/images/P16.jpg`). Never use Japanese or irregular file names.
 
 ## 4. Essential Commands

@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
   ClosetData,
   ClosetItem,
@@ -6,6 +6,10 @@ import {
   WearRecord,
   WifeNgPair,
   RecommendationResult,
+  SyncStatus,
+  GasSyncConfig,
+  GasSyncPayload,
+  GasSyncResponse,
 } from '../types/closet';
 import defaultClosetData from '../data/closet.json';
 
@@ -13,6 +17,8 @@ const STORAGE_KEYS = {
   CUSTOM_DATA: 'smart_closet_custom_data',
   WEAR_HISTORY: 'smart_closet_wear_history',
   WIFE_NG: 'smart_closet_wife_ng',
+  GAS_CONFIG: 'smart_closet_gas_config',
+  SYNC_DIRTY: 'smart_closet_sync_dirty',
 };
 
 function getTodayString(): string {
@@ -32,7 +38,41 @@ function getYesterdayString(): string {
   return `${year}-${month}-${day}`;
 }
 
-export function useClosetStore() {
+export interface ClosetStoreContextType {
+  closetData: ClosetData;
+  mergedClosetData: ClosetData;
+  shirts: ClosetItem[];
+  pants: ClosetItem[];
+  itemMap: Map<string, ClosetItem>;
+  wearHistory: WearRecord[];
+  todayRecord: WearRecord | undefined;
+  yesterdayWornPantsIds: Set<string>;
+  wifeNgPairs: WifeNgPair[];
+  syncStatus: SyncStatus;
+  gasConfig: GasSyncConfig;
+  lastSyncError: string | null;
+  isNgPair: (shirtId: string, pantsId: string) => { isNg: boolean; reason: string; isWifeNg: boolean };
+  getRecommendationsForShirt: (shirtId: string, scene: SceneMode) => {
+    recommended: RecommendationResult[];
+    otherOk: RecommendationResult[];
+    ngList: { pants: ClosetItem; reason: string; isWifeNg: boolean }[];
+  };
+  recordWear: (shirtId: string, pantsId: string, scene: SceneMode, dateStr?: string) => void;
+  simulateYesterdayWear: (pantsId: string) => void;
+  removeWearRecord: (id: string) => void;
+  clearAllWearHistory: () => void;
+  registerWifeNg: (shirtId: string, pantsId: string, customReason?: string) => void;
+  removeWifeNg: (shirtId: string, pantsId: string) => void;
+  importCustomData: (jsonString: string) => { success: boolean; error?: string };
+  resetToDefaultData: () => void;
+  updateGasConfig: (newConfig: Partial<GasSyncConfig>) => void;
+  pullFromGas: () => Promise<boolean>;
+  pushToGas: (manual?: boolean) => Promise<boolean>;
+}
+
+const ClosetContext = createContext<ClosetStoreContextType | null>(null);
+
+export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   // 1. Master closet data
   const [closetData, setClosetData] = useState<ClosetData>(() => {
     try {
@@ -73,6 +113,41 @@ export function useClosetStore() {
     return [];
   });
 
+  // 4. GAS Sync configuration
+  const [gasConfig, setGasConfig] = useState<GasSyncConfig>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEYS.GAS_CONFIG);
+      if (saved) {
+        return JSON.parse(saved);
+      }
+    } catch (e) {
+      console.error('Failed to parse GAS config:', e);
+    }
+    return {
+      webAppUrl: '',
+      secretToken: '',
+      autoSync: true,
+      lastSyncedAt: undefined,
+    };
+  });
+
+  // 5. Sync runtime status
+  const [syncStatus, setSyncStatus] = useState<SyncStatus>(() => {
+    return gasConfig.webAppUrl ? 'idle' : 'unconfigured';
+  });
+  const [lastSyncError, setLastSyncError] = useState<string | null>(null);
+
+  // Sync state refs to prevent stale closures in async callbacks
+  const stateRef = useRef({
+    closetData,
+    wearHistory,
+    wifeNgPairs,
+    gasConfig,
+  });
+  useEffect(() => {
+    stateRef.current = { closetData, wearHistory, wifeNgPairs, gasConfig };
+  }, [closetData, wearHistory, wifeNgPairs, gasConfig]);
+
   // Sync to localStorage
   useEffect(() => {
     localStorage.setItem(STORAGE_KEYS.WEAR_HISTORY, JSON.stringify(wearHistory));
@@ -82,7 +157,11 @@ export function useClosetStore() {
     localStorage.setItem(STORAGE_KEYS.WIFE_NG, JSON.stringify(wifeNgPairs));
   }, [wifeNgPairs]);
 
-  // Generate merged ClosetData incorporating wifeNgPairs from localStorage
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEYS.GAS_CONFIG, JSON.stringify(gasConfig));
+  }, [gasConfig]);
+
+  // Merged ClosetData incorporating wifeNgPairs
   const mergedClosetData = useMemo<ClosetData>(() => {
     if (wifeNgPairs.length === 0) return closetData;
     return {
@@ -137,6 +216,15 @@ export function useClosetStore() {
     return map;
   }, [closetData]);
 
+  // Name map for spreadsheet readability
+  const itemNamesMap = useMemo(() => {
+    const map: Record<string, string> = {};
+    closetData.items.forEach((item) => {
+      map[item.id] = item.name;
+    });
+    return map;
+  }, [closetData]);
+
   // Today and Yesterday records
   const todayStr = getTodayString();
   const yesterdayStr = getYesterdayString();
@@ -146,15 +234,12 @@ export function useClosetStore() {
     [wearHistory, todayStr]
   );
 
-  // Determine which pants were worn yesterday (or on most recent day before today)
   const yesterdayWornPantsIds = useMemo(() => {
     const ids = new Set<string>();
-    // Check exact yesterday
     wearHistory
       .filter((r) => r.date === yesterdayStr)
       .forEach((r) => ids.add(r.pantsId));
 
-    // Also check the most recent record before today if yesterday had no record
     if (ids.size === 0) {
       const pastRecords = wearHistory
         .filter((r) => r.date < todayStr)
@@ -169,7 +254,6 @@ export function useClosetStore() {
   // Check if a shirt and pants pair is NG
   const isNgPair = useCallback(
     (shirtId: string, pantsId: string): { isNg: boolean; reason: string; isWifeNg: boolean } => {
-      // 1. Check Wife NG overrides
       const wifeNg = wifeNgPairs.find(
         (p) => p.shirtId === shirtId && p.pantsId === pantsId
       );
@@ -177,13 +261,11 @@ export function useClosetStore() {
         return { isNg: true, reason: wifeNg.reason || '奥様NG指定', isWifeNg: true };
       }
 
-      // 2. Check shirt's ngIds
       const shirt = itemMap.get(shirtId);
       if (shirt && shirt.ngIds.includes(pantsId)) {
         return { isNg: true, reason: shirt.ngReason || '相性NG', isWifeNg: false };
       }
 
-      // 3. Check pants' ngIds
       const p = itemMap.get(pantsId);
       if (p && p.ngIds.includes(shirtId)) {
         return { isNg: true, reason: p.ngReason || '相性NG', isWifeNg: false };
@@ -244,7 +326,7 @@ export function useClosetStore() {
           return;
         }
 
-        // Office TPO rule: Exclude sweatpants/joggers (dressScore < 3.0) from office candidates
+        // Office TPO rule: Exclude sweatpants/joggers (dressScore < 3.0)
         if (scene === 'office' && p.dressScore < 3.0) {
           ngList.push({
             pants: p,
@@ -263,7 +345,6 @@ export function useClosetStore() {
             ? p.officeRecommendIds.includes(shirt.id)
             : p.remoteRecommendIds.includes(shirt.id);
 
-        // Score weighting
         const score =
           scene === 'office'
             ? (p.dressScore * 1.5 + p.comfortScore) * (isPrimaryRec ? 1.5 : isSecondaryRec ? 1.2 : 1.0)
@@ -290,11 +371,9 @@ export function useClosetStore() {
         }
       });
 
-      // Sort with Cooling period penalty:
-      // Yesterday worn items go to the bottom of the list
       const sortFn = (a: RecommendationResult, b: RecommendationResult) => {
         if (a.isYesterdayWorn !== b.isYesterdayWorn) {
-          return a.isYesterdayWorn ? 1 : -1; // non-yesterday worn comes first
+          return a.isYesterdayWorn ? 1 : -1;
         }
         return b.score - a.score;
       };
@@ -302,7 +381,6 @@ export function useClosetStore() {
       recommended.sort(sortFn);
       otherOk.sort(sortFn);
 
-      // Assign ranks to the top recommendations
       recommended.forEach((rec, idx) => {
         rec.rank = idx + 1;
       });
@@ -315,6 +393,166 @@ export function useClosetStore() {
     },
     [itemMap, pants, isNgPair, yesterdayWornPantsIds, getAffinityReason]
   );
+
+  // -------------------------------------------------------------
+  // GAS クラウド同期ロジック (Push / Pull)
+  // -------------------------------------------------------------
+
+  const pushToGas = useCallback(
+    async (): Promise<boolean> => {
+      const { webAppUrl, secretToken } = stateRef.current.gasConfig;
+      if (!webAppUrl || !webAppUrl.startsWith('http')) {
+        setSyncStatus('unconfigured');
+        return false;
+      }
+
+      setSyncStatus('syncing');
+      setLastSyncError(null);
+
+      const hasCustomData = localStorage.getItem(STORAGE_KEYS.CUSTOM_DATA) !== null;
+      const payload: GasSyncPayload = {
+        action: 'push',
+        token: secretToken || undefined,
+        wearHistory: stateRef.current.wearHistory,
+        wifeNgPairs: stateRef.current.wifeNgPairs,
+        customClosetData: hasCustomData ? stateRef.current.closetData : null,
+        itemNamesMap,
+      };
+
+      try {
+        // Simple Request (text/plain) to avoid CORS preflight options rejection by GAS
+        const res = await fetch(webAppUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'text/plain;charset=utf-8',
+          },
+          body: JSON.stringify(payload),
+          redirect: 'follow',
+        });
+
+        if (!res.ok) {
+          throw new Error(`HTTP error ${res.status}`);
+        }
+
+        const data: GasSyncResponse = await res.json();
+        if (!data.ok) {
+          throw new Error(data.error || 'GASからのエラーレスポンス');
+        }
+
+        const syncedAt = data.syncedAt || new Date().toISOString();
+        setGasConfig((prev) => ({ ...prev, lastSyncedAt: syncedAt }));
+        setSyncStatus('synced');
+        localStorage.removeItem(STORAGE_KEYS.SYNC_DIRTY);
+        return true;
+      } catch (err: any) {
+        console.warn('GAS Push failed (will retry on next connection):', err);
+        setLastSyncError(err?.message || '同期通信エラー');
+        setSyncStatus(navigator.onLine ? 'error' : 'offline_pending');
+        localStorage.setItem(STORAGE_KEYS.SYNC_DIRTY, 'true');
+        return false;
+      }
+    },
+    [itemNamesMap]
+  );
+
+  const pullFromGas = useCallback(async (): Promise<boolean> => {
+    const { webAppUrl, secretToken } = stateRef.current.gasConfig;
+    if (!webAppUrl || !webAppUrl.startsWith('http')) {
+      setSyncStatus('unconfigured');
+      return false;
+    }
+
+    setSyncStatus('syncing');
+    setLastSyncError(null);
+
+    try {
+      const url = new URL(webAppUrl);
+      url.searchParams.set('action', 'pull');
+      if (secretToken) {
+        url.searchParams.set('token', secretToken);
+      }
+
+      const res = await fetch(url.toString(), {
+        method: 'GET',
+        redirect: 'follow',
+      });
+
+      if (!res.ok) {
+        throw new Error(`HTTP error ${res.status}`);
+      }
+
+      const data: GasSyncResponse = await res.json();
+      if (!data.ok) {
+        throw new Error(data.error || 'GASからのエラーレスポンス');
+      }
+
+      // Merge wearHistory from GAS
+      if (Array.isArray(data.wearHistory)) {
+        setWearHistory(data.wearHistory);
+        localStorage.setItem(STORAGE_KEYS.WEAR_HISTORY, JSON.stringify(data.wearHistory));
+      }
+
+      // Merge wifeNgPairs from GAS
+      if (Array.isArray(data.wifeNgPairs)) {
+        setWifeNgPairs(data.wifeNgPairs);
+        localStorage.setItem(STORAGE_KEYS.WIFE_NG, JSON.stringify(data.wifeNgPairs));
+      }
+
+      // Custom data if provided
+      if (data.customClosetData && Array.isArray(data.customClosetData.items)) {
+        setClosetData(data.customClosetData);
+        localStorage.setItem(STORAGE_KEYS.CUSTOM_DATA, JSON.stringify(data.customClosetData));
+      }
+
+      const syncedAt = data.syncedAt || new Date().toISOString();
+      setGasConfig((prev) => ({ ...prev, lastSyncedAt: syncedAt }));
+      setSyncStatus('synced');
+      localStorage.removeItem(STORAGE_KEYS.SYNC_DIRTY);
+      return true;
+    } catch (err: any) {
+      console.warn('GAS Pull failed:', err);
+      setLastSyncError(err?.message || '同期通信エラー');
+      setSyncStatus(navigator.onLine ? 'error' : 'offline_pending');
+      return false;
+    }
+  }, []);
+
+  const triggerBackgroundPush = useCallback(() => {
+    if (stateRef.current.gasConfig.webAppUrl && stateRef.current.gasConfig.autoSync) {
+      setTimeout(() => {
+        pushToGas();
+      }, 50);
+    } else {
+      localStorage.setItem(STORAGE_KEYS.SYNC_DIRTY, 'true');
+    }
+  }, [pushToGas]);
+
+  // Initial sync on app start and reconnect listener
+  useEffect(() => {
+    if (!gasConfig.webAppUrl) {
+      setSyncStatus('unconfigured');
+      return;
+    }
+
+    const isDirty = localStorage.getItem(STORAGE_KEYS.SYNC_DIRTY) === 'true';
+    if (isDirty) {
+      pushToGas();
+    } else {
+      pullFromGas();
+    }
+
+    const handleOnline = () => {
+      const stillDirty = localStorage.getItem(STORAGE_KEYS.SYNC_DIRTY) === 'true';
+      if (stillDirty && stateRef.current.gasConfig.webAppUrl) {
+        pushToGas();
+      }
+    };
+
+    window.addEventListener('online', handleOnline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+    };
+  }, [gasConfig.webAppUrl, pushToGas, pullFromGas]);
 
   // Actions
   const recordWear = useCallback(
@@ -329,10 +567,12 @@ export function useClosetStore() {
           scene,
           timestamp: Date.now(),
         };
-        return [newRecord, ...filtered].sort((a, b) => b.date.localeCompare(a.date));
+        const updated = [newRecord, ...filtered].sort((a, b) => b.date.localeCompare(a.date));
+        return updated;
       });
+      triggerBackgroundPush();
     },
-    []
+    [triggerBackgroundPush]
   );
 
   const simulateYesterdayWear = useCallback(
@@ -343,13 +583,18 @@ export function useClosetStore() {
     [recordWear]
   );
 
-  const removeWearRecord = useCallback((id: string) => {
-    setWearHistory((prev) => prev.filter((r) => r.id !== id));
-  }, []);
+  const removeWearRecord = useCallback(
+    (id: string) => {
+      setWearHistory((prev) => prev.filter((r) => r.id !== id));
+      triggerBackgroundPush();
+    },
+    [triggerBackgroundPush]
+  );
 
   const clearAllWearHistory = useCallback(() => {
     setWearHistory([]);
-  }, []);
+    triggerBackgroundPush();
+  }, [triggerBackgroundPush]);
 
   const registerWifeNg = useCallback(
     (shirtId: string, pantsId: string, customReason = '🚨 奥様からNG指定') => {
@@ -366,36 +611,58 @@ export function useClosetStore() {
           ...prev,
         ];
       });
+      triggerBackgroundPush();
     },
-    []
+    [triggerBackgroundPush]
   );
 
-  const removeWifeNg = useCallback((shirtId: string, pantsId: string) => {
-    setWifeNgPairs((prev) =>
-      prev.filter((p) => !(p.shirtId === shirtId && p.pantsId === pantsId))
-    );
-  }, []);
+  const removeWifeNg = useCallback(
+    (shirtId: string, pantsId: string) => {
+      setWifeNgPairs((prev) =>
+        prev.filter((p) => !(p.shirtId === shirtId && p.pantsId === pantsId))
+      );
+      triggerBackgroundPush();
+    },
+    [triggerBackgroundPush]
+  );
 
-  const importCustomData = useCallback((jsonString: string): { success: boolean; error?: string } => {
-    try {
-      const parsed = JSON.parse(jsonString);
-      if (!parsed || !Array.isArray(parsed.items) || parsed.items.length === 0) {
-        return { success: false, error: 'JSONには有効な "items" 配列が必要です。' };
+  const importCustomData = useCallback(
+    (jsonString: string): { success: boolean; error?: string } => {
+      try {
+        const parsed = JSON.parse(jsonString);
+        if (!parsed || !Array.isArray(parsed.items) || parsed.items.length === 0) {
+          return { success: false, error: 'JSONには有効な "items" 配列が必要です。' };
+        }
+        localStorage.setItem(STORAGE_KEYS.CUSTOM_DATA, jsonString);
+        setClosetData(parsed);
+        triggerBackgroundPush();
+        return { success: true };
+      } catch (e: any) {
+        return { success: false, error: e.message || 'JSONの解析に失敗しました。' };
       }
-      localStorage.setItem(STORAGE_KEYS.CUSTOM_DATA, jsonString);
-      setClosetData(parsed);
-      return { success: true };
-    } catch (e: any) {
-      return { success: false, error: e.message || 'JSONの解析に失敗しました。' };
-    }
-  }, []);
+    },
+    [triggerBackgroundPush]
+  );
 
   const resetToDefaultData = useCallback(() => {
     localStorage.removeItem(STORAGE_KEYS.CUSTOM_DATA);
     setClosetData(defaultClosetData as ClosetData);
+    triggerBackgroundPush();
+  }, [triggerBackgroundPush]);
+
+  const updateGasConfig = useCallback((newConfig: Partial<GasSyncConfig>) => {
+    setGasConfig((prev) => {
+      const updated = { ...prev, ...newConfig };
+      if (!updated.webAppUrl) {
+        setSyncStatus('unconfigured');
+      } else if (prev.webAppUrl !== updated.webAppUrl) {
+        setSyncStatus('idle');
+      }
+      return updated;
+    });
   }, []);
 
-  return {
+  const contextValue: ClosetStoreContextType = {
     closetData,
     mergedClosetData,
     shirts,
@@ -405,6 +672,9 @@ export function useClosetStore() {
     todayRecord,
     yesterdayWornPantsIds,
     wifeNgPairs,
+    syncStatus,
+    gasConfig,
+    lastSyncError,
     isNgPair,
     getRecommendationsForShirt,
     recordWear,
@@ -415,5 +685,18 @@ export function useClosetStore() {
     removeWifeNg,
     importCustomData,
     resetToDefaultData,
+    updateGasConfig,
+    pullFromGas,
+    pushToGas,
   };
+
+  return <ClosetContext.Provider value={contextValue}>{children}</ClosetContext.Provider>;
+};
+
+export function useClosetStore(): ClosetStoreContextType {
+  const context = useContext(ClosetContext);
+  if (!context) {
+    throw new Error('useClosetStore must be used within a ClosetProvider');
+  }
+  return context;
 }

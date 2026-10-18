@@ -6,9 +6,13 @@
 
 ## 1. システム概要 & アーキテクチャ原則
 
-- **完全サーバーレス・APIキーレス:**
+- **完全サーバーレス・APIキーレス（フロントエンド）:**
   - 外部LLM APIへの直接通信コードは実装しない（ユーザー自身がGoogle AI Pro / Geminiにプロンプトを貼り付けて再計算するHuman-in-the-loop方式）。
   - 気象データのみ、APIキー不要の Open-Meteo API をクライアントサイド（ブラウザ）から直接フェッチする。
+- **ローカルファースト ＆ オプションGASクラウド同期:**
+  - **朝1秒の即決原則:** すべての操作（着用記録・奥様NG・推薦判定）は、まず `localStorage` と React Context 上で 0ms で完結。
+  - **端末間シームレス同期:** Google Apps Script (`gas/Code.gs`) Web App を介して、Pixel 9a と Mac mini の間で着用履歴・奥様NGをバックグラウンド（非同期 Simple Request POST）で自動同期。オフライン時は保留フラグを保持し、次回接続時に自動再送。
+  - **Google スプレッドシート連携:** `wear_history`、`wife_ng`、`analytics`（60日未着用アイテムの断捨離アラート、主力エース集計）をシート上に自動構築。
 - **データの正本 (Single Source of Truth):**
   - マスターデータは `src/data/closet.json`（Git管理）。
   - 日常の状態変化（着用履歴、緊急の奥様NGペア登録、インポートされたカスタムデータ）は `localStorage` に保存され、起動時にマージして表示される。
@@ -101,6 +105,17 @@
 
 ---
 
+### クラウド同期・スプレッドシート連携モーダル (`GasSyncModal.tsx`)
+- ヘッダーの雲アイコンから呼び出し可能。
+- **動的ステータス表示:** `未設定`（ローカルモード）、`同期中`（スピナー）、`同期完了`（緑ドット＆最終日時）、`オフライン保留中`（黄ドット）。
+- **GAS Web App URL & 合言葉設定:** ユーザー自身の GAS URL を保存・管理。
+- **手動同期アクション:**
+  - ［🔄 スプレッドシートから取得 (Pull)］: スプレッドシート側の直接編集を即時反映。
+  - ［☁️ 端末データをシートへ送信 (Push)］: 現在の履歴・NGデータをスプレッドシートへ強制送信。
+- **3分でできる連携ガイド:** アプリ内からワンクリックで `gas/Code.gs` をコピー可能。
+
+---
+
 ## 3. データモデル (TypeScript型定義)
 
 ```typescript
@@ -152,6 +167,15 @@ export interface RecommendationResult {
   comfortScore: number;
   isOfficeRecommend: boolean;
   isRemoteRecommend: boolean;
+}
+
+export type SyncStatus = 'unconfigured' | 'idle' | 'syncing' | 'synced' | 'offline_pending' | 'error';
+
+export interface GasSyncConfig {
+  webAppUrl: string;
+  secretToken?: string;
+  autoSync: boolean;
+  lastSyncedAt?: string;
 }
 ```
 

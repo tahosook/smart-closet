@@ -47,3 +47,31 @@ export interface RecommendationResult {
   isOfficeRecommend: boolean;
   isRemoteRecommend: boolean;
 }
+
+export type SyncStatus = 'unconfigured' | 'idle' | 'syncing' | 'synced' | 'offline_pending' | 'error';
+
+export interface GasSyncConfig {
+  webAppUrl: string;
+  secretToken?: string;
+  autoSync: boolean;
+  lastSyncedAt?: string;
+}
+
+export interface GasSyncPayload {
+  action: 'push' | 'pull';
+  token?: string;
+  wearHistory?: WearRecord[];
+  wifeNgPairs?: WifeNgPair[];
+  customClosetData?: ClosetData | null;
+  itemNamesMap?: Record<string, string>;
+}
+
+export interface GasSyncResponse {
+  ok: boolean;
+  error?: string;
+  wearHistory?: WearRecord[];
+  wifeNgPairs?: WifeNgPair[];
+  customClosetData?: ClosetData | null;
+  syncedAt?: string;
+}
+
