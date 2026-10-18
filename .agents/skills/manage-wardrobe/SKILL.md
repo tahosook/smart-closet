@@ -21,6 +21,7 @@ When a new garment photo is provided:
 3. Verify the file exists in `public/images/`.
 
 ### 2. Update `src/data/closet.json`
+Consult **`docs/STYLING_RULES.md`** for 40s male fashion principles, bias analysis, and compatibility criteria.
 Add the new item to `items` adhering to the schema:
 - `id`: Next sequential ID (`S10` for shirt, `P16` for pants).
 - `category`: `"shirt"` or `"pants"`.
@@ -35,12 +36,11 @@ Add the new item to `items` adhering to the schema:
 - `ngReason`: Clear explanation of why pairs in `ngIds` look bad (e.g. "同系色濃紺による作業着見え").
 - `notes`: Short role summary (e.g. "【万能出社エース】会食・出社").
 
-**Important:** Update existing items' `officeRecommendIds`, `remoteRecommendIds`, or `ngIds` if the new item pairs with or conflicts with them.
+**Important:** Update existing items' `officeRecommendIds`, `remoteRecommendIds`, or `ngIds` if the new item pairs with or conflicts with them (preserving bidirectional integrity).
 
 ### 3. Run Validation and Build
 Always run:
 ```bash
-npm run validate-data
-npm run build
+npm run check
 ```
 Verify 0 errors before reporting completion.

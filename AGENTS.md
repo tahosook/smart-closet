@@ -4,7 +4,7 @@ This file serves as the operational contract for AI agents (Antigravity, Codex, 
 
 ## 1. Project Overview & Target Persona
 - **Goal:** Provide a 40s male professional (hybrid office worker + remote) a private, zero-stress PWA mobile web app that completely eliminates wife fashion disapproval ("ダメ出し") and makes morning wardrobe decisions in 1 second.
-- **Key Hardware Target:** Google Pixel 9a (mobile one-handed thumb interaction) & Mac mini (wide desktop screen for the compatibility matrix).
+- **Key Hardware Target:** Google Pixel 9a (mobile one-handed thumb interaction) & Mac mini (wide desktop screen with 2-pane layout and full compatibility matrix).
 - **Core Technology Stack:**
   - Framework: React 18 + TypeScript + Vite
   - Styling: Tailwind CSS (modern charcoal / dark-slate aesthetic with elegant royal blue accents, dark/light theme support)
@@ -15,25 +15,29 @@ This file serves as the operational contract for AI agents (Antigravity, Codex, 
 ## 2. Directory Structure & Key Files
 ```text
 smart-closet/
-├── AGENTS.md                    # This guideline
+├── AGENTS.md                    # This guideline (Constitution)
+├── README.md                    # Human operator & deployment guide
+├── docs/
+│   ├── SPECIFICATION.md         # UI, data model & scoring specifications
+│   └── STYLING_RULES.md         # 40s male styling principles & bias analysis
 ├── .agents/skills/              # Antigravity project skills
 │   └── manage-wardrobe/SKILL.md # Runbook for wardrobe additions/edits
 ├── scripts/
 │   ├── sync-images.sh           # Image sync & ID normalization script
 │   └── validate-closet.mjs      # Data & asset integrity validation CLI
 ├── src/
-│   ├── data/closet.json         # Master database of 24 garments
+│   ├── data/closet.json         # Master database of 24 garments (Single Source of Truth)
 │   ├── types/closet.ts          # TypeScript type definitions
 │   ├── hooks/useClosetStore.ts  # State, cooling period & recommendation logic
 │   ├── components/
 │   │   ├── ItemImage.tsx        # Smart image component with fallback
 │   │   ├── WeatherWidget.tsx    # Weather & sleeve advice widget
-│   │   ├── TodayView.tsx        # Tab 1: Morning decision panel
+│   │   ├── TodayView.tsx        # Tab 1: Morning decision panel (Desktop 2-pane support)
 │   │   ├── AiSyncView.tsx       # Tab 2: Clothes addition & AI JSON sync
 │   │   ├── TravelPlannerView.tsx# Tab 3: Travel packing timeline
 │   │   ├── MatrixView.tsx       # Tab 4: 9x15 full matrix & insights
 │   │   └── HistoryModal.tsx     # Wear history inspection & test simulation
-│   ├── App.tsx                  # Root shell with bottom tab navigation
+│   ├── App.tsx                  # Root shell with bottom tab navigation & desktop layout
 │   ├── main.tsx
 │   └── index.css
 ├── public/
@@ -42,31 +46,43 @@ smart-closet/
 └── package.json
 ```
 
-## 3. Essential Commands
+## 3. Architecture Invariants & Absolute Constraints
+1. **Serverless & API-Keyless:**
+   - **Never implement code that calls backend servers or external LLM APIs (e.g. Gemini API) directly.**
+   - Adding garments or recalculating compatibility matrix uses a **Human-in-the-loop** workflow: the app generates a prompt + active JSON, the user submits it to Google AI Pro (Gemini), and the resulting JSON is imported and committed to `src/data/closet.json`.
+2. **Single Source of Truth & LocalStorage Integration:**
+   - Master data is `src/data/closet.json` in Git.
+   - User runtime state (`wearHistory`, emergency `wifeNgPairs`, custom imported data) is saved in browser `localStorage`.
+   - Any runtime wife NG pairs (`smart_closet_wife_ng`) must be merged into exported/copied `closet.json` so that offline/backup data always preserves user decisions.
+3. **Asset Rules:**
+   - Garment images must be stored at `public/images/{ID}.jpg` (e.g. `/images/S1.jpg`, `/images/P16.jpg`). Never use Japanese or irregular file names.
+
+## 4. Essential Commands
 - `npm run dev`: Launch local development server
 - `npm run check`: Run full verification (data integrity + escape hatch scan + type-check + build)
 - `npm run build`: Type-check (`tsc -b`) and build for production (`vite build`)
 - `npm run sync-images`: Synchronize and normalize images from `~/Downloads` into `public/images/`
 - `npm run validate-data`: Run integrity validator for `closet.json`, image files, and escape hatch scan
 
-## 4. Wardrobe Domain Invariants & Rules
+## 5. Wardrobe Domain Invariants & Rules (See docs/STYLING_RULES.md)
 1. **IDs and Categories:**
    - Shirts: `S1`, `S2`, `S3`, ... (Category: `"shirt"`)
    - Pants: `P1`, `P2`, `P3`, ... (Category: `"pants"`)
 2. **Fashion Principles for 40s Male (Wife Approval Safety):**
-   - **No Upper-Lower Navy/Indigo Monotone:** (e.g. S1 Dark Indigo × P1/P6/P8 Navy pants looks like pajamas or work uniform; must be marked `ngIds`).
-   - **No Pattern-on-Pattern Clash:** (e.g. S5 Small pattern or S9 Stripe × P5/P10/P11 Patterned pants; must be marked `ngIds`).
-   - **No Faded-on-Faded Blur:** (e.g. S8 Ecru × P3/P9 Light gray/greige causes a washed-out expand look; must be marked `ngIds`).
-   - **White Shirts are Universal:** S2, S4, S7 pair with almost all pants including loud/patterned ones.
+   - **No Upper-Lower Navy/Indigo Monotone:** (e.g. `S1` × `P1, P5, P6, P8, P11` looks like pajamas or work uniform; must be marked `ngIds`).
+   - **No Light Blue on Blue Denim:** (e.g. `S3` Saxe chambray × `P4, P7, P15` blue denims looks like an uncoordinated weekend uncle; must be marked `ngIds`).
+   - **No Pattern-on-Pattern Clash:** (e.g. `S5, S6, S9` Pattern shirts × `P5, P10, P11` Patterned pants; must be marked `ngIds`).
+   - **No Faded-on-Faded Blur:** (e.g. `S8` Ecru × `P3, P9, P13` Light gray/greige causes a washed-out expand look; must be marked `ngIds`).
+   - **White Shirts are Universal:** `S2, S4, S7` pair with all pants including loud/patterned ones.
+   - **TPO Separation & Office Sweatpants Exclusion:** For office mode (`scene === 'office'`), pants with `dressScore < 3.0` (sweatpants/joggers: `P2, P4, P13, P14, P15`) must be excluded from office candidates.
 3. **Recommendation & Cooling Period:**
-   - If a pants item was worn yesterday (`wearHistory`), its recommendation priority is automatically lowered to the bottom with a `⚠️ 昨日着用（冷却中）` badge to prevent repetitive outfits.
+   - If a pants item was worn yesterday (`wearHistory`), its recommendation priority is automatically lowered to the bottom with a `⚠️ 昨日着用（冷却中）` badge.
 4. **Wife NG Registration (`🚨 奥様NG`):**
    - Any pair flagged by user must immediately be excluded from candidate lists and stored in `localStorage` under `smart_closet_wife_ng`.
 
-## 5. Definition of Done (DoD) & Guardrails
+## 6. Definition of Done (DoD) & Guardrails
 Whenever you investigate or modify files:
 1. **No-Actionable Finding, Stop:** If research shows no problem or speculative changes are unwarranted, do not manufacture unnecessary code changes. Complete the task with an investigation report.
 2. **No Escape Hatches:** Never suppress type errors or linter warnings with `@ts-ignore`, `@ts-nocheck`, or `eslint-disable`.
 3. **Run Full Verification:** Always run `npm run check` and ensure exit code 0 (zero errors in data integrity, zero escape hatches, TypeScript type-check and Vite build pass).
 4. **Mobile Usability:** Keep mobile layout clean with tap targets at least 44x44px.
-

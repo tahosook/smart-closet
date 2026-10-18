@@ -82,6 +82,45 @@ export function useClosetStore() {
     localStorage.setItem(STORAGE_KEYS.WIFE_NG, JSON.stringify(wifeNgPairs));
   }, [wifeNgPairs]);
 
+  // Generate merged ClosetData incorporating wifeNgPairs from localStorage
+  const mergedClosetData = useMemo<ClosetData>(() => {
+    if (wifeNgPairs.length === 0) return closetData;
+    return {
+      items: closetData.items.map((item) => {
+        const relatedNgs = wifeNgPairs.filter((pair) =>
+          item.category === 'shirt' ? pair.shirtId === item.id : pair.pantsId === item.id
+        );
+        if (relatedNgs.length === 0) return item;
+
+        const additionalIds = relatedNgs.map((pair) =>
+          item.category === 'shirt' ? pair.pantsId : pair.shirtId
+        );
+        const additionalSet = new Set(additionalIds);
+        const mergedNgIds = Array.from(new Set([...item.ngIds, ...additionalIds]));
+        const filteredOfficeRecommendIds = item.officeRecommendIds.filter(
+          (id) => !additionalSet.has(id)
+        );
+        const filteredRemoteRecommendIds = item.remoteRecommendIds.filter(
+          (id) => !additionalSet.has(id)
+        );
+        const hasNoNgText = item.ngReason.startsWith('なし');
+        const mergedReason = hasNoNgText
+          ? `奥様NG指定（${additionalIds.join(', ')}）`
+          : item.ngReason.includes('奥様NG')
+          ? item.ngReason
+          : `${item.ngReason} / 奥様NG指定（${additionalIds.join(', ')}）`;
+
+        return {
+          ...item,
+          officeRecommendIds: filteredOfficeRecommendIds,
+          remoteRecommendIds: filteredRemoteRecommendIds,
+          ngIds: mergedNgIds,
+          ngReason: mergedReason,
+        };
+      }),
+    };
+  }, [closetData, wifeNgPairs]);
+
   // Separate shirts and pants
   const shirts = useMemo(
     () => closetData.items.filter((item) => item.category === 'shirt'),
@@ -201,6 +240,16 @@ export function useClosetStore() {
             pants: p,
             reason: ngCheck.reason,
             isWifeNg: ngCheck.isWifeNg,
+          });
+          return;
+        }
+
+        // Office TPO rule: Exclude sweatpants/joggers (dressScore < 3.0) from office candidates
+        if (scene === 'office' && p.dressScore < 3.0) {
+          ngList.push({
+            pants: p,
+            reason: `オフィス出社不適合（ドレス度 ${p.dressScore}：スウェット・ジョガー系）`,
+            isWifeNg: false,
           });
           return;
         }
@@ -348,6 +397,7 @@ export function useClosetStore() {
 
   return {
     closetData,
+    mergedClosetData,
     shirts,
     pants,
     itemMap,

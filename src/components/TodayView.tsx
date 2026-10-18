@@ -137,12 +137,16 @@ export const TodayView: React.FC = () => {
         </div>
       )}
 
-      {/* 1. Weather Widget */}
-      <WeatherWidget
-        onWeatherLoaded={handleWeatherLoaded}
-        activeCategory={sleeveCategory}
-        onCategoryChange={setSleeveCategory}
-      />
+      {/* 2-Pane Responsive Grid (Desktop Mac mini & Mobile Pixel 9a) */}
+      <div className="space-y-4 lg:space-y-0 lg:grid lg:grid-cols-12 lg:gap-6 lg:items-start">
+        {/* Left Pane (Desktop 5 cols): Weather, Scene, Today Decision Banner, Shirt Grid */}
+        <div className="space-y-4 lg:col-span-5 lg:sticky lg:top-20">
+          {/* 1. Weather Widget */}
+          <WeatherWidget
+            onWeatherLoaded={handleWeatherLoaded}
+            activeCategory={sleeveCategory}
+            onCategoryChange={setSleeveCategory}
+          />
 
       {/* 2. Scene Selector */}
       <div className="bg-slate-800/90 p-1.5 rounded-2xl border border-slate-700/80 flex shadow-md">
@@ -310,9 +314,12 @@ export const TodayView: React.FC = () => {
           </div>
         )}
       </section>
+        </div>
 
-      {/* 4. Lower: Instant Pants Decision Panel (Large Photo Cards) */}
-      <section className="space-y-3 pt-2">
+        {/* Right Pane (Desktop 7 cols): Instant Pants Decision Panel, Other Pants, NG List */}
+        <div className="space-y-4 lg:col-span-7">
+          {/* 4. Lower: Instant Pants Decision Panel (Large Photo Cards) */}
+          <section className="space-y-3 pt-2 lg:pt-0">
         <div className="flex items-center justify-between px-1">
           <h2 className="text-sm font-bold text-slate-200 flex items-center gap-1.5">
             <span className="w-2 h-2 rounded-full bg-amber-400"></span>
@@ -578,6 +585,8 @@ export const TodayView: React.FC = () => {
           )}
         </div>
       </section>
+        </div>
+      </div>
 
       {/* Large Zoom Preview Modal (Side-by-side or stacked preview) */}
       {zoomItemPair && (
