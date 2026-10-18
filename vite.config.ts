@@ -2,7 +2,8 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
 
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
+  base: process.env.VITE_BASE_PATH ?? (mode === 'production' ? '/smart-closet/' : '/'),
   plugins: [
     react(),
     VitePWA({
@@ -18,7 +19,7 @@ export default defineConfig({
         orientation: 'portrait-primary',
         icons: [
           {
-            src: '/icon.svg',
+            src: 'icon.svg',
             sizes: '192x192 512x512',
             type: 'image/svg+xml',
             purpose: 'any maskable'
@@ -46,4 +47,4 @@ export default defineConfig({
       }
     })
   ]
-});
+}));

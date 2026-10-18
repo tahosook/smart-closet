@@ -53,11 +53,22 @@ export const ItemImage: React.FC<ItemImageProps> = ({
   const [hasError, setHasError] = useState(false);
   const colors = getColorForGarment(item.name, item.category);
 
+  // Resolve image URL against Vite BASE_URL (essential for GitHub Pages sub-path hosting)
+  const resolvedImageUrl = (() => {
+    if (!item.imageUrl) return '';
+    if (item.imageUrl.startsWith('http://') || item.imageUrl.startsWith('https://')) {
+      return item.imageUrl;
+    }
+    const baseUrl = import.meta.env.BASE_URL || '/';
+    const cleanPath = item.imageUrl.startsWith('/') ? item.imageUrl.slice(1) : item.imageUrl;
+    return `${baseUrl}${cleanPath}`;
+  })();
+
   return (
     <div className={`relative overflow-hidden bg-slate-800/80 rounded-xl flex items-center justify-center ${className}`}>
       {!hasError ? (
         <img
-          src={item.imageUrl}
+          src={resolvedImageUrl}
           alt={item.name}
           className={`w-full h-full object-contain transition-transform duration-300 ${imgClassName}`}
           onError={() => setHasError(true)}

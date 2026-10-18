@@ -45,8 +45,27 @@ npm run validate-data
 
 ---
 
-## 3. Cloudflare Pages デプロイ設定
+## 3. GitHub Pages デプロイ（一時的プレビュー・スマホ確認用）
 
+手元のスマホ（Google Pixel 9a 等）で即座に実機動作を確認するための構成です。
+
+1. **GitHub リポジトリ設定 (初回のみ):**
+   - GitHubリポジトリ（`tahosook/smart-closet`）の **Settings** > **Pages** を開く。
+   - **Build and deployment** > **Source** を **「GitHub Actions」** に設定する。
+2. **自動デプロイ:**
+   - `main` ブランチにプッシュすると、`.github/workflows/deploy.yml` が自動起動し、完全検証（データチェック＋型チェック）を経て GitHub Pages にデプロイされます。
+   - デプロイ先URL: `https://tahosook.github.io/smart-closet/`
+3. **スマホ実機での確認方法:**
+   - スマホの Chrome（または Safari）で上記URLを開く。
+   - メニューから **「ホーム画面に追加」** を選択すると、独立したPWAアプリ（スタンドアロン起動）として快適に使用できます。
+
+※ 将来本格運用（Cloudflare Pages 等）に移行する際は、環境変数 `VITE_BASE_PATH=/` を指定するか `vite.config.ts` を戻すだけでルート配信に切り替え可能です。
+
+---
+
+## 4. 本格運用向けインフラ構成（将来検討）
+
+### Cloudflare Pages
 * **Framework preset:** `Vite`
 * **Build command:** `npm run build`
 * **Build output directory:** `dist`
@@ -55,7 +74,7 @@ npm run validate-data
 
 ---
 
-## 4. ドキュメント一覧
+## 5. ドキュメント一覧
 
 - **[AGENTS.md](./AGENTS.md):** AIコーディングエージェント（Antigravity等）向けの開発憲法・禁止事項・DoD。
 - **[docs/SPECIFICATION.md](./docs/SPECIFICATION.md):** 画面仕様・レスポンシブ要件・データモデル・推薦ロジック詳細定義書。
