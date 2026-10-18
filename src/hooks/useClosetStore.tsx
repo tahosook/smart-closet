@@ -13,6 +13,10 @@ import {
   SyncTombstones,
 } from '../types/closet';
 import defaultClosetData from '../data/closet.json';
+import {
+  hasRemainingTombstones,
+  reconcileSyncResponse,
+} from '../utils/syncReconcile';
 
 const STORAGE_KEYS = {
   CUSTOM_DATA: 'smart_closet_custom_data',
@@ -173,7 +177,12 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   });
   const [lastSyncError, setLastSyncError] = useState<string | null>(null);
 
-  // Sync state refs to prevent stale closures in async callbacks
+  // Sync state refs & mutation sequence tracking to prevent stale closures and race conditions
+  const mutationSeqRef = useRef<number>(0);
+  const customDataSeqRef = useRef<number>(0);
+  const inFlightRef = useRef<boolean>(false);
+  const pendingPushRef = useRef<boolean>(false);
+
   const stateRef = useRef({
     closetData,
     wearHistory,
@@ -439,11 +448,26 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       return false;
     }
 
+    // 既に通信中の場合はキューに積んで重複リクエストを抑止 (Single-Flight)
+    if (inFlightRef.current) {
+      pendingPushRef.current = true;
+      return false;
+    }
+
+    inFlightRef.current = true;
     setSyncStatus('syncing');
     setLastSyncError(null);
 
+    // 送信時の世代スナップショット
+    const sentSeq = mutationSeqRef.current;
+    const sentCustomDataSeq = customDataSeqRef.current;
     const hasCustomData = localStorage.getItem(STORAGE_KEYS.CUSTOM_DATA) !== null;
-    const currentTombstones = stateRef.current.tombstones;
+    const sentTombstones: SyncTombstones = {
+      deletedWearMap: { ...stateRef.current.tombstones.deletedWearMap },
+      deletedWifeNgMap: { ...stateRef.current.tombstones.deletedWifeNgMap },
+      wearHistoryClearedAt: stateRef.current.tombstones.wearHistoryClearedAt,
+      clearCustomClosetData: stateRef.current.tombstones.clearCustomClosetData,
+    };
 
     const payload: GasSyncPayload = {
       action: 'push',
@@ -451,12 +475,12 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       wearHistory: stateRef.current.wearHistory,
       wifeNgPairs: stateRef.current.wifeNgPairs,
       customClosetData: hasCustomData ? stateRef.current.closetData : undefined,
-      clearCustomClosetData: currentTombstones.clearCustomClosetData,
-      deletedWearMap: currentTombstones.deletedWearMap,
-      deletedWearIds: Object.keys(currentTombstones.deletedWearMap || {}),
-      wearHistoryClearedAt: currentTombstones.wearHistoryClearedAt,
-      deletedWifeNgMap: currentTombstones.deletedWifeNgMap,
-      deletedWifeNgKeys: Object.keys(currentTombstones.deletedWifeNgMap || {}),
+      clearCustomClosetData: sentTombstones.clearCustomClosetData,
+      deletedWearMap: sentTombstones.deletedWearMap,
+      deletedWearIds: Object.keys(sentTombstones.deletedWearMap || {}),
+      wearHistoryClearedAt: sentTombstones.wearHistoryClearedAt,
+      deletedWifeNgMap: sentTombstones.deletedWifeNgMap,
+      deletedWifeNgKeys: Object.keys(sentTombstones.deletedWifeNgMap || {}),
       itemNamesMap,
     };
 
@@ -479,31 +503,62 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         throw new Error(data.error || 'GASからのエラーレスポンス');
       }
 
-      // GAS 側でマージされた最新データを取り込んでローカル状態も同期
-      if (Array.isArray(data.wearHistory)) {
-        setWearHistory(data.wearHistory);
-        localStorage.setItem(STORAGE_KEYS.WEAR_HISTORY, JSON.stringify(data.wearHistory));
-      }
-      if (Array.isArray(data.wifeNgPairs)) {
-        setWifeNgPairs(data.wifeNgPairs);
-        localStorage.setItem(STORAGE_KEYS.WIFE_NG, JSON.stringify(data.wifeNgPairs));
-      }
-      if (data.customClosetData && Array.isArray(data.customClosetData.items)) {
-        setClosetData(data.customClosetData);
-        localStorage.setItem(STORAGE_KEYS.CUSTOM_DATA, JSON.stringify(data.customClosetData));
-      } else if (currentTombstones.clearCustomClosetData) {
-        setClosetData(defaultClosetData as ClosetData);
+      const hasInFlightMutations = mutationSeqRef.current > sentSeq;
+      const hasInFlightCustomDataChange = customDataSeqRef.current > sentCustomDataSeq;
+
+      const reconcileResult = reconcileSyncResponse({
+        serverResponse: data,
+        currentLocal: {
+          wearHistory: stateRef.current.wearHistory,
+          wifeNgPairs: stateRef.current.wifeNgPairs,
+          closetData: stateRef.current.closetData,
+          hasCustomData: localStorage.getItem(STORAGE_KEYS.CUSTOM_DATA) !== null,
+          tombstones: stateRef.current.tombstones,
+        },
+        sentTombstones,
+        hasInFlightMutations,
+        hasInFlightCustomDataChange,
+        defaultClosetData: defaultClosetData as ClosetData,
+      });
+
+      // 反映
+      stateRef.current.wearHistory = reconcileResult.wearHistory;
+      stateRef.current.wifeNgPairs = reconcileResult.wifeNgPairs;
+      stateRef.current.closetData = reconcileResult.closetData;
+      stateRef.current.tombstones = reconcileResult.remainingTombstones;
+
+      setWearHistory(reconcileResult.wearHistory);
+      localStorage.setItem(STORAGE_KEYS.WEAR_HISTORY, JSON.stringify(reconcileResult.wearHistory));
+
+      setWifeNgPairs(reconcileResult.wifeNgPairs);
+      localStorage.setItem(STORAGE_KEYS.WIFE_NG, JSON.stringify(reconcileResult.wifeNgPairs));
+
+      setClosetData(reconcileResult.closetData);
+      if (reconcileResult.isCustomDataPresent) {
+        localStorage.setItem(STORAGE_KEYS.CUSTOM_DATA, JSON.stringify(reconcileResult.closetData));
+      } else {
         localStorage.removeItem(STORAGE_KEYS.CUSTOM_DATA);
       }
 
-      // 送信完了した Tombstones をクリア
-      setTombstones({ deletedWearMap: {}, deletedWifeNgMap: {} });
-      localStorage.removeItem(STORAGE_KEYS.SYNC_TOMBSTONES);
+      setTombstones(reconcileResult.remainingTombstones);
+      if (hasRemainingTombstones(reconcileResult.remainingTombstones)) {
+        localStorage.setItem(STORAGE_KEYS.SYNC_TOMBSTONES, JSON.stringify(reconcileResult.remainingTombstones));
+      } else {
+        localStorage.removeItem(STORAGE_KEYS.SYNC_TOMBSTONES);
+      }
 
       const syncedAt = data.syncedAt || new Date().toISOString();
       setGasConfig((prev) => ({ ...prev, lastSyncedAt: syncedAt }));
-      setSyncStatus('synced');
-      localStorage.removeItem(STORAGE_KEYS.SYNC_DIRTY);
+
+      if (reconcileResult.stillDirty) {
+        localStorage.setItem(STORAGE_KEYS.SYNC_DIRTY, 'true');
+        pendingPushRef.current = true;
+        setSyncStatus('syncing');
+      } else {
+        localStorage.removeItem(STORAGE_KEYS.SYNC_DIRTY);
+        setSyncStatus('synced');
+      }
+
       return true;
     } catch (err: any) {
       console.warn('GAS Push failed (will retry on next connection):', err);
@@ -511,6 +566,14 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       setSyncStatus(navigator.onLine ? 'error' : 'offline_pending');
       localStorage.setItem(STORAGE_KEYS.SYNC_DIRTY, 'true');
       return false;
+    } finally {
+      inFlightRef.current = false;
+      if (pendingPushRef.current) {
+        pendingPushRef.current = false;
+        setTimeout(() => {
+          pushToGas();
+        }, 50);
+      }
     }
   }, [itemNamesMap]);
 
@@ -527,8 +590,16 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       return pushToGas();
     }
 
+    if (inFlightRef.current) {
+      return false;
+    }
+
+    inFlightRef.current = true;
     setSyncStatus('syncing');
     setLastSyncError(null);
+
+    const pullStartSeq = mutationSeqRef.current;
+    const pullStartCustomSeq = customDataSeqRef.current;
 
     try {
       const url = new URL(webAppUrl);
@@ -551,40 +622,90 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         throw new Error(data.error || 'GASからのエラーレスポンス');
       }
 
-      if (Array.isArray(data.wearHistory)) {
-        setWearHistory(data.wearHistory);
-        localStorage.setItem(STORAGE_KEYS.WEAR_HISTORY, JSON.stringify(data.wearHistory));
+      const hasInFlightMutations =
+        mutationSeqRef.current > pullStartSeq ||
+        localStorage.getItem(STORAGE_KEYS.SYNC_DIRTY) === 'true';
+      const hasInFlightCustomDataChange = customDataSeqRef.current > pullStartCustomSeq;
+
+      const reconcileResult = reconcileSyncResponse({
+        serverResponse: data,
+        currentLocal: {
+          wearHistory: stateRef.current.wearHistory,
+          wifeNgPairs: stateRef.current.wifeNgPairs,
+          closetData: stateRef.current.closetData,
+          hasCustomData: localStorage.getItem(STORAGE_KEYS.CUSTOM_DATA) !== null,
+          tombstones: stateRef.current.tombstones,
+        },
+        sentTombstones: { deletedWearMap: {}, deletedWifeNgMap: {} },
+        hasInFlightMutations,
+        hasInFlightCustomDataChange,
+        defaultClosetData: defaultClosetData as ClosetData,
+      });
+
+      stateRef.current.wearHistory = reconcileResult.wearHistory;
+      stateRef.current.wifeNgPairs = reconcileResult.wifeNgPairs;
+      stateRef.current.closetData = reconcileResult.closetData;
+      stateRef.current.tombstones = reconcileResult.remainingTombstones;
+
+      setWearHistory(reconcileResult.wearHistory);
+      localStorage.setItem(STORAGE_KEYS.WEAR_HISTORY, JSON.stringify(reconcileResult.wearHistory));
+
+      setWifeNgPairs(reconcileResult.wifeNgPairs);
+      localStorage.setItem(STORAGE_KEYS.WIFE_NG, JSON.stringify(reconcileResult.wifeNgPairs));
+
+      setClosetData(reconcileResult.closetData);
+      if (reconcileResult.isCustomDataPresent) {
+        localStorage.setItem(STORAGE_KEYS.CUSTOM_DATA, JSON.stringify(reconcileResult.closetData));
+      } else {
+        localStorage.removeItem(STORAGE_KEYS.CUSTOM_DATA);
       }
 
-      if (Array.isArray(data.wifeNgPairs)) {
-        setWifeNgPairs(data.wifeNgPairs);
-        localStorage.setItem(STORAGE_KEYS.WIFE_NG, JSON.stringify(data.wifeNgPairs));
-      }
-
-      if (data.customClosetData && Array.isArray(data.customClosetData.items)) {
-        setClosetData(data.customClosetData);
-        localStorage.setItem(STORAGE_KEYS.CUSTOM_DATA, JSON.stringify(data.customClosetData));
+      setTombstones(reconcileResult.remainingTombstones);
+      if (hasRemainingTombstones(reconcileResult.remainingTombstones)) {
+        localStorage.setItem(STORAGE_KEYS.SYNC_TOMBSTONES, JSON.stringify(reconcileResult.remainingTombstones));
+      } else {
+        localStorage.removeItem(STORAGE_KEYS.SYNC_TOMBSTONES);
       }
 
       const syncedAt = data.syncedAt || new Date().toISOString();
       setGasConfig((prev) => ({ ...prev, lastSyncedAt: syncedAt }));
-      setSyncStatus('synced');
-      localStorage.removeItem(STORAGE_KEYS.SYNC_DIRTY);
+
+      if (reconcileResult.stillDirty) {
+        localStorage.setItem(STORAGE_KEYS.SYNC_DIRTY, 'true');
+        pendingPushRef.current = true;
+        setSyncStatus('syncing');
+      } else {
+        localStorage.removeItem(STORAGE_KEYS.SYNC_DIRTY);
+        setSyncStatus('synced');
+      }
+
       return true;
     } catch (err: any) {
       console.warn('GAS Pull failed:', err);
       setLastSyncError(err?.message || '同期通信エラー');
       setSyncStatus(navigator.onLine ? 'error' : 'offline_pending');
       return false;
+    } finally {
+      inFlightRef.current = false;
+      if (pendingPushRef.current) {
+        pendingPushRef.current = false;
+        setTimeout(() => {
+          pushToGas();
+        }, 50);
+      }
     }
   }, [pushToGas]);
 
   const triggerBackgroundPush = useCallback(() => {
     localStorage.setItem(STORAGE_KEYS.SYNC_DIRTY, 'true');
     if (stateRef.current.gasConfig.webAppUrl && stateRef.current.gasConfig.autoSync) {
-      setTimeout(() => {
-        pushToGas();
-      }, 50);
+      if (inFlightRef.current) {
+        pendingPushRef.current = true;
+      } else {
+        setTimeout(() => {
+          pushToGas();
+        }, 50);
+      }
     }
   }, [pushToGas]);
 
@@ -623,18 +744,20 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   // Actions
   const recordWear = useCallback(
     (shirtId: string, pantsId: string, scene: SceneMode, dateStr: string = getTodayString()) => {
-      setWearHistory((prev) => {
-        const filtered = prev.filter((r) => r.date !== dateStr);
-        const newRecord: WearRecord = {
-          id: `${dateStr}_${Date.now()}`,
-          date: dateStr,
-          shirtId,
-          pantsId,
-          scene,
-          timestamp: Date.now(),
-        };
-        return [newRecord, ...filtered].sort((a, b) => b.date.localeCompare(a.date));
-      });
+      mutationSeqRef.current++;
+      const now = Date.now();
+      const filtered = stateRef.current.wearHistory.filter((r) => r.date !== dateStr);
+      const newRecord: WearRecord = {
+        id: `${dateStr}_${now}`,
+        date: dateStr,
+        shirtId,
+        pantsId,
+        scene,
+        timestamp: now,
+      };
+      const updatedWear = [newRecord, ...filtered].sort((a, b) => b.date.localeCompare(a.date));
+      stateRef.current.wearHistory = updatedWear;
+      setWearHistory(updatedWear);
       triggerBackgroundPush();
     },
     [triggerBackgroundPush]
@@ -650,52 +773,63 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const removeWearRecord = useCallback(
     (id: string) => {
+      mutationSeqRef.current++;
       const now = Date.now();
-      setWearHistory((prev) => prev.filter((r) => r.id !== id));
-      setTombstones((prev) => ({
-        ...prev,
-        deletedWearMap: { ...prev.deletedWearMap, [id]: now },
-      }));
+      const updatedWear = stateRef.current.wearHistory.filter((r) => r.id !== id);
+      const updatedTombstones: SyncTombstones = {
+        ...stateRef.current.tombstones,
+        deletedWearMap: { ...stateRef.current.tombstones.deletedWearMap, [id]: now },
+      };
+      stateRef.current.wearHistory = updatedWear;
+      stateRef.current.tombstones = updatedTombstones;
+      setWearHistory(updatedWear);
+      setTombstones(updatedTombstones);
       triggerBackgroundPush();
     },
     [triggerBackgroundPush]
   );
 
   const clearAllWearHistory = useCallback(() => {
+    mutationSeqRef.current++;
     const now = Date.now();
-    setWearHistory([]);
-    setTombstones((prev) => ({
-      ...prev,
+    const updatedTombstones: SyncTombstones = {
+      ...stateRef.current.tombstones,
       wearHistoryClearedAt: now,
       deletedWearMap: {},
-    }));
+    };
+    stateRef.current.wearHistory = [];
+    stateRef.current.tombstones = updatedTombstones;
+    setWearHistory([]);
+    setTombstones(updatedTombstones);
     triggerBackgroundPush();
   }, [triggerBackgroundPush]);
 
   const registerWifeNg = useCallback(
     (shirtId: string, pantsId: string, customReason = '🚨 奥様からNG指定') => {
+      mutationSeqRef.current++;
       const key = `${shirtId}_${pantsId}`;
-      setWifeNgPairs((prev) => {
-        const exists = prev.some((p) => p.shirtId === shirtId && p.pantsId === pantsId);
-        if (exists) return prev;
-        return [
+      const exists = stateRef.current.wifeNgPairs.some((p) => p.shirtId === shirtId && p.pantsId === pantsId);
+      if (!exists) {
+        const updatedWifeNg: WifeNgPair[] = [
           {
             shirtId,
             pantsId,
             reason: customReason,
             createdAt: new Date().toISOString(),
           },
-          ...prev,
+          ...stateRef.current.wifeNgPairs,
         ];
-      });
-      setTombstones((prev) => {
-        const nextMap = { ...prev.deletedWifeNgMap };
-        delete nextMap[key];
-        return {
-          ...prev,
-          deletedWifeNgMap: nextMap,
-        };
-      });
+        stateRef.current.wifeNgPairs = updatedWifeNg;
+        setWifeNgPairs(updatedWifeNg);
+      }
+      const nextMap = { ...stateRef.current.tombstones.deletedWifeNgMap };
+      delete nextMap[key];
+      const updatedTombstones: SyncTombstones = {
+        ...stateRef.current.tombstones,
+        deletedWifeNgMap: nextMap,
+      };
+      stateRef.current.tombstones = updatedTombstones;
+      setTombstones(updatedTombstones);
       triggerBackgroundPush();
     },
     [triggerBackgroundPush]
@@ -703,15 +837,18 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const removeWifeNg = useCallback(
     (shirtId: string, pantsId: string) => {
+      mutationSeqRef.current++;
       const key = `${shirtId}_${pantsId}`;
       const now = Date.now();
-      setWifeNgPairs((prev) =>
-        prev.filter((p) => !(p.shirtId === shirtId && p.pantsId === pantsId))
-      );
-      setTombstones((prev) => ({
-        ...prev,
-        deletedWifeNgMap: { ...prev.deletedWifeNgMap, [key]: now },
-      }));
+      const updatedWifeNg = stateRef.current.wifeNgPairs.filter((p) => !(p.shirtId === shirtId && p.pantsId === pantsId));
+      const updatedTombstones: SyncTombstones = {
+        ...stateRef.current.tombstones,
+        deletedWifeNgMap: { ...stateRef.current.tombstones.deletedWifeNgMap, [key]: now },
+      };
+      stateRef.current.wifeNgPairs = updatedWifeNg;
+      stateRef.current.tombstones = updatedTombstones;
+      setWifeNgPairs(updatedWifeNg);
+      setTombstones(updatedTombstones);
       triggerBackgroundPush();
     },
     [triggerBackgroundPush]
@@ -724,9 +861,17 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         if (!parsed || !Array.isArray(parsed.items) || parsed.items.length === 0) {
           return { success: false, error: 'JSONには有効な "items" 配列が必要です。' };
         }
+        mutationSeqRef.current++;
+        customDataSeqRef.current++;
         localStorage.setItem(STORAGE_KEYS.CUSTOM_DATA, jsonString);
+        stateRef.current.closetData = parsed;
+        const updatedTombstones: SyncTombstones = {
+          ...stateRef.current.tombstones,
+          clearCustomClosetData: false,
+        };
+        stateRef.current.tombstones = updatedTombstones;
         setClosetData(parsed);
-        setTombstones((prev) => ({ ...prev, clearCustomClosetData: false }));
+        setTombstones(updatedTombstones);
         triggerBackgroundPush();
         return { success: true };
       } catch (e: any) {
@@ -737,9 +882,17 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   );
 
   const resetToDefaultData = useCallback(() => {
+    mutationSeqRef.current++;
+    customDataSeqRef.current++;
     localStorage.removeItem(STORAGE_KEYS.CUSTOM_DATA);
+    stateRef.current.closetData = defaultClosetData as ClosetData;
+    const updatedTombstones: SyncTombstones = {
+      ...stateRef.current.tombstones,
+      clearCustomClosetData: true,
+    };
+    stateRef.current.tombstones = updatedTombstones;
     setClosetData(defaultClosetData as ClosetData);
-    setTombstones((prev) => ({ ...prev, clearCustomClosetData: true }));
+    setTombstones(updatedTombstones);
     triggerBackgroundPush();
   }, [triggerBackgroundPush]);
 

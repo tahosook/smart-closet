@@ -3,10 +3,21 @@ import path from 'node:path';
 import vm from 'node:vm';
 import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
+import ts from 'typescript';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const projectRoot = path.resolve(__dirname, '..');
+
+const syncReconcileTsPath = path.join(projectRoot, 'src/utils/syncReconcile.ts');
+const syncReconcileCode = fs.readFileSync(syncReconcileTsPath, 'utf-8');
+const transpiledJs = ts.transpileModule(syncReconcileCode, {
+  compilerOptions: { module: ts.ModuleKind.ESNext },
+}).outputText;
+const syncReconcile = await import(
+  'data:text/javascript;base64,' + Buffer.from(transpiledJs).toString('base64')
+);
+const { pruneCompletedTombstones, hasRemainingTombstones, reconcileSyncResponse } = syncReconcile;
 
 console.log('🧪 Running GAS backend and sync logic tests...');
 
@@ -513,6 +524,239 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
   assert.equal(res3.customClosetData, null, 'Custom closet data must be cleared when clearCustomClosetData is true');
 
   console.log('  ✅ Custom closet data protection and explicit reset verified');
+}
+
+// -------------------------------------------------------------
+// Test Case 7: Push / Pull 通信中のローカル変更・Tombstone 競合調停 (P1第3回レビュー対応)
+// -------------------------------------------------------------
+{
+  const { ss, context } = createGasEnvironment('sync-token-111');
+  vm.runInContext('setupSpreadsheet()', context);
+
+  const defaultClosetMock = { items: [] };
+
+  // 1. pruneCompletedTombstones の単体検証
+  const sentTombstones = {
+    deletedWearMap: { rec_sent: 1000 },
+    deletedWifeNgMap: { S1_P1: 1000 },
+    wearHistoryClearedAt: 1000,
+    clearCustomClosetData: true,
+  };
+  const currentTombstones = {
+    deletedWearMap: { rec_sent: 1000, rec_inflight: 1500 },
+    deletedWifeNgMap: { S1_P1: 1000, S2_P2: 1600 },
+    wearHistoryClearedAt: 1000,
+    clearCustomClosetData: true,
+  };
+
+  const pruned = pruneCompletedTombstones(currentTombstones, sentTombstones);
+  assert.equal(pruned.deletedWearMap.rec_sent, undefined, 'Sent wear tombstone must be pruned');
+  assert.equal(pruned.deletedWearMap.rec_inflight, 1500, 'In-flight wear tombstone must be preserved');
+  assert.equal(pruned.deletedWifeNgMap.S1_P1, undefined, 'Sent wife NG tombstone must be pruned');
+  assert.equal(pruned.deletedWifeNgMap.S2_P2, 1600, 'In-flight wife NG tombstone must be preserved');
+  assert.equal(pruned.wearHistoryClearedAt, undefined, 'Sent clearedAt must be pruned');
+  assert.equal(pruned.clearCustomClosetData, undefined, 'Sent clearCustomClosetData must be pruned');
+  assert.equal(hasRemainingTombstones(pruned), true, 'Remaining tombstones must be detected');
+
+  // 2. Push 通信中の新規削除 (Tombstone 保護) & 新規着用記録の保護
+  const baseTime = Date.now() - 10000;
+  const t_init = baseTime;
+  const t_inflight_del = baseTime + 1000;
+  const t_inflight_add = baseTime + 2000;
+
+  // 初期状態をサーバーに登録
+  const initPayload = {
+    action: 'push',
+    token: 'sync-token-111',
+    wearHistory: [
+      { id: 'rec_keep', date: '2026-10-17', scene: 'office', shirtId: 'S2', pantsId: 'P2', timestamp: t_init },
+      { id: 'rec_to_delete', date: '2026-10-18', scene: 'office', shirtId: 'S1', pantsId: 'P1', timestamp: t_init },
+    ],
+    wifeNgPairs: [],
+  };
+  vm.runInContext(`doPost({ postData: { contents: ${JSON.stringify(JSON.stringify(initPayload))} } })`, context);
+
+  // Push #1 開始時のスナップショット (まだ rec_to_delete の削除を知らない)
+  const push1SentTombstones = { deletedWearMap: {}, deletedWifeNgMap: {} };
+
+  // 通信中にユーザーがローカルで rec_to_delete を削除し、さらに今日着用 rec_new を追加
+  const localStateDuringPush1 = {
+    wearHistory: [
+      { id: 'rec_keep', date: '2026-10-17', scene: 'office', shirtId: 'S2', pantsId: 'P2', timestamp: t_init },
+      { id: 'rec_new', date: '2026-10-18', scene: 'remote', shirtId: 'S3', pantsId: 'P3', timestamp: t_inflight_add },
+    ],
+    wifeNgPairs: [
+      { shirtId: 'S1', pantsId: 'P9', reason: '通信中NG', createdAt: new Date(t_inflight_add).toISOString() },
+    ],
+    closetData: defaultClosetMock,
+    hasCustomData: false,
+    tombstones: {
+      deletedWearMap: { rec_to_delete: t_inflight_del },
+      deletedWifeNgMap: {},
+    },
+  };
+
+  // Push #1 のレスポンス到着 (サーバー側はまだ rec_to_delete を含んでいる)
+  const serverPush1Response = {
+    ok: true,
+    wearHistory: [
+      { id: 'rec_keep', date: '2026-10-17', scene: 'office', shirtId: 'S2', pantsId: 'P2', timestamp: t_init },
+      { id: 'rec_to_delete', date: '2026-10-18', scene: 'office', shirtId: 'S1', pantsId: 'P1', timestamp: t_init },
+    ],
+    wifeNgPairs: [],
+  };
+
+  const reconcile1 = reconcileSyncResponse({
+    serverResponse: serverPush1Response,
+    currentLocal: localStateDuringPush1,
+    sentTombstones: push1SentTombstones,
+    hasInFlightMutations: true,
+    defaultClosetData: defaultClosetMock,
+  });
+
+  // 検証:
+  // - 通信中に追加された Tombstone が消えていないこと
+  assert.equal(
+    reconcile1.remainingTombstones.deletedWearMap.rec_to_delete,
+    t_inflight_del,
+    'In-flight tombstone must NOT be cleared by older response'
+  );
+  // - 通信中に削除した rec_to_delete が古いレスポンスによって復活（チラつき）していないこと
+  assert.equal(
+    reconcile1.wearHistory.some((r) => r.id === 'rec_to_delete'),
+    false,
+    'Deleted record must NOT resurrect from older response'
+  );
+  // - 通信中に追加された rec_new と 通信中NG が保持されていること
+  assert.equal(
+    reconcile1.wearHistory.some((r) => r.id === 'rec_new'),
+    true,
+    'In-flight added wear record must NOT be lost'
+  );
+  assert.equal(
+    reconcile1.wifeNgPairs.some((p) => p.shirtId === 'S1' && p.pantsId === 'P9'),
+    true,
+    'In-flight added wife NG pair must NOT be lost'
+  );
+  // - stillDirty が true であり、追随 Push が必要であることが示されていること
+  assert.equal(reconcile1.stillDirty, true, 'stillDirty must remain true for follow-up push');
+
+  // 追随 Push #2 の送信 (残存 Tombstones と最新状態をサーバーへ)
+  const push2Payload = {
+    action: 'push',
+    token: 'sync-token-111',
+    wearHistory: reconcile1.wearHistory,
+    wifeNgPairs: reconcile1.wifeNgPairs,
+    deletedWearMap: reconcile1.remainingTombstones.deletedWearMap,
+    deletedWifeNgMap: reconcile1.remainingTombstones.deletedWifeNgMap,
+  };
+  const push2Res = JSON.parse(
+    vm.runInContext(`doPost({ postData: { contents: ${JSON.stringify(JSON.stringify(push2Payload))} } })`, context).getContent()
+  );
+  assert.equal(push2Res.ok, true);
+  // サーバー側でも rec_to_delete が確実に除外され、rec_new と S1_P9 が登録されたこと
+  assert.equal(push2Res.wearHistory.some((r) => r.id === 'rec_to_delete'), false);
+  assert.equal(push2Res.wearHistory.some((r) => r.id === 'rec_new'), true);
+  assert.equal(push2Res.wifeNgPairs.some((p) => p.shirtId === 'S1' && p.pantsId === 'P9'), true);
+
+  // Push #2 完了時の調停 (通信中の追加操作なし)
+  const reconcile2 = reconcileSyncResponse({
+    serverResponse: push2Res,
+    currentLocal: {
+      ...localStateDuringPush1,
+      wearHistory: reconcile1.wearHistory,
+      wifeNgPairs: reconcile1.wifeNgPairs,
+      tombstones: reconcile1.remainingTombstones,
+    },
+    sentTombstones: reconcile1.remainingTombstones,
+    hasInFlightMutations: false,
+    defaultClosetData: defaultClosetMock,
+  });
+  // 送信完了した Tombstones がクリアされ、dirty も解除されること
+  assert.equal(hasRemainingTombstones(reconcile2.remainingTombstones), false);
+  assert.equal(reconcile2.stillDirty, false);
+
+  // 3. Pull 通信中のローカル操作の保護
+  const pullStartTombstones = { deletedWearMap: {}, deletedWifeNgMap: {} };
+  const localStateDuringPull = {
+    wearHistory: [
+      { id: 'rec_local_newer', date: '2026-10-18', scene: 'office', shirtId: 'S4', pantsId: 'P4', timestamp: t_inflight_add + 1000 },
+    ],
+    wifeNgPairs: [],
+    closetData: defaultClosetMock,
+    hasCustomData: false,
+    tombstones: {
+      deletedWearMap: { rec_keep: t_inflight_add + 1000 },
+      deletedWifeNgMap: {},
+    },
+  };
+  // 遅延到着した Pull レスポンス (古い rec_keep を含んでいる)
+  const stalePullResponse = {
+    ok: true,
+    wearHistory: [
+      { id: 'rec_keep', date: '2026-10-17', scene: 'office', shirtId: 'S2', pantsId: 'P2', timestamp: t_init },
+    ],
+    wifeNgPairs: [],
+  };
+
+  const reconcilePull = reconcileSyncResponse({
+    serverResponse: stalePullResponse,
+    currentLocal: localStateDuringPull,
+    sentTombstones: pullStartTombstones,
+    hasInFlightMutations: true,
+    defaultClosetData: defaultClosetMock,
+  });
+
+  // Pull の古いデータによって削除した rec_keep が復活せず、新しい rec_local_newer が維持され、stillDirty が true になること
+  assert.equal(reconcilePull.wearHistory.some((r) => r.id === 'rec_keep'), false, 'Pull must NOT resurrect deleted record');
+  assert.equal(reconcilePull.wearHistory.some((r) => r.id === 'rec_local_newer'), true, 'Pull must NOT overwrite in-flight record');
+  assert.equal(reconcilePull.stillDirty, true, 'Pull with in-flight mutations must remain dirty');
+
+  // 4. LockService 実並行リクエスト・リトライシミュレーション
+  let activeLocks = 0;
+  const concurrentSandbox = {
+    SpreadsheetApp: { getActiveSpreadsheet: () => ss },
+    LockService: {
+      getScriptLock: () => ({
+        tryLock: (timeout) => {
+          if (activeLocks > 0) return false;
+          activeLocks++;
+          return true;
+        },
+        releaseLock: () => {
+          if (activeLocks > 0) activeLocks--;
+        },
+      }),
+    },
+    Logger: { log: () => {} },
+    ContentService: {
+      MimeType: { JSON: 'application/json' },
+      createTextOutput: (str) => ({ setMimeType: () => ({ getContent: () => str }) }),
+    },
+    Date, Math, String, Number, Array, Object, Set, Map, JSON, console,
+  };
+  const concurrentContext = vm.createContext(concurrentSandbox);
+  vm.runInContext(codeGsContent.replace('__SMART_CLOSET_SECRET_TOKEN__', 'sync-token-111'), concurrentContext);
+
+  // リクエスト A がロックを取得して実行中
+  activeLocks = 1;
+  // リクエスト B が競合到着 -> ロック取得失敗で 409 的なエラーが返ること
+  const conflictPayload = { action: 'push', token: 'sync-token-111', wearHistory: [] };
+  const conflictResult = JSON.parse(
+    vm.runInContext(`doPost({ postData: { contents: ${JSON.stringify(JSON.stringify(conflictPayload))} } })`, concurrentContext).getContent()
+  );
+  assert.equal(conflictResult.ok, false);
+  assert.match(conflictResult.error, /他端末と同期処理中です/);
+
+  // リクエスト A が完了してロック解放
+  activeLocks = 0;
+  // リクエスト B がリトライ -> 今度は成功すること
+  const retryResult = JSON.parse(
+    vm.runInContext(`doPost({ postData: { contents: ${JSON.stringify(JSON.stringify(conflictPayload))} } })`, concurrentContext).getContent()
+  );
+  assert.equal(retryResult.ok, true);
+
+  console.log('  ✅ In-flight mutation reconciliation, selective tombstone pruning, and concurrent locking verified');
 }
 
 console.log('🎉 All GAS backend & sync logic tests passed successfully!');
