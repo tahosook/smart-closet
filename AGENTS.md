@@ -44,9 +44,10 @@ smart-closet/
 
 ## 3. Essential Commands
 - `npm run dev`: Launch local development server
+- `npm run check`: Run full verification (data integrity + escape hatch scan + type-check + build)
 - `npm run build`: Type-check (`tsc -b`) and build for production (`vite build`)
 - `npm run sync-images`: Synchronize and normalize images from `~/Downloads` into `public/images/`
-- `npm run validate-data`: Run integrity validator for `closet.json` and image files
+- `npm run validate-data`: Run integrity validator for `closet.json`, image files, and escape hatch scan
 
 ## 4. Wardrobe Domain Invariants & Rules
 1. **IDs and Categories:**
@@ -62,8 +63,10 @@ smart-closet/
 4. **Wife NG Registration (`🚨 奥様NG`):**
    - Any pair flagged by user must immediately be excluded from candidate lists and stored in `localStorage` under `smart_closet_wife_ng`.
 
-## 5. Definition of Done (DoD)
-Whenever you modify files or data:
-1. Run `npm run validate-data` and ensure exit code 0 (zero errors).
-2. Run `npm run build` and ensure TypeScript and Vite build pass with zero errors.
-3. Keep mobile layout clean with tap targets at least 44x44px.
+## 5. Definition of Done (DoD) & Guardrails
+Whenever you investigate or modify files:
+1. **No-Actionable Finding, Stop:** If research shows no problem or speculative changes are unwarranted, do not manufacture unnecessary code changes. Complete the task with an investigation report.
+2. **No Escape Hatches:** Never suppress type errors or linter warnings with `@ts-ignore`, `@ts-nocheck`, or `eslint-disable`.
+3. **Run Full Verification:** Always run `npm run check` and ensure exit code 0 (zero errors in data integrity, zero escape hatches, TypeScript type-check and Vite build pass).
+4. **Mobile Usability:** Keep mobile layout clean with tap targets at least 44x44px.
+

@@ -104,6 +104,33 @@ for (const item of data.items) {
   }
 }
 
+// 3. Check for escape hatches in src/
+const srcDir = path.join(projectRoot, 'src');
+const escapeHatchRegex = /@ts-ignore|@ts-nocheck|eslint-disable/;
+
+function scanDirForEscapeHatches(dir) {
+  const entries = fs.readdirSync(dir, { withFileTypes: true });
+  for (const entry of entries) {
+    const fullPath = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      scanDirForEscapeHatches(fullPath);
+    } else if (/\.(ts|tsx|js|jsx)$/.test(entry.name)) {
+      const content = fs.readFileSync(fullPath, 'utf-8');
+      const lines = content.split('\n');
+      lines.forEach((line, index) => {
+        if (escapeHatchRegex.test(line)) {
+          const relPath = path.relative(projectRoot, fullPath);
+          errors.push(`[Escape Hatch] Forbidden comment at ${relPath}:${index + 1}: ${line.trim()}`);
+        }
+      });
+    }
+  }
+}
+
+if (fs.existsSync(srcDir)) {
+  scanDirForEscapeHatches(srcDir);
+}
+
 if (warnings.length > 0) {
   console.log(`⚠️  ${warnings.length} warning(s):`);
   warnings.forEach(w => console.log('  ' + w));
@@ -115,4 +142,5 @@ if (errors.length > 0) {
   process.exit(1);
 }
 
-console.log(`✅ closet.json is valid! Verified ${data.items.length} items (${shirtIds.size} shirts, ${pantsIds.size} pants).`);
+console.log(`✅ closet.json and source code are valid! Verified ${data.items.length} items (${shirtIds.size} shirts, ${pantsIds.size} pants) and clean source code.`);
+
