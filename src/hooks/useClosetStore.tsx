@@ -751,7 +751,8 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const recordWear = useCallback(
     (shirtId: string, pantsId: string, scene: SceneMode, dateStr: string = getTodayString()) => {
       mutationSeqRef.current++;
-      const now = Date.now();
+      const now = Math.max(Date.now(), (stateRef.current.tombstones.wearHistoryClearedAt || 0) + 1);
+      const replacedRecords = stateRef.current.wearHistory.filter((r) => r.date === dateStr);
       const filtered = stateRef.current.wearHistory.filter((r) => r.date !== dateStr);
       const newRecord: WearRecord = {
         id: `${dateStr}_${now}`,
@@ -762,6 +763,23 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         timestamp: now,
       };
       const updatedWear = [newRecord, ...filtered].sort((a, b) => b.date.localeCompare(a.date));
+
+      let updatedTombstones = stateRef.current.tombstones;
+      if (replacedRecords.length > 0) {
+        const nextDeletedWearMap = { ...stateRef.current.tombstones.deletedWearMap };
+        replacedRecords.forEach((r) => {
+          if (r.id !== newRecord.id) {
+            nextDeletedWearMap[r.id] = Math.max(nextDeletedWearMap[r.id] || 0, now);
+          }
+        });
+        updatedTombstones = {
+          ...stateRef.current.tombstones,
+          deletedWearMap: nextDeletedWearMap,
+        };
+        stateRef.current.tombstones = updatedTombstones;
+        setTombstones(updatedTombstones);
+      }
+
       stateRef.current.wearHistory = updatedWear;
       setWearHistory(updatedWear);
       triggerBackgroundPush();
@@ -814,6 +832,8 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     (shirtId: string, pantsId: string, customReason = '🚨 奥様からNG指定') => {
       mutationSeqRef.current++;
       const key = `${shirtId}_${pantsId}`;
+      const prevDeletedAt = stateRef.current.tombstones.deletedWifeNgMap?.[key] || 0;
+      const now = Math.max(Date.now(), prevDeletedAt + 1);
       const exists = stateRef.current.wifeNgPairs.some((p) => p.shirtId === shirtId && p.pantsId === pantsId);
       if (!exists) {
         const updatedWifeNg: WifeNgPair[] = [
@@ -821,7 +841,7 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
             shirtId,
             pantsId,
             reason: customReason,
-            createdAt: new Date().toISOString(),
+            createdAt: new Date(now).toISOString(),
           },
           ...stateRef.current.wifeNgPairs,
         ];
@@ -869,10 +889,14 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         }
         mutationSeqRef.current++;
         customDataSeqRef.current++;
-        const now = Date.now();
+        const now = Math.max(
+          Date.now(),
+          (stateRef.current.closetData.updatedAt || 0) + 1,
+          (stateRef.current.tombstones.customClosetDataClearedAt || 0) + 1
+        );
         const dataWithTimestamp: ClosetData = {
           ...parsed,
-          updatedAt: parsed.updatedAt || now,
+          updatedAt: now,
         };
         localStorage.setItem(STORAGE_KEYS.CUSTOM_DATA, JSON.stringify(dataWithTimestamp));
         stateRef.current.closetData = dataWithTimestamp;

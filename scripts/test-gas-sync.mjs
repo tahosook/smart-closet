@@ -957,7 +957,226 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
   );
   assert.equal(tombstonesAfterReimport.customClosetDataClearedAt, 0, 'Tombstone must be cleared after newer reimport');
 
-  console.log('  ✅ Stale custom closet data resurrection prevention and valid re-import verified');
+  // 6. ★ChatGPT 第6回レビュー指摘 (P1): 未同期の端末 B が古い削除指示 (t1 < t2) を保持したまま Push
+  const staleResetPayloadB = {
+    action: 'push',
+    token: 'sync-token-111',
+    wearHistory: [{ id: 'rec_b2', date: '2026-10-18', scene: 'remote', shirtId: 'S2', pantsId: 'P2', timestamp: t1_deleted + 200 }],
+    clearCustomClosetData: true,
+    customClosetDataClearedAt: t1_deleted,
+  };
+  const staleResetResB = JSON.parse(
+    vm.runInContext(`doPost({ postData: { contents: ${JSON.stringify(JSON.stringify(staleResetPayloadB))} } })`, context).getContent()
+  );
+  assert.equal(staleResetResB.ok, true);
+  // ★重要検証: 端末Aが t2 で再インポートした新データが、端末Bの古い削除指示 (t1) によって消去されていないこと！
+  assert.ok(staleResetResB.customClosetData && staleResetResB.customClosetData.items.length === 1, 'Stale reset instruction must NOT wipe out newer reimported custom data!');
+  assert.equal(staleResetResB.customClosetData.items[0].id, 'P100');
+  const tombstonesAfterStaleReset = JSON.parse(
+    vm.runInContext('readConfigValue(SpreadsheetApp.getActiveSpreadsheet(), "syncTombstones")', context)
+  );
+  assert.equal(tombstonesAfterStaleReset.customClosetDataClearedAt, 0, 'Server tombstone must remain 0 after ignoring stale deletion');
+
+  // 7. ★正当な追随削除: 新データ (t2) より新しい時刻 t3 に削除指示が Push された場合は消去されること
+  const t3_newer_delete = t2_reimported + 10000;
+  const newerResetPayloadB = {
+    action: 'push',
+    token: 'sync-token-111',
+    clearCustomClosetData: true,
+    customClosetDataClearedAt: t3_newer_delete,
+  };
+  const newerResetResB = JSON.parse(
+    vm.runInContext(`doPost({ postData: { contents: ${JSON.stringify(JSON.stringify(newerResetPayloadB))} } })`, context).getContent()
+  );
+  assert.equal(newerResetResB.ok, true);
+  assert.equal(newerResetResB.customClosetData, null, 'Newer deletion instruction must wipe custom data');
+  assert.equal(newerResetResB.customClosetDataClearedAt, t3_newer_delete, 'Server must return newer deletion timestamp');
+  const tombstonesAfterNewerReset = JSON.parse(
+    vm.runInContext('readConfigValue(SpreadsheetApp.getActiveSpreadsheet(), "syncTombstones")', context)
+  );
+  assert.equal(tombstonesAfterNewerReset.customClosetDataClearedAt, t3_newer_delete);
+
+  console.log('  ✅ Stale custom closet data resurrection prevention, valid re-import, and stale deletion rejection verified');
+}
+
+// -------------------------------------------------------------
+// Test Case 9: 配列フォールバックによるタイムスタンプ昇格防止 ＆ 同日着用上書きTombstone (横断監査対応)
+// -------------------------------------------------------------
+{
+  const { ss, context } = createGasEnvironment('sync-token-222');
+  vm.runInContext('setupSpreadsheet()', context);
+
+  const baseTime = Date.now() - 30000;
+  const t1_deleted = baseTime;
+  const t2_readded = baseTime + 10000;
+
+  // 1. 端末 A が奥様NG S1_P2 を再登録 (t2 > t1) して Push
+  const readdPayloadA = {
+    action: 'push',
+    token: 'sync-token-222',
+    wifeNgPairs: [{ shirtId: 'S1', pantsId: 'P2', reason: '再登録NG', createdAt: new Date(t2_readded).toISOString() }],
+  };
+  const readdResA = JSON.parse(
+    vm.runInContext(`doPost({ postData: { contents: ${JSON.stringify(JSON.stringify(readdPayloadA))} } })`, context).getContent()
+  );
+  assert.equal(readdResA.ok, true);
+  assert.equal(readdResA.wifeNgPairs.length, 1);
+
+  // 2. 端末 B がオンライン復帰し、deletedWifeNgMap (t1) と deletedWifeNgKeys の両方を送信
+  // （後方互換配列処理が t1 を now に昇格させて端末Aの再登録 t2 を消去しないことの検証）
+  const stalePushPayloadB = {
+    action: 'push',
+    token: 'sync-token-222',
+    deletedWifeNgMap: { 'S1_P2': t1_deleted },
+    deletedWifeNgKeys: ['S1_P2'],
+  };
+  const staleResB = JSON.parse(
+    vm.runInContext(`doPost({ postData: { contents: ${JSON.stringify(JSON.stringify(stalePushPayloadB))} } })`, context).getContent()
+  );
+  assert.equal(staleResB.ok, true);
+  assert.equal(staleResB.wifeNgPairs.length, 1, 'Re-added wifeNg pair must NOT be deleted by stale tombstone with array fallback');
+  assert.equal(staleResB.wifeNgPairs[0].shirtId, 'S1');
+  assert.equal(staleResB.wifeNgPairs[0].pantsId, 'P2');
+
+  // 3. 同日着用履歴の置換とTombstone検証
+  const t0_wear = baseTime - 5000;
+  const t1_wear_replace = baseTime;
+  const t2_wear_delete = baseTime + 5000;
+
+  // 初期状態: rec_old (t0) を登録
+  const initWearPayload = {
+    action: 'push',
+    token: 'sync-token-222',
+    wearHistory: [
+      { id: '2026-10-18_old', date: '2026-10-18', scene: 'office', shirtId: 'S1', pantsId: 'P1', timestamp: t0_wear }
+    ],
+  };
+  vm.runInContext(`doPost({ postData: { contents: ${JSON.stringify(JSON.stringify(initWearPayload))} } })`, context);
+
+  // rec_new (t1) で上書き
+  const wearReplacePayload = {
+    action: 'push',
+    token: 'sync-token-222',
+    wearHistory: [
+      { id: '2026-10-18_new', date: '2026-10-18', scene: 'office', shirtId: 'S2', pantsId: 'P2', timestamp: t1_wear_replace }
+    ],
+  };
+  const wearReplaceRes = JSON.parse(
+    vm.runInContext(`doPost({ postData: { contents: ${JSON.stringify(JSON.stringify(wearReplacePayload))} } })`, context).getContent()
+  );
+  assert.equal(wearReplaceRes.ok, true);
+  assert.equal(wearReplaceRes.wearHistory[0].id, '2026-10-18_new');
+
+  // サーバー側 Tombstone に rec_old が記録されたことを確認
+  const tombstonesAfterReplace = JSON.parse(
+    vm.runInContext('readConfigValue(SpreadsheetApp.getActiveSpreadsheet(), "syncTombstones")', context)
+  );
+  assert.ok(tombstonesAfterReplace.deletedWearMap['2026-10-18_old'] >= t1_wear_replace);
+
+  // rec_new を削除 (t2)
+  const wearDeletePayload = {
+    action: 'push',
+    token: 'sync-token-222',
+    deletedWearMap: { '2026-10-18_new': t2_wear_delete },
+    deletedWearIds: ['2026-10-18_new'],
+  };
+  const wearDeleteRes = JSON.parse(
+    vm.runInContext(`doPost({ postData: { contents: ${JSON.stringify(JSON.stringify(wearDeletePayload))} } })`, context).getContent()
+  );
+  assert.equal(wearDeleteRes.ok, true);
+  assert.equal(wearDeleteRes.wearHistory.length, 0);
+
+  // 別端末から古い rec_old (t0) を Push しても復活しないこと！
+  const staleOldWearPayload = {
+    action: 'push',
+    token: 'sync-token-222',
+    wearHistory: [
+      { id: '2026-10-18_old', date: '2026-10-18', scene: 'office', shirtId: 'S1', pantsId: 'P1', timestamp: t0_wear }
+    ],
+  };
+  const staleOldRes = JSON.parse(
+    vm.runInContext(`doPost({ postData: { contents: ${JSON.stringify(JSON.stringify(staleOldWearPayload))} } })`, context).getContent()
+  );
+  assert.equal(staleOldRes.ok, true);
+  assert.equal(staleOldRes.wearHistory.length, 0, 'Replaced old wear record must NOT resurrect after newer record is deleted');
+
+  console.log('  ✅ Array fallback timestamp preservation and superseded wear record safety verified');
+}
+
+// -------------------------------------------------------------
+// Test Case 10: クライアント側 reconcileSyncResponse LWW 調停 (横断監査対応)
+// -------------------------------------------------------------
+{
+  const defaultClosetMock = { items: [] };
+  const baseTime = Date.now() - 10000;
+
+  // 1. ローカルに古い削除 Tombstone (t1) が残っている状態で、サーバーから新しいカスタムデータ (t2 > t1) を受信
+  const t1_local_del = baseTime;
+  const t2_server_upd = baseTime + 5000;
+
+  const localWithStaleDelete = {
+    wearHistory: [],
+    wifeNgPairs: [],
+    closetData: defaultClosetMock,
+    hasCustomData: false,
+    tombstones: {
+      deletedWearMap: {},
+      deletedWifeNgMap: {},
+      clearCustomClosetData: true,
+      customClosetDataClearedAt: t1_local_del,
+    },
+  };
+
+  const serverResponseWithNewCustom = {
+    ok: true,
+    wearHistory: [],
+    wifeNgPairs: [],
+    customClosetData: {
+      items: [{ id: 'P99', name: '新カスタム', category: 'pants', dressScore: 4.0, comfortScore: 4.0 }],
+      updatedAt: t2_server_upd,
+    },
+    tombstones: { deletedWearMap: {}, deletedWifeNgMap: {} },
+  };
+
+  const reconciled = reconcileSyncResponse({
+    serverResponse: serverResponseWithNewCustom,
+    currentLocal: localWithStaleDelete,
+    sentTombstones: { deletedWearMap: {}, deletedWifeNgMap: {} },
+    hasInFlightMutations: true,
+    hasInFlightCustomDataChange: false,
+    defaultClosetData: defaultClosetMock,
+  });
+
+  assert.equal(reconciled.isCustomDataPresent, true, 'Server newer custom data must win over local stale delete');
+  assert.equal(reconciled.closetData.items[0].id, 'P99');
+  assert.equal(reconciled.remainingTombstones.clearCustomClosetData, undefined, 'Stale local delete tombstone must be pruned');
+
+  // 2. 逆にローカルに未送信の新しいカスタムデータ (t3) がある場合、サーバーの古いデータ (t2) に上書きされないこと
+  const t3_local_upd = t2_server_upd + 5000;
+  const localWithNewCustom = {
+    wearHistory: [],
+    wifeNgPairs: [],
+    closetData: {
+      items: [{ id: 'P101', name: 'ローカル最新カスタム', category: 'pants', dressScore: 5.0, comfortScore: 5.0 }],
+      updatedAt: t3_local_upd,
+    },
+    hasCustomData: true,
+    tombstones: { deletedWearMap: {}, deletedWifeNgMap: {} },
+  };
+
+  const reconciledLocalWins = reconcileSyncResponse({
+    serverResponse: serverResponseWithNewCustom,
+    currentLocal: localWithNewCustom,
+    sentTombstones: { deletedWearMap: {}, deletedWifeNgMap: {} },
+    hasInFlightMutations: true,
+    hasInFlightCustomDataChange: false,
+    defaultClosetData: defaultClosetMock,
+  });
+
+  assert.equal(reconciledLocalWins.isCustomDataPresent, true);
+  assert.equal(reconciledLocalWins.closetData.items[0].id, 'P101', 'Local newer custom data must NOT be overwritten by older server data');
+
+  console.log('  ✅ Client reconcileSyncResponse LWW resolution verified');
 }
 
 console.log('🎉 All GAS backend & sync logic tests passed successfully!');

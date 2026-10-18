@@ -155,6 +155,8 @@ export function reconcileSyncResponse({
   }
 
   // 通信中に変更または未送信 Tombstone がある場合:
+  const serverTombstones = serverResponse.tombstones;
+
   // 1. WearHistory の調停 (LWW + Tombstone フィルタ)
   const isWearRecordValid = (rec: WearRecord): boolean => {
     if (!rec || !rec.date) return false;
@@ -166,9 +168,24 @@ export function reconcileSyncResponse({
       return false;
     }
     if (
+      serverTombstones &&
+      serverTombstones.wearHistoryClearedAt !== undefined &&
+      ts <= serverTombstones.wearHistoryClearedAt
+    ) {
+      return false;
+    }
+    if (
       remainingTombstones.deletedWearMap &&
       remainingTombstones.deletedWearMap[rec.id] !== undefined &&
       ts <= remainingTombstones.deletedWearMap[rec.id]
+    ) {
+      return false;
+    }
+    if (
+      serverTombstones &&
+      serverTombstones.deletedWearMap &&
+      serverTombstones.deletedWearMap[rec.id] !== undefined &&
+      ts <= serverTombstones.deletedWearMap[rec.id]
     ) {
       return false;
     }
@@ -205,6 +222,14 @@ export function reconcileSyncResponse({
     ) {
       return false;
     }
+    if (
+      serverTombstones &&
+      serverTombstones.deletedWifeNgMap &&
+      serverTombstones.deletedWifeNgMap[key] !== undefined &&
+      createdTs <= serverTombstones.deletedWifeNgMap[key]
+    ) {
+      return false;
+    }
     return true;
   };
 
@@ -229,28 +254,56 @@ export function reconcileSyncResponse({
     (b.createdAt || '').localeCompare(a.createdAt || '')
   );
 
-  // 3. ClosetData の調停
+  // 3. ClosetData の調停 (LWW セマンティクス)
   let closetData = currentLocal.closetData;
   let isCustomDataPresent = currentLocal.hasCustomData;
 
+  const serverCustom =
+    serverResponse.customClosetData && Array.isArray(serverResponse.customClosetData.items)
+      ? serverResponse.customClosetData
+      : null;
+  const serverUpd = serverCustom ? Number(serverCustom.updatedAt || 0) : 0;
+  const serverDel = Number(serverResponse.customClosetDataClearedAt || 0);
+
+  const localCustom = currentLocal.hasCustomData ? currentLocal.closetData : null;
+  const localUpd = localCustom ? Number(localCustom.updatedAt || 0) : 0;
+  const localDel = Number(remainingTombstones.customClosetDataClearedAt || 0);
+  const isLocalDeletionRequested = Boolean(
+    remainingTombstones.clearCustomClosetData || remainingTombstones.customClosetDataClearedAt !== undefined
+  );
+
   if (hasInFlightCustomDataChange) {
-    // 通信中にローカルでカスタムデータ操作があった場合はローカルを優先
+    // 通信中にローカルでカスタムデータ操作があった場合はローカルを最優先
     closetData = currentLocal.closetData;
     isCustomDataPresent = currentLocal.hasCustomData;
-  } else if (remainingTombstones.clearCustomClosetData || remainingTombstones.customClosetDataClearedAt !== undefined) {
-    closetData = defaultClosetData;
-    isCustomDataPresent = false;
-  } else if (serverResponse.customClosetData && Array.isArray(serverResponse.customClosetData.items)) {
-    closetData = serverResponse.customClosetData;
+  } else if (serverCustom && serverUpd >= localDel && serverUpd >= localUpd) {
+    // サーバーのカスタムデータがローカルの削除・データより新しい場合はサーバーを採用
+    closetData = serverCustom;
     isCustomDataPresent = true;
-  } else if ((sentTombstones.clearCustomClosetData || sentTombstones.customClosetDataClearedAt !== undefined) && !serverResponse.customClosetData) {
+    if (remainingTombstones.customClosetDataClearedAt !== undefined && serverUpd > localDel) {
+      delete remainingTombstones.customClosetDataClearedAt;
+      delete remainingTombstones.clearCustomClosetData;
+    }
+  } else if (
+    localCustom &&
+    localUpd > serverUpd &&
+    localUpd > serverDel &&
+    (!isLocalDeletionRequested || localUpd > localDel)
+  ) {
+    // ローカルのカスタムデータがサーバーより新しい場合はローカルを保持
+    closetData = localCustom;
+    isCustomDataPresent = true;
+  } else if (isLocalDeletionRequested && localDel >= serverUpd) {
+    // ローカルの削除指示がサーバーデータより新しい場合は削除を採用
     closetData = defaultClosetData;
     isCustomDataPresent = false;
   } else if (
-    (serverResponse.customClosetData === null || !serverResponse.customClosetData) &&
-    serverResponse.customClosetDataClearedAt !== undefined &&
-    serverResponse.customClosetDataClearedAt >= (currentLocal.closetData.updatedAt || 0)
+    !serverCustom &&
+    (serverDel >= localUpd ||
+      sentTombstones.clearCustomClosetData ||
+      sentTombstones.customClosetDataClearedAt !== undefined)
   ) {
+    // サーバー側で削除されている場合
     closetData = defaultClosetData;
     isCustomDataPresent = false;
   }

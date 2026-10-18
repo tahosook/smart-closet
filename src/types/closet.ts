@@ -92,6 +92,7 @@ export interface GasSyncResponse {
   wifeNgPairs?: WifeNgPair[];
   customClosetData?: ClosetData | null;
   customClosetDataClearedAt?: number;       // サーバー側のカスタムデータ削除時刻
+  tombstones?: SyncTombstones;              // サーバー側の削除 Tombstone 状態
   syncedAt?: string;
 }
 
