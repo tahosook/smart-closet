@@ -135,8 +135,8 @@ export const WeatherWidget: React.FC<WeatherWidgetProps> = ({
   };
 
   return (
-    <div className="bg-slate-800/90 border border-slate-700/80 rounded-2xl p-3 shadow-lg backdrop-blur-md">
-      <div className="flex items-center justify-between text-xs text-slate-400 mb-1.5">
+    <div className="bg-slate-800/90 border border-slate-700/80 rounded-2xl px-3 py-2 sm:p-3 shadow-lg backdrop-blur-md">
+      <div className="flex items-center justify-between text-xs text-slate-400 mb-1">
         <button
           onClick={handleToggleLocation}
           className="flex items-center gap-1 hover:text-white transition-colors"
