@@ -848,4 +848,116 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
   console.log('  ✅ In-flight mutation reconciliation, selective tombstone pruning, and concurrent locking verified');
 }
 
+// -------------------------------------------------------------
+// Test Case 8: 別端末からの古いカスタムデータ復活防止 ＆ 正当な再インポート (P1第5回レビュー対応)
+// -------------------------------------------------------------
+{
+  const { ss, context } = createGasEnvironment('sync-token-111');
+  vm.runInContext('setupSpreadsheet()', context);
+
+  const defaultClosetMock = { items: [] };
+  const baseTime = Date.now() - 20000;
+  const t0_imported = baseTime;              // 端末A・Bが共有していた古いカスタムデータの更新時刻
+  const t1_deleted = baseTime + 10000;       // 端末Aがカスタムデータをリセットした時刻
+  const t2_reimported = baseTime + 20000;    // 端末Aが新しいカスタムデータを正当に再インポートした時刻
+
+  // 1. 端末 A がカスタム服データ (updatedAt: t0) をスプレッドシートに登録
+  const initCustomPayload = {
+    action: 'push',
+    token: 'sync-token-111',
+    customClosetData: {
+      items: [{ id: 'P88', name: '旧カスタムパンツ', category: 'pants', dressScore: 4.0, comfortScore: 4.0 }],
+      updatedAt: t0_imported,
+    },
+    customClosetDataUpdatedAt: t0_imported,
+  };
+  const initRes = JSON.parse(
+    vm.runInContext(`doPost({ postData: { contents: ${JSON.stringify(JSON.stringify(initCustomPayload))} } })`, context).getContent()
+  );
+  assert.equal(initRes.ok, true);
+  assert.equal(initRes.customClosetData.items.length, 1);
+
+  // 2. 端末 A がカスタム服データをリセット (clearCustomClosetData: true, customClosetDataClearedAt: t1)
+  const resetPayloadA = {
+    action: 'push',
+    token: 'sync-token-111',
+    clearCustomClosetData: true,
+    customClosetDataClearedAt: t1_deleted,
+  };
+  const resetResA = JSON.parse(
+    vm.runInContext(`doPost({ postData: { contents: ${JSON.stringify(JSON.stringify(resetPayloadA))} } })`, context).getContent()
+  );
+  assert.equal(resetResA.ok, true);
+  assert.equal(resetResA.customClosetData, null, 'Custom closet data must be cleared on server');
+
+  // サーバー側の meta_config に customClosetDataClearedAt が永続化されていることを検証
+  const savedTombstones = JSON.parse(
+    vm.runInContext('readConfigValue(SpreadsheetApp.getActiveSpreadsheet(), "syncTombstones")', context)
+  );
+  assert.equal(savedTombstones.customClosetDataClearedAt, t1_deleted, 'customClosetDataClearedAt must be persisted in server tombstones');
+
+  // 3. ★重要: 未同期の端末 B が古いカスタムデータ (updatedAt: t0 < t1) を保持したまま通常の Push を実行
+  const stalePushPayloadB = {
+    action: 'push',
+    token: 'sync-token-111',
+    wearHistory: [{ id: 'rec_b', date: '2026-10-18', scene: 'office', shirtId: 'S1', pantsId: 'P1', timestamp: t1_deleted + 100 }],
+    customClosetData: {
+      items: [{ id: 'P88', name: '旧カスタムパンツ', category: 'pants', dressScore: 4.0, comfortScore: 4.0 }],
+      updatedAt: t0_imported,
+    },
+    customClosetDataUpdatedAt: t0_imported,
+  };
+  const staleResB = JSON.parse(
+    vm.runInContext(`doPost({ postData: { contents: ${JSON.stringify(JSON.stringify(stalePushPayloadB))} } })`, context).getContent()
+  );
+  assert.equal(staleResB.ok, true);
+
+  // ★重要検証: 古い端末からの再送によってカスタムデータがサーバー上で復活していないこと！
+  assert.equal(staleResB.customClosetData, null, 'Stale custom closet data must NOT resurrect on server!');
+  assert.equal(staleResB.customClosetDataClearedAt, t1_deleted, 'Server must return customClosetDataClearedAt to stale client');
+
+  // 4. 端末 B 側でこのレスポンスを受信した際、端末 B のローカル状態も正しくリセットされること
+  const localStateB = {
+    wearHistory: stalePushPayloadB.wearHistory,
+    wifeNgPairs: [],
+    closetData: stalePushPayloadB.customClosetData,
+    hasCustomData: true,
+    tombstones: { deletedWearMap: {}, deletedWifeNgMap: {} },
+  };
+  const reconcileB = reconcileSyncResponse({
+    serverResponse: staleResB,
+    currentLocal: localStateB,
+    sentTombstones: { deletedWearMap: {}, deletedWifeNgMap: {} },
+    hasInFlightMutations: false,
+    defaultClosetData: defaultClosetMock,
+  });
+  assert.equal(reconcileB.isCustomDataPresent, false, 'Client B must synchronize deletion from server');
+  assert.deepEqual(reconcileB.closetData, defaultClosetMock);
+
+  // 5. ★正当な再インポート: 削除時刻 t1 より新しい時刻 t2 に新カスタムデータをインポートして Push
+  const reimportPayload = {
+    action: 'push',
+    token: 'sync-token-111',
+    customClosetData: {
+      items: [{ id: 'P100', name: '新カスタムスラックス', category: 'pants', dressScore: 4.8, comfortScore: 4.5 }],
+      updatedAt: t2_reimported,
+    },
+    customClosetDataUpdatedAt: t2_reimported,
+  };
+  const reimportRes = JSON.parse(
+    vm.runInContext(`doPost({ postData: { contents: ${JSON.stringify(JSON.stringify(reimportPayload))} } })`, context).getContent()
+  );
+  assert.equal(reimportRes.ok, true);
+  assert.ok(reimportRes.customClosetData && reimportRes.customClosetData.items.length === 1, 'New custom closet data must be accepted');
+  assert.equal(reimportRes.customClosetData.items[0].id, 'P100');
+
+  // サーバー側 Tombstone の customClosetDataClearedAt が解除（0）されたことを確認
+  const tombstonesAfterReimport = JSON.parse(
+    vm.runInContext('readConfigValue(SpreadsheetApp.getActiveSpreadsheet(), "syncTombstones")', context)
+  );
+  assert.equal(tombstonesAfterReimport.customClosetDataClearedAt, 0, 'Tombstone must be cleared after newer reimport');
+
+  console.log('  ✅ Stale custom closet data resurrection prevention and valid re-import verified');
+}
+
 console.log('🎉 All GAS backend & sync logic tests passed successfully!');

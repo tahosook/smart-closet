@@ -18,6 +18,7 @@ export interface ClosetItem {
 
 export interface ClosetData {
   items: ClosetItem[];
+  updatedAt?: number; // カスタム服データの作成・インポート時刻
 }
 
 export interface WearRecord {
@@ -73,7 +74,9 @@ export interface GasSyncPayload {
   wearHistory?: WearRecord[];
   wifeNgPairs?: WifeNgPair[];
   customClosetData?: ClosetData;
+  customClosetDataUpdatedAt?: number;       // 送信カスタム服データの更新時刻
   clearCustomClosetData?: boolean;
+  customClosetDataClearedAt?: number;       // カスタムデータ削除時刻
   deletedWearMap?: Record<string, number>;
   deletedWearIds?: string[];
   wearHistoryClearedAt?: number;
@@ -88,6 +91,7 @@ export interface GasSyncResponse {
   wearHistory?: WearRecord[];
   wifeNgPairs?: WifeNgPair[];
   customClosetData?: ClosetData | null;
+  customClosetDataClearedAt?: number;       // サーバー側のカスタムデータ削除時刻
   syncedAt?: string;
 }
 

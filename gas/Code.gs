@@ -96,12 +96,14 @@ function doGet(e) {
     const wearHistory = readWearHistory(ss);
     const wifeNgPairs = readWifeNg(ss);
     const customClosetData = readCustomData(ss);
+    const tombstones = readTombstones(ss);
 
     return createJsonResponse({
       ok: true,
       wearHistory: wearHistory,
       wifeNgPairs: wifeNgPairs,
       customClosetData: customClosetData,
+      customClosetDataClearedAt: tombstones.customClosetDataClearedAt || undefined,
       syncedAt: new Date().toISOString()
     });
   } catch (err) {
@@ -161,11 +163,24 @@ function doPost(e) {
     );
     writeWifeNg(ss, mergedWifeNg, itemNamesMap);
 
-    // 3. customClosetData の保護更新
-    if (payload.clearCustomClosetData === true) {
+    // 3. customClosetData の保護更新 (LWW セマンティクス)
+    const customClearedAt = tombstones.customClosetDataClearedAt || 0;
+    if (payload.clearCustomClosetData === true || (payload.customClosetDataClearedAt && payload.customClosetDataClearedAt >= customClearedAt)) {
       writeCustomData(ss, null);
     } else if (payload.customClosetData && Array.isArray(payload.customClosetData.items)) {
-      writeCustomData(ss, payload.customClosetData);
+      const incomingUpdatedAt = Number(
+        payload.customClosetDataUpdatedAt ||
+        payload.customClosetData.updatedAt ||
+        0
+      );
+      if (customClearedAt > 0 && incomingUpdatedAt <= customClearedAt) {
+        // 削除時刻以前の古いカスタムデータは除外（古い端末からの復活をブロック！）
+      } else {
+        // 削除時刻より新しい正当な再登録、または削除未記録の場合
+        writeCustomData(ss, payload.customClosetData);
+        // 削除時刻より新しく登録されたため、Tombstone を解除
+        tombstones.customClosetDataClearedAt = 0;
+      }
     }
     // undefined の場合は既存のカスタムデータを保護（何もしない）
 
@@ -181,6 +196,7 @@ function doPost(e) {
       wearHistory: mergedWearHistory,
       wifeNgPairs: mergedWifeNg,
       customClosetData: readCustomData(ss),
+      customClosetDataClearedAt: tombstones.customClosetDataClearedAt || undefined,
       syncedAt: new Date().toISOString()
     });
   } catch (err) {
@@ -200,7 +216,8 @@ function readTombstones(ss) {
     return {
       deletedWearMap: {},
       deletedWifeNgMap: {},
-      wearHistoryClearedAt: 0
+      wearHistoryClearedAt: 0,
+      customClosetDataClearedAt: 0
     };
   }
   try {
@@ -208,13 +225,15 @@ function readTombstones(ss) {
     return {
       deletedWearMap: parsed.deletedWearMap || {},
       deletedWifeNgMap: parsed.deletedWifeNgMap || {},
-      wearHistoryClearedAt: Number(parsed.wearHistoryClearedAt) || 0
+      wearHistoryClearedAt: Number(parsed.wearHistoryClearedAt) || 0,
+      customClosetDataClearedAt: Number(parsed.customClosetDataClearedAt) || 0
     };
   } catch (e) {
     return {
       deletedWearMap: {},
       deletedWifeNgMap: {},
-      wearHistoryClearedAt: 0
+      wearHistoryClearedAt: 0,
+      customClosetDataClearedAt: 0
     };
   }
 }
@@ -272,6 +291,19 @@ function integrateIncomingTombstones(serverTombstones, payload) {
         now
       );
     });
+  }
+
+  // 4. カスタムデータ削除タイムスタンプの統合
+  if (payload.customClosetDataClearedAt) {
+    serverTombstones.customClosetDataClearedAt = Math.max(
+      serverTombstones.customClosetDataClearedAt || 0,
+      payload.customClosetDataClearedAt
+    );
+  } else if (payload.clearCustomClosetData) {
+    serverTombstones.customClosetDataClearedAt = Math.max(
+      serverTombstones.customClosetDataClearedAt || 0,
+      now
+    );
   }
 }
 

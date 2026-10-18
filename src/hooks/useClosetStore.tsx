@@ -477,9 +477,11 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       wearHistory: stateRef.current.wearHistory,
       wifeNgPairs: stateRef.current.wifeNgPairs,
       customClosetData: hasCustomData ? stateRef.current.closetData : undefined,
+      customClosetDataUpdatedAt: hasCustomData ? stateRef.current.closetData.updatedAt : undefined,
       clearCustomClosetData: Boolean(
         sentTombstones.clearCustomClosetData || sentTombstones.customClosetDataClearedAt !== undefined
       ),
+      customClosetDataClearedAt: sentTombstones.customClosetDataClearedAt,
       deletedWearMap: sentTombstones.deletedWearMap,
       deletedWearIds: Object.keys(sentTombstones.deletedWearMap || {}),
       wearHistoryClearedAt: sentTombstones.wearHistoryClearedAt,
@@ -867,15 +869,20 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         }
         mutationSeqRef.current++;
         customDataSeqRef.current++;
-        localStorage.setItem(STORAGE_KEYS.CUSTOM_DATA, jsonString);
-        stateRef.current.closetData = parsed;
+        const now = Date.now();
+        const dataWithTimestamp: ClosetData = {
+          ...parsed,
+          updatedAt: parsed.updatedAt || now,
+        };
+        localStorage.setItem(STORAGE_KEYS.CUSTOM_DATA, JSON.stringify(dataWithTimestamp));
+        stateRef.current.closetData = dataWithTimestamp;
         const updatedTombstones: SyncTombstones = {
           ...stateRef.current.tombstones,
           clearCustomClosetData: false,
           customClosetDataClearedAt: undefined,
         };
         stateRef.current.tombstones = updatedTombstones;
-        setClosetData(parsed);
+        setClosetData(dataWithTimestamp);
         setTombstones(updatedTombstones);
         triggerBackgroundPush();
         return { success: true };

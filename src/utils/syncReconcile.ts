@@ -131,6 +131,13 @@ export function reconcileSyncResponse({
     } else if (sentTombstones.clearCustomClosetData || sentTombstones.customClosetDataClearedAt !== undefined) {
       closetData = defaultClosetData;
       isCustomDataPresent = false;
+    } else if (
+      (serverResponse.customClosetData === null || !serverResponse.customClosetData) &&
+      serverResponse.customClosetDataClearedAt !== undefined &&
+      serverResponse.customClosetDataClearedAt >= (currentLocal.closetData.updatedAt || 0)
+    ) {
+      closetData = defaultClosetData;
+      isCustomDataPresent = false;
     }
 
     return {
@@ -237,6 +244,13 @@ export function reconcileSyncResponse({
     closetData = serverResponse.customClosetData;
     isCustomDataPresent = true;
   } else if ((sentTombstones.clearCustomClosetData || sentTombstones.customClosetDataClearedAt !== undefined) && !serverResponse.customClosetData) {
+    closetData = defaultClosetData;
+    isCustomDataPresent = false;
+  } else if (
+    (serverResponse.customClosetData === null || !serverResponse.customClosetData) &&
+    serverResponse.customClosetDataClearedAt !== undefined &&
+    serverResponse.customClosetDataClearedAt >= (currentLocal.closetData.updatedAt || 0)
+  ) {
     closetData = defaultClosetData;
     isCustomDataPresent = false;
   }
