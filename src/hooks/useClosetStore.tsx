@@ -148,15 +148,23 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     };
   });
 
-  // 5. Tombstones for deleted records and custom data reset
+  // 5. Tombstones for deleted records and custom data reset (timestamped maps)
   const [tombstones, setTombstones] = useState<SyncTombstones>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEYS.SYNC_TOMBSTONES);
-      if (saved) return JSON.parse(saved);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        return {
+          deletedWearMap: parsed.deletedWearMap || {},
+          deletedWifeNgMap: parsed.deletedWifeNgMap || {},
+          wearHistoryClearedAt: parsed.wearHistoryClearedAt,
+          clearCustomClosetData: parsed.clearCustomClosetData,
+        };
+      }
     } catch (e) {
       console.error('Failed to parse tombstones:', e);
     }
-    return { deletedWearIds: [], deletedWifeNgKeys: [] };
+    return { deletedWearMap: {}, deletedWifeNgMap: {} };
   });
 
   // 6. Sync runtime status
@@ -444,9 +452,11 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       wifeNgPairs: stateRef.current.wifeNgPairs,
       customClosetData: hasCustomData ? stateRef.current.closetData : undefined,
       clearCustomClosetData: currentTombstones.clearCustomClosetData,
-      deletedWearIds: currentTombstones.deletedWearIds,
+      deletedWearMap: currentTombstones.deletedWearMap,
+      deletedWearIds: Object.keys(currentTombstones.deletedWearMap || {}),
       wearHistoryClearedAt: currentTombstones.wearHistoryClearedAt,
-      deletedWifeNgKeys: currentTombstones.deletedWifeNgKeys,
+      deletedWifeNgMap: currentTombstones.deletedWifeNgMap,
+      deletedWifeNgKeys: Object.keys(currentTombstones.deletedWifeNgMap || {}),
       itemNamesMap,
     };
 
@@ -487,7 +497,7 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       }
 
       // 送信完了した Tombstones をクリア
-      setTombstones({ deletedWearIds: [], deletedWifeNgKeys: [] });
+      setTombstones({ deletedWearMap: {}, deletedWifeNgMap: {} });
       localStorage.removeItem(STORAGE_KEYS.SYNC_TOMBSTONES);
 
       const syncedAt = data.syncedAt || new Date().toISOString();
@@ -640,10 +650,11 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const removeWearRecord = useCallback(
     (id: string) => {
+      const now = Date.now();
       setWearHistory((prev) => prev.filter((r) => r.id !== id));
       setTombstones((prev) => ({
         ...prev,
-        deletedWearIds: Array.from(new Set([...prev.deletedWearIds, id])),
+        deletedWearMap: { ...prev.deletedWearMap, [id]: now },
       }));
       triggerBackgroundPush();
     },
@@ -656,7 +667,7 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     setTombstones((prev) => ({
       ...prev,
       wearHistoryClearedAt: now,
-      deletedWearIds: [],
+      deletedWearMap: {},
     }));
     triggerBackgroundPush();
   }, [triggerBackgroundPush]);
@@ -677,10 +688,14 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           ...prev,
         ];
       });
-      setTombstones((prev) => ({
-        ...prev,
-        deletedWifeNgKeys: prev.deletedWifeNgKeys.filter((k) => k !== key),
-      }));
+      setTombstones((prev) => {
+        const nextMap = { ...prev.deletedWifeNgMap };
+        delete nextMap[key];
+        return {
+          ...prev,
+          deletedWifeNgMap: nextMap,
+        };
+      });
       triggerBackgroundPush();
     },
     [triggerBackgroundPush]
@@ -689,12 +704,13 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const removeWifeNg = useCallback(
     (shirtId: string, pantsId: string) => {
       const key = `${shirtId}_${pantsId}`;
+      const now = Date.now();
       setWifeNgPairs((prev) =>
         prev.filter((p) => !(p.shirtId === shirtId && p.pantsId === pantsId))
       );
       setTombstones((prev) => ({
         ...prev,
-        deletedWifeNgKeys: Array.from(new Set([...prev.deletedWifeNgKeys, key])),
+        deletedWifeNgMap: { ...prev.deletedWifeNgMap, [key]: now },
       }));
       triggerBackgroundPush();
     },

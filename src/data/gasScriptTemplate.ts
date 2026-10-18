@@ -47,7 +47,7 @@ function setupSpreadsheet() {
 
   // 4. meta_config シート
   const metaHeaders = ['キー', '値', '最終更新日時'];
-  const metaSheet = ensureSheetWithHeaders(ss, SHEET_NAMES.META_CONFIG, metaHeaders, '#334155', '#f1f5f9');
+  ensureSheetWithHeaders(ss, SHEET_NAMES.META_CONFIG, metaHeaders, '#334155', '#f1f5f9');
 
   // 初期シークレットトークンの登録（未登録かつプレースホルダーでない場合）
   if (DEFAULT_SECRET_TOKEN && DEFAULT_SECRET_TOKEN !== '__SMART_CLOSET_SECRET_TOKEN__') {
@@ -114,9 +114,19 @@ function doGet(e) {
 }
 
 /**
- * POST リクエストハンドラ (Push: 端末間競合を防ぐ双方向スマートマージ保存)
+ * POST リクエストハンドラ (Push: 排他制御 ＋ サーバー永続Tombstoneによる双方向マージ)
  */
 function doPost(e) {
+  const lock = LockService.getScriptLock();
+  // 同時リクエストの競合を防ぐため最大10秒間ロック取得を待機 (P2対応)
+  const hasLock = lock.tryLock(10000);
+  if (!hasLock) {
+    return createJsonResponse({
+      ok: false,
+      error: '他端末と同期処理中です。少し待ってから再試行してください'
+    });
+  }
+
   try {
     const ss = SpreadsheetApp.getActiveSpreadsheet();
     if (!e || !e.postData || !e.postData.contents) {
@@ -133,22 +143,25 @@ function doPost(e) {
 
     const itemNamesMap = payload.itemNamesMap || {};
 
-    // 1. wearHistory の双方向マージ & Tombstone 削除
+    // サーバー側に永続化されている Tombstone の読み取りとマージ (P1対応)
+    const tombstones = readTombstones(ss);
+    integrateIncomingTombstones(tombstones, payload);
+
+    // 1. wearHistory の双方向マージ & Tombstone 削除（古い端末からの復活をブロック）
     const existingWearHistory = readWearHistory(ss);
     const mergedWearHistory = mergeWearHistory(
       existingWearHistory,
       Array.isArray(payload.wearHistory) ? payload.wearHistory : [],
-      Array.isArray(payload.deletedWearIds) ? payload.deletedWearIds : [],
-      payload.wearHistoryClearedAt
+      tombstones
     );
     writeWearHistory(ss, mergedWearHistory, itemNamesMap);
 
-    // 2. wifeNgPairs の双方向マージ & Tombstone 削除
+    // 2. wifeNgPairs の双方向マージ & Tombstone 削除（古い端末からの復活をブロック）
     const existingWifeNg = readWifeNg(ss);
     const mergedWifeNg = mergeWifeNg(
       existingWifeNg,
       Array.isArray(payload.wifeNgPairs) ? payload.wifeNgPairs : [],
-      Array.isArray(payload.deletedWifeNgKeys) ? payload.deletedWifeNgKeys : []
+      tombstones
     );
     writeWifeNg(ss, mergedWifeNg, itemNamesMap);
 
@@ -160,7 +173,10 @@ function doPost(e) {
     }
     // undefined の場合は既存のカスタムデータを保護（何もしない）
 
-    // 4. analytics シートの再集計
+    // 4. 更新後の Tombstone をサーバー側に永続保存
+    writeTombstones(ss, tombstones);
+
+    // 5. analytics シートの再集計
     updateAnalyticsSheet(ss, mergedWearHistory, itemNamesMap);
 
     // マージ後の最新データを返却（古い状態の端末もこれで最新化される）
@@ -173,32 +189,130 @@ function doPost(e) {
     });
   } catch (err) {
     return createJsonResponse({ ok: false, error: err.toString() });
+  } finally {
+    lock.releaseLock();
   }
 }
 
 // -------------------------------------------------------------
-// マージ・Tombstone ロジック
+// サーバー側 Tombstone 永続化 & LWW-Element-Set マージロジック
 // -------------------------------------------------------------
 
+function readTombstones(ss) {
+  const val = readConfigValue(ss, 'syncTombstones');
+  if (!val) {
+    return {
+      deletedWearMap: {},
+      deletedWifeNgMap: {},
+      wearHistoryClearedAt: 0
+    };
+  }
+  try {
+    const parsed = JSON.parse(val);
+    return {
+      deletedWearMap: parsed.deletedWearMap || {},
+      deletedWifeNgMap: parsed.deletedWifeNgMap || {},
+      wearHistoryClearedAt: Number(parsed.wearHistoryClearedAt) || 0
+    };
+  } catch (e) {
+    return {
+      deletedWearMap: {},
+      deletedWifeNgMap: {},
+      wearHistoryClearedAt: 0
+    };
+  }
+}
+
+function writeTombstones(ss, tombstones) {
+  writeConfigValue(ss, 'syncTombstones', JSON.stringify(tombstones));
+}
+
+function integrateIncomingTombstones(serverTombstones, payload) {
+  const now = Date.now();
+
+  // 1. 全削除タイムスタンプの統合
+  if (payload.wearHistoryClearedAt) {
+    serverTombstones.wearHistoryClearedAt = Math.max(
+      serverTombstones.wearHistoryClearedAt || 0,
+      payload.wearHistoryClearedAt
+    );
+  }
+
+  // 2. 着用履歴の個別削除マップの統合
+  if (payload.deletedWearMap && typeof payload.deletedWearMap === 'object') {
+    Object.keys(payload.deletedWearMap).forEach(id => {
+      const ts = payload.deletedWearMap[id] || now;
+      serverTombstones.deletedWearMap[id] = Math.max(
+        serverTombstones.deletedWearMap[id] || 0,
+        ts
+      );
+    });
+  }
+  // 配列形式の後方互換
+  if (Array.isArray(payload.deletedWearIds)) {
+    payload.deletedWearIds.forEach(id => {
+      serverTombstones.deletedWearMap[id] = Math.max(
+        serverTombstones.deletedWearMap[id] || 0,
+        now
+      );
+    });
+  }
+
+  // 3. 奥様NGの個別削除マップの統合
+  if (payload.deletedWifeNgMap && typeof payload.deletedWifeNgMap === 'object') {
+    Object.keys(payload.deletedWifeNgMap).forEach(key => {
+      const ts = payload.deletedWifeNgMap[key] || now;
+      serverTombstones.deletedWifeNgMap[key] = Math.max(
+        serverTombstones.deletedWifeNgMap[key] || 0,
+        ts
+      );
+    });
+  }
+  // 配列形式の後方互換
+  if (Array.isArray(payload.deletedWifeNgKeys)) {
+    payload.deletedWifeNgKeys.forEach(key => {
+      serverTombstones.deletedWifeNgMap[key] = Math.max(
+        serverTombstones.deletedWifeNgMap[key] || 0,
+        now
+      );
+    });
+  }
+}
+
 /**
- * 着用履歴のマージ
- * - 同一日付または同一IDは timestamp が新しい方を採用
- * - deletedWearIds に含まれるレコードを除外
- * - clearedAt がある場合、それ以前の古いレコードを除外
+ * 着用履歴のマージ (LWW-Element-Set)
+ * - 全削除タイムスタンプ wearHistoryClearedAt 以前のデータは除外
+ * - deletedWearMap に記録された削除時刻以前のデータは除外（古い端末からの復活をブロック）
+ * - 削除時刻より新しいタイムスタンプのデータは再登録として認め、Tombstone を解除
  */
-function mergeWearHistory(existingList, incomingList, deletedWearIds, clearedAt) {
-  const deletedSet = new Set(deletedWearIds || []);
+function mergeWearHistory(existingList, incomingList, tombstones) {
   const map = new Map();
 
   const addRecord = (r) => {
     if (!r || !r.id || !r.date) return;
-    if (deletedSet.has(r.id)) return;
-    if (clearedAt && r.timestamp && r.timestamp <= clearedAt) return;
+    const rTime = r.timestamp || 0;
 
-    // 日付を主キーとして最新タイムスタンプを優先
+    // 全履歴クリアより古いデータは除外
+    if (tombstones.wearHistoryClearedAt && rTime <= tombstones.wearHistoryClearedAt) {
+      return;
+    }
+
+    // 削除タイムスタンプとの比較
+    const deletedAt = tombstones.deletedWearMap[r.id];
+    if (deletedAt) {
+      if (rTime <= deletedAt) {
+        // 削除前の古いデータが送られてきたので復活をブロック！
+        return;
+      } else {
+        // 削除後に新しく再登録されたデータなので Tombstone を解除
+        delete tombstones.deletedWearMap[r.id];
+      }
+    }
+
+    // 同一日付を主キーとして最新タイムスタンプを優先
     const key = r.date;
     const existing = map.get(key);
-    if (!existing || (r.timestamp || 0) >= (existing.timestamp || 0)) {
+    if (!existing || rTime >= (existing.timestamp || 0)) {
       map.set(key, r);
     }
   };
@@ -210,27 +324,36 @@ function mergeWearHistory(existingList, incomingList, deletedWearIds, clearedAt)
 }
 
 /**
- * 奥様NGペアのマージ
- * - 複合キー (shirtId_pantsId) で管理
- * - deletedWifeNgKeys に含まれるペアを除外
- * - createdAt が新しい方を採用
+ * 奥様NGペアのマージ (LWW-Element-Set)
+ * - deletedWifeNgMap に記録された削除時刻以前のペアは除外（古い端末からの復活をブロック）
+ * - 削除時刻より新しい createdAt のペアは再登録として認め、Tombstone を解除
  */
-function mergeWifeNg(existingList, incomingList, deletedKeys) {
-  const deletedSet = new Set(deletedKeys || []);
+function mergeWifeNg(existingList, incomingList, tombstones) {
   const map = new Map();
 
   const addPair = (p) => {
     if (!p || !p.shirtId || !p.pantsId) return;
     const key = p.shirtId + '_' + p.pantsId;
-    if (deletedSet.has(key)) return;
+    const pTime = p.createdAt ? new Date(p.createdAt).getTime() : 0;
+
+    // 削除タイムスタンプとの比較
+    const deletedAt = tombstones.deletedWifeNgMap[key];
+    if (deletedAt) {
+      if (pTime <= deletedAt) {
+        // 削除前の古いペアが送られてきたので復活をブロック！
+        return;
+      } else {
+        // 削除後に新しく再登録されたペアなので Tombstone を解除
+        delete tombstones.deletedWifeNgMap[key];
+      }
+    }
 
     const existing = map.get(key);
     if (!existing) {
       map.set(key, p);
     } else {
       const existingTime = existing.createdAt ? new Date(existing.createdAt).getTime() : 0;
-      const incomingTime = p.createdAt ? new Date(p.createdAt).getTime() : 0;
-      if (incomingTime >= existingTime) {
+      if (pTime >= existingTime) {
         map.set(key, p);
       }
     }

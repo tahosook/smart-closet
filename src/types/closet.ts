@@ -58,9 +58,11 @@ export interface GasSyncConfig {
 }
 
 export interface SyncTombstones {
-  deletedWearIds: string[];
+  deletedWearMap: Record<string, number>;   // { [id]: deletedAtTimestamp }
+  deletedWearIds?: string[];                // 下位互換用
   wearHistoryClearedAt?: number;
-  deletedWifeNgKeys: string[];
+  deletedWifeNgMap: Record<string, number>; // { [shirtId_pantsId]: deletedAtTimestamp }
+  deletedWifeNgKeys?: string[];             // 下位互換用
   clearCustomClosetData?: boolean;
 }
 
@@ -71,8 +73,10 @@ export interface GasSyncPayload {
   wifeNgPairs?: WifeNgPair[];
   customClosetData?: ClosetData;
   clearCustomClosetData?: boolean;
+  deletedWearMap?: Record<string, number>;
   deletedWearIds?: string[];
   wearHistoryClearedAt?: number;
+  deletedWifeNgMap?: Record<string, number>;
   deletedWifeNgKeys?: string[];
   itemNamesMap?: Record<string, string>;
 }

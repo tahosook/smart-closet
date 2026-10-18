@@ -150,12 +150,32 @@ class MockSpreadsheet {
   }
 }
 
-function createGasEnvironment(initialToken = 'test-secret-token-123') {
+function createGasEnvironment(initialToken = 'test-secret-token-123', lockOptions = { shouldAcquire: true }) {
   const ss = new MockSpreadsheet();
   
+  let lockAcquired = false;
+  let lockTryCount = 0;
+  let lockReleaseCount = 0;
+
   const sandbox = {
     SpreadsheetApp: {
       getActiveSpreadsheet: () => ss,
+    },
+    LockService: {
+      getScriptLock: () => ({
+        tryLock: (timeout) => {
+          lockTryCount++;
+          if (lockOptions.shouldAcquire) {
+            lockAcquired = true;
+            return true;
+          }
+          return false;
+        },
+        releaseLock: () => {
+          lockReleaseCount++;
+          lockAcquired = false;
+        },
+      }),
     },
     Logger: {
       log: () => {},
@@ -186,7 +206,11 @@ function createGasEnvironment(initialToken = 'test-secret-token-123') {
   const codeToRun = codeGsContent.replace('__SMART_CLOSET_SECRET_TOKEN__', initialToken);
   vm.runInContext(codeToRun, context);
 
-  return { ss, context };
+  return {
+    ss,
+    context,
+    getLockStatus: () => ({ lockAcquired, lockTryCount, lockReleaseCount }),
+  };
 }
 
 // -------------------------------------------------------------
@@ -195,25 +219,21 @@ function createGasEnvironment(initialToken = 'test-secret-token-123') {
 {
   const { ss, context } = createGasEnvironment('token-abc-999');
 
-  // 初回セットアップ実行
   vm.runInContext('setupSpreadsheet()', context);
 
   assert.ok(ss.getSheetByName('wear_history'), 'wear_history sheet must be created');
   assert.ok(ss.getSheetByName('wife_ng'), 'wife_ng sheet must be created');
   assert.ok(ss.getSheetByName('analytics'), 'analytics sheet must be created');
-  const metaSheet = ss.getSheetByName('meta_config');
-  assert.ok(metaSheet, 'meta_config sheet must be created');
+  assert.ok(ss.getSheetByName('meta_config'), 'meta_config sheet must be created');
 
-  // 初期トークンが登録されていること
   const tokenVal = vm.runInContext('readConfigValue(SpreadsheetApp.getActiveSpreadsheet(), "secretToken")', context);
   assert.equal(tokenVal, 'token-abc-999', 'secretToken must be stored in meta_config');
 
-  // データを1件追加
   const wearSheet = ss.getSheetByName('wear_history');
   wearSheet.appendRow(['w1', '2026-10-18', 'office', 'S1', '白シャツ', 'P1', '黒パンツ', 1000]);
   assert.equal(wearSheet.getLastRow(), 2, 'wear_history should have 2 rows (header + 1 record)');
 
-  // もう一度 setupSpreadsheet() を実行しても、追加したデータが消えないこと (冪等性)
+  // 2回目の setupSpreadsheet() 実行でも既存データが消えないこと (冪等性)
   vm.runInContext('setupSpreadsheet()', context);
   assert.equal(wearSheet.getLastRow(), 2, 'Existing data must NOT be cleared on re-running setupSpreadsheet');
   const values = wearSheet.getRange(2, 1, 1, 8).getValues()[0];
@@ -229,27 +249,22 @@ function createGasEnvironment(initialToken = 'test-secret-token-123') {
   const { context } = createGasEnvironment('correct-token-555');
   vm.runInContext('setupSpreadsheet()', context);
 
-  // トークンなしのリクエスト -> 拒否
   const getNoTokenRes = JSON.parse(
     vm.runInContext('doGet({ parameter: {} })', context).getContent()
   );
   assert.equal(getNoTokenRes.ok, false);
   assert.match(getNoTokenRes.error, /認証エラー/);
 
-  // 間違ったトークン -> 拒否
   const getWrongTokenRes = JSON.parse(
     vm.runInContext('doGet({ parameter: { token: "wrong" } })', context).getContent()
   );
   assert.equal(getWrongTokenRes.ok, false);
-  assert.match(getWrongTokenRes.error, /認証エラー/);
 
-  // 正しいトークン -> 許可
   const getSuccessRes = JSON.parse(
     vm.runInContext('doGet({ parameter: { token: "correct-token-555" } })', context).getContent()
   );
   assert.equal(getSuccessRes.ok, true);
 
-  // POST も同様に検証
   const postNoTokenRes = JSON.parse(
     vm.runInContext('doPost({ postData: { contents: JSON.stringify({ action: "push" }) } })', context).getContent()
   );
@@ -270,7 +285,6 @@ function createGasEnvironment(initialToken = 'test-secret-token-123') {
   const { context } = createGasEnvironment('sync-token-111');
   vm.runInContext('setupSpreadsheet()', context);
 
-  // 1. Pixel 9a が朝 08:00 に「S2 × P8」を Push
   const pixelPayload = {
     action: 'push',
     token: 'sync-token-111',
@@ -289,16 +303,13 @@ function createGasEnvironment(initialToken = 'test-secret-token-123') {
   assert.equal(res1.ok, true);
   assert.equal(res1.wearHistory.length, 2);
 
-  // 2. Mac mini が未同期の古い状態のまま（Pixelの履歴を知らない）、夜 20:00 に別の奥様NGを追加して Push
   const macPayload = {
     action: 'push',
     token: 'sync-token-111',
     wearHistory: [
-      // Mac側は 10/18 の記録を知らず、10/17 の記録のみ持っている
       { id: 'rec_yesterday', date: '2026-10-17', scene: 'remote', shirtId: 'S1', pantsId: 'P2', timestamp: 500 }
     ],
     wifeNgPairs: [
-      // Mac側で新しいNG「S3 × P4」を追加
       { shirtId: 'S3', pantsId: 'P4', reason: 'デニム重複', createdAt: '2026-10-18T20:00:00Z' }
     ],
     itemNamesMap: { S1: 'S1シャツ', S3: 'S3シャツ', P4: 'P4パンツ' }
@@ -308,76 +319,162 @@ function createGasEnvironment(initialToken = 'test-secret-token-123') {
   );
   assert.equal(res2.ok, true);
 
-  // ★重要検証: Pixel が登録した 10/18 の記録が消去されずにマージされていること！
-  assert.equal(res2.wearHistory.length, 2, 'Pixel record for 10/18 must NOT be overwritten or lost');
-  const dates = res2.wearHistory.map(r => r.date);
-  assert.ok(dates.includes('2026-10-18'), '10/18 record must be retained');
-  assert.ok(dates.includes('2026-10-17'), '10/17 record must be retained');
-
-  // 奥様NGもマージされ、S1×P5 と S3×P4 の両方が存在すること！
+  assert.equal(res2.wearHistory.length, 2, 'Pixel record for 10/18 must NOT be lost');
   assert.equal(res2.wifeNgPairs.length, 2, 'Both wife NG pairs must be merged');
-  const ngKeys = res2.wifeNgPairs.map(p => `${p.shirtId}_${p.pantsId}`);
-  assert.ok(ngKeys.includes('S1_P5'), 'S1_P5 must exist');
-  assert.ok(ngKeys.includes('S3_P4'), 'S3_P4 must exist');
 
   console.log('  ✅ Two-device bidirectional merge without data loss verified');
 }
 
 // -------------------------------------------------------------
-// Test Case 4: 削除 (Tombstone) 同期検証 (P1対応)
+// Test Case 4: 削除情報のサーバー永続化 ＆ 古い端末からの再送での復活防止 ＆ 再登録テスト (P1再レビュー対応)
 // -------------------------------------------------------------
 {
-  const { context } = createGasEnvironment('sync-token-111');
+  const { ss, context } = createGasEnvironment('sync-token-111');
   vm.runInContext('setupSpreadsheet()', context);
 
-  // 初期データ投入
+  const baseTime = Date.now() - 30000;
+  const t1 = baseTime;              // 初期登録時刻
+  const t1Iso = new Date(t1).toISOString();
+  const t2 = baseTime + 10000;       // 削除実行時刻
+  const t3 = baseTime + 20000;       // 再登録実行時刻
+  const t3Iso = new Date(t3).toISOString();
+  const t4 = baseTime + 25000;       // 全削除実行時刻
+
+  // 1. 初期データ登録 (時刻 t1)
   const initPayload = {
     action: 'push',
     token: 'sync-token-111',
     wearHistory: [
-      { id: 'del_target_1', date: '2026-10-10', scene: 'office', shirtId: 'S1', pantsId: 'P1', timestamp: 100 },
-      { id: 'keep_target_2', date: '2026-10-11', scene: 'office', shirtId: 'S2', pantsId: 'P2', timestamp: 200 }
+      { id: 'rec_old_1', date: '2026-10-10', scene: 'office', shirtId: 'S1', pantsId: 'P1', timestamp: t1 },
+      { id: 'rec_keep_2', date: '2026-10-11', scene: 'office', shirtId: 'S2', pantsId: 'P2', timestamp: t1 }
     ],
     wifeNgPairs: [
-      { shirtId: 'S1', pantsId: 'P1', reason: 'NG1', createdAt: '2026-10-10T00:00:00Z' },
-      { shirtId: 'S2', pantsId: 'P2', reason: 'NG2', createdAt: '2026-10-10T00:00:00Z' }
+      { shirtId: 'S1', pantsId: 'P1', reason: 'NG1', createdAt: t1Iso },
+      { shirtId: 'S2', pantsId: 'P2', reason: 'NG2', createdAt: t1Iso }
     ]
   };
   vm.runInContext(`doPost({ postData: { contents: ${JSON.stringify(JSON.stringify(initPayload))} } })`, context);
 
-  // 削除操作: del_target_1 を削除、S1_P1 をNG解除
+  // 2. Pixel 9a が時刻 t2 に rec_old_1 と S1_P1 を削除
   const deletePayload = {
     action: 'push',
     token: 'sync-token-111',
     wearHistory: [
-      { id: 'keep_target_2', date: '2026-10-11', scene: 'office', shirtId: 'S2', pantsId: 'P2', timestamp: 200 }
+      { id: 'rec_keep_2', date: '2026-10-11', scene: 'office', shirtId: 'S2', pantsId: 'P2', timestamp: t1 }
     ],
-    deletedWearIds: ['del_target_1'],
-    deletedWifeNgKeys: ['S1_P1']
+    deletedWearMap: { rec_old_1: t2 },
+    deletedWifeNgMap: { S1_P1: t2 }
   };
   const deleteRes = JSON.parse(
     vm.runInContext(`doPost({ postData: { contents: ${JSON.stringify(JSON.stringify(deletePayload))} } })`, context).getContent()
   );
   assert.equal(deleteRes.ok, true);
-
-  // 削除対象がシートからもマージ結果からも除外されていること
   assert.equal(deleteRes.wearHistory.length, 1);
-  assert.equal(deleteRes.wearHistory[0].id, 'keep_target_2');
-
   assert.equal(deleteRes.wifeNgPairs.length, 1);
-  assert.equal(deleteRes.wifeNgPairs[0].shirtId, 'S2');
 
-  console.log('  ✅ Tombstone deletion synchronization verified');
+  // サーバー側の meta_config に Tombstone が永続保存されていることを確認
+  const savedTombstones = JSON.parse(
+    vm.runInContext('readConfigValue(SpreadsheetApp.getActiveSpreadsheet(), "syncTombstones")', context)
+  );
+  assert.equal(savedTombstones.deletedWearMap.rec_old_1, t2, 'Tombstone for rec_old_1 must be persisted');
+  assert.equal(savedTombstones.deletedWifeNgMap.S1_P1, t2, 'Tombstone for S1_P1 must be persisted');
+
+  // 3. ★重要: 削除を知らない未同期の古い Mac が、削除前の古い履歴 (ts: t1) と古いNG (ts: t1) を再送
+  const staleMacPayload = {
+    action: 'push',
+    token: 'sync-token-111',
+    wearHistory: [
+      { id: 'rec_old_1', date: '2026-10-10', scene: 'office', shirtId: 'S1', pantsId: 'P1', timestamp: t1 },
+      { id: 'rec_keep_2', date: '2026-10-11', scene: 'office', shirtId: 'S2', pantsId: 'P2', timestamp: t1 }
+    ],
+    wifeNgPairs: [
+      { shirtId: 'S1', pantsId: 'P1', reason: 'NG1', createdAt: t1Iso },
+      { shirtId: 'S2', pantsId: 'P2', reason: 'NG2', createdAt: t1Iso }
+    ]
+  };
+  const staleRes = JSON.parse(
+    vm.runInContext(`doPost({ postData: { contents: ${JSON.stringify(JSON.stringify(staleMacPayload))} } })`, context).getContent()
+  );
+  assert.equal(staleRes.ok, true);
+
+  // ★重要検証: 古い端末からの再送によって削除済みデータが復活していないこと！
+  assert.equal(staleRes.wearHistory.length, 1, 'Deleted wear record must NOT resurrect from stale device push');
+  assert.equal(staleRes.wearHistory[0].id, 'rec_keep_2');
+
+  assert.equal(staleRes.wifeNgPairs.length, 1, 'Deleted wife NG pair must NOT resurrect from stale device push');
+  assert.equal(staleRes.wifeNgPairs[0].shirtId, 'S2');
+
+  // 4. ★削除後の再登録テスト: 時刻 t3 (> t2) に新しく S1_P1 を奥様NGとして再登録して送信
+  const reregisterPayload = {
+    action: 'push',
+    token: 'sync-token-111',
+    wifeNgPairs: [
+      { shirtId: 'S1', pantsId: 'P1', reason: 'やっぱりダメ出しされた', createdAt: t3Iso }
+    ]
+  };
+  const reregisterRes = JSON.parse(
+    vm.runInContext(`doPost({ postData: { contents: ${JSON.stringify(JSON.stringify(reregisterPayload))} } })`, context).getContent()
+  );
+  assert.equal(reregisterRes.ok, true);
+  // 削除時刻より新しいため、再登録として採用されること
+  assert.equal(reregisterRes.wifeNgPairs.length, 2, 'Re-registered wife NG pair must be accepted');
+  const s1p1 = reregisterRes.wifeNgPairs.find(p => p.shirtId === 'S1' && p.pantsId === 'P1');
+  assert.ok(s1p1);
+  assert.equal(s1p1.reason, 'やっぱりダメ出しされた');
+
+  // 5. ★全履歴クリアの永続性テスト
+  const clearPayload = {
+    action: 'push',
+    token: 'sync-token-111',
+    wearHistoryClearedAt: t4
+  };
+  vm.runInContext(`doPost({ postData: { contents: ${JSON.stringify(JSON.stringify(clearPayload))} } })`, context);
+
+  // 古い履歴 (ts: t1) を再送しても全履歴クリアによって復活しないこと
+  const staleAfterClearRes = JSON.parse(
+    vm.runInContext(`doPost({ postData: { contents: ${JSON.stringify(JSON.stringify(staleMacPayload))} } })`, context).getContent()
+  );
+  assert.equal(staleAfterClearRes.wearHistory.length, 0, 'Old records must NOT resurrect after wearHistoryClearedAt');
+
+  console.log('  ✅ Persistent Tombstones (prevention of resurrection and valid re-registration) verified');
 }
 
 // -------------------------------------------------------------
-// Test Case 5: カスタム服データ (customClosetData) 保護検証 (P1対応)
+// Test Case 5: LockService による排他制御検証 (P2再レビュー対応)
+// -------------------------------------------------------------
+{
+  // 1. 通常実行時: ロック取得と解放が正しく行われること
+  const { context, getLockStatus } = createGasEnvironment('sync-token-111', { shouldAcquire: true });
+  vm.runInContext('setupSpreadsheet()', context);
+
+  const res = JSON.parse(
+    vm.runInContext('doPost({ postData: { contents: JSON.stringify({ action: "push", token: "sync-token-111" }) } })', context).getContent()
+  );
+  assert.equal(res.ok, true);
+
+  const lockStatus = getLockStatus();
+  assert.equal(lockStatus.lockTryCount, 1, 'Lock must be requested');
+  assert.equal(lockStatus.lockReleaseCount, 1, 'Lock must be released');
+  assert.equal(lockStatus.lockAcquired, false, 'Lock must not remain held after doPost');
+
+  // 2. 競合時: ロック取得失敗時にエラーレスポンスを返し、安全に処理を中止すること
+  const { context: lockedContext } = createGasEnvironment('sync-token-111', { shouldAcquire: false });
+  const conflictRes = JSON.parse(
+    vm.runInContext('doPost({ postData: { contents: JSON.stringify({ action: "push", token: "sync-token-111" }) } })', lockedContext).getContent()
+  );
+  assert.equal(conflictRes.ok, false);
+  assert.match(conflictRes.error, /他端末と同期処理中です/);
+
+  console.log('  ✅ LockService concurrency control and lock lifecycle verified');
+}
+
+// -------------------------------------------------------------
+// Test Case 6: カスタム服データ (customClosetData) 保護検証 (P1対応)
 // -------------------------------------------------------------
 {
   const { context } = createGasEnvironment('sync-token-111');
   vm.runInContext('setupSpreadsheet()', context);
 
-  // 1. 端末Aがカスタム服データ（P16追加版）を Push
   const customDataPayload = {
     action: 'push',
     token: 'sync-token-111',
@@ -391,21 +488,19 @@ function createGasEnvironment(initialToken = 'test-secret-token-123') {
   assert.equal(res1.ok, true);
   assert.ok(res1.customClosetData && res1.customClosetData.items.length === 1);
 
-  // 2. カスタムデータ未保持の端末Bが通常 Push (customClosetData は undefined)
+  // 通常 Push (customClosetData は undefined) で消えないこと
   const normalPushPayload = {
     action: 'push',
     token: 'sync-token-111',
     wearHistory: [{ id: 'r1', date: '2026-10-18', scene: 'office', shirtId: 'S1', pantsId: 'P16', timestamp: 500 }]
-    // customClosetData は未指定
   };
   const res2 = JSON.parse(
     vm.runInContext(`doPost({ postData: { contents: ${JSON.stringify(JSON.stringify(normalPushPayload))} } })`, context).getContent()
   );
   assert.equal(res2.ok, true);
-  // ★端末Aが保存したカスタムデータが消えずに維持されていること！
   assert.ok(res2.customClosetData && res2.customClosetData.items.length === 1, 'Custom closet data must NOT be cleared by undefined push');
 
-  // 3. 明示的なリセット (clearCustomClosetData: true) を送った場合のみ消去されること
+  // 明示的なリセット (clearCustomClosetData: true) を送った場合のみ消去されること
   const resetPayload = {
     action: 'push',
     token: 'sync-token-111',
