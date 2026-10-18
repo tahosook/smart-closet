@@ -490,8 +490,10 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
     action: 'push',
     token: 'sync-token-111',
     customClosetData: {
-      items: [{ id: 'P16', name: '黒スラックス', category: 'pants', dressScore: 4.5, comfortScore: 4.0 }]
-    }
+      items: [{ id: 'P16', name: '黒スラックス', category: 'pants', dressScore: 4.5, comfortScore: 4.0 }],
+      updatedAt: 1000,
+    },
+    customClosetDataUpdatedAt: 1000,
   };
   const res1 = JSON.parse(
     vm.runInContext(`doPost({ postData: { contents: ${JSON.stringify(JSON.stringify(customDataPayload))} } })`, context).getContent()
@@ -511,19 +513,32 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
   assert.equal(res2.ok, true);
   assert.ok(res2.customClosetData && res2.customClosetData.items.length === 1, 'Custom closet data must NOT be cleared by undefined push');
 
-  // 明示的なリセット (clearCustomClosetData: true) を送った場合のみ消去されること
+  // ★重要検証 (第7回レビュー対応): タイムスタンプなしの古い削除指示 (clearCustomClosetData: true のみ) では消去されないこと
+  const staleNoTsResetPayload = {
+    action: 'push',
+    token: 'sync-token-111',
+    clearCustomClosetData: true,
+  };
+  const staleNoTsRes = JSON.parse(
+    vm.runInContext(`doPost({ postData: { contents: ${JSON.stringify(JSON.stringify(staleNoTsResetPayload))} } })`, context).getContent()
+  );
+  assert.equal(staleNoTsRes.ok, true);
+  assert.ok(staleNoTsRes.customClosetData && staleNoTsRes.customClosetData.items.length === 1, 'Custom closet data must NOT be cleared by timestamp-less reset');
+
+  // ★正当なタイムスタンプ付きリセット (customClosetDataClearedAt: 2000 > 1000) を送った場合のみ消去されること
   const resetPayload = {
     action: 'push',
     token: 'sync-token-111',
-    clearCustomClosetData: true
+    clearCustomClosetData: true,
+    customClosetDataClearedAt: 2000,
   };
   const res3 = JSON.parse(
     vm.runInContext(`doPost({ postData: { contents: ${JSON.stringify(JSON.stringify(resetPayload))} } })`, context).getContent()
   );
   assert.equal(res3.ok, true);
-  assert.equal(res3.customClosetData, null, 'Custom closet data must be cleared when clearCustomClosetData is true');
+  assert.equal(res3.customClosetData, null, 'Custom closet data must be cleared when valid timestamped clearCustomClosetData is sent');
 
-  console.log('  ✅ Custom closet data protection and explicit reset verified');
+  console.log('  ✅ Custom closet data protection, rejection of timestamp-less reset, and explicit reset verified');
 }
 
 // -------------------------------------------------------------
@@ -822,6 +837,7 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
     action: 'push',
     token: 'sync-token-111',
     clearCustomClosetData: true,
+    customClosetDataClearedAt: reconcileCustom.remainingTombstones.customClosetDataClearedAt,
   };
   const pushCustom2Res = JSON.parse(
     vm.runInContext(`doPost({ postData: { contents: ${JSON.stringify(JSON.stringify(pushCustom2Payload))} } })`, context).getContent()
@@ -957,6 +973,19 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
   );
   assert.equal(tombstonesAfterReimport.customClosetDataClearedAt, 0, 'Tombstone must be cleared after newer reimport');
 
+  // 5b. ★ChatGPT 第7回レビュー指摘: タイムスタンプなしの古い削除指示 (clearCustomClosetData: true) を Push しても消去されないこと
+  const noTsResetPayloadB = {
+    action: 'push',
+    token: 'sync-token-111',
+    clearCustomClosetData: true,
+  };
+  const noTsResetResB = JSON.parse(
+    vm.runInContext(`doPost({ postData: { contents: ${JSON.stringify(JSON.stringify(noTsResetPayloadB))} } })`, context).getContent()
+  );
+  assert.equal(noTsResetResB.ok, true);
+  assert.ok(noTsResetResB.customClosetData && noTsResetResB.customClosetData.items.length === 1, 'Timestamp-less deletion must NOT wipe out reimported custom data!');
+  assert.equal(noTsResetResB.customClosetData.items[0].id, 'P100');
+
   // 6. ★ChatGPT 第6回レビュー指摘 (P1): 未同期の端末 B が古い削除指示 (t1 < t2) を保持したまま Push
   const staleResetPayloadB = {
     action: 'push',
@@ -1037,6 +1066,18 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
   assert.equal(staleResB.wifeNgPairs.length, 1, 'Re-added wifeNg pair must NOT be deleted by stale tombstone with array fallback');
   assert.equal(staleResB.wifeNgPairs[0].shirtId, 'S1');
   assert.equal(staleResB.wifeNgPairs[0].pantsId, 'P2');
+
+  // 2b. タイムスタンプなしの deletedWifeNgKeys のみを送信しても、端末Aの再登録 t2 が消去されないこと
+  const noTsPushPayload = {
+    action: 'push',
+    token: 'sync-token-222',
+    deletedWifeNgKeys: ['S1_P2'],
+  };
+  const noTsRes = JSON.parse(
+    vm.runInContext(`doPost({ postData: { contents: ${JSON.stringify(JSON.stringify(noTsPushPayload))} } })`, context).getContent()
+  );
+  assert.equal(noTsRes.ok, true);
+  assert.equal(noTsRes.wifeNgPairs.length, 1, 'Re-added wifeNg pair must NOT be deleted by timestamp-less deletedWifeNgKeys');
 
   // 3. 同日着用履歴の置換とTombstone検証
   const t0_wear = baseTime - 5000;

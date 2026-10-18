@@ -173,13 +173,9 @@ function doPost(e) {
     const existingUpdatedAt = (existingCustom && Number(existingCustom.updatedAt)) || 0;
     const currentClearedAt = Number(tombstones.customClosetDataClearedAt || 0);
 
+    const incomingClearedAt = Number(payload.customClosetDataClearedAt || 0);
     const isDeletionRequested =
-      payload.clearCustomClosetData === true ||
-      (payload.customClosetDataClearedAt !== undefined && Number(payload.customClosetDataClearedAt) > 0);
-    const incomingClearedAt = Number(
-      payload.customClosetDataClearedAt ||
-      (payload.clearCustomClosetData === true ? Date.now() : 0)
-    );
+      payload.clearCustomClosetData === true || incomingClearedAt > 0;
 
     const incomingCustom =
       payload.customClosetData && Array.isArray(payload.customClosetData.items)
@@ -190,11 +186,19 @@ function doPost(e) {
       : 0;
 
     if (isDeletionRequested && (!incomingCustom || incomingClearedAt >= incomingUpdatedAt)) {
-      // 既存データがある場合は、削除時刻が既存データの更新時刻以上の場合のみ削除を実行
-      // （新しく再インポートされたデータに対する古い端末からの遅延削除指示は破棄する）
-      if (!existingCustom || incomingClearedAt >= existingUpdatedAt) {
+      // タイムスタンプのない古い削除指示（incomingClearedAt === 0）で、
+      // サーバー上の既存データを消去することはできない（古いクライアントからの遅延Push対策）。
+      // 既存データがある場合は、正当な削除時刻 incomingClearedAt が存在し、
+      // かつ既存データの更新時刻以上の場合のみ削除を実行する。
+      if (!existingCustom) {
+        if (incomingClearedAt > 0) {
+          tombstones.customClosetDataClearedAt = Math.max(currentClearedAt, incomingClearedAt);
+        }
+      } else if (incomingClearedAt > 0 && incomingClearedAt >= existingUpdatedAt) {
         writeCustomData(ss, null);
         tombstones.customClosetDataClearedAt = Math.max(currentClearedAt, incomingClearedAt);
+      } else {
+        // タイムスタンプなし（incomingClearedAt === 0）または既存データより古い削除指示は破棄し、既存データを保護
       }
     } else if (incomingCustom) {
       // 削除時刻より新しく、かつ既存データの更新時刻以上の場合のみ保存
@@ -267,55 +271,35 @@ function writeTombstones(ss, tombstones) {
 }
 
 function integrateIncomingTombstones(serverTombstones, payload) {
-  const now = Date.now();
-
   // 1. 全削除タイムスタンプの統合
   if (payload.wearHistoryClearedAt) {
     serverTombstones.wearHistoryClearedAt = Math.max(
       serverTombstones.wearHistoryClearedAt || 0,
-      payload.wearHistoryClearedAt
+      Number(payload.wearHistoryClearedAt) || 0
     );
   }
 
-  // 2. 着用履歴の個別削除マップの統合
+  // 2. 着用履歴の個別削除マップの統合（正当なタイムスタンプを持つ削除のみ統合）
   if (payload.deletedWearMap && typeof payload.deletedWearMap === 'object') {
     Object.keys(payload.deletedWearMap).forEach(id => {
-      const ts = payload.deletedWearMap[id] || now;
-      serverTombstones.deletedWearMap[id] = Math.max(
-        serverTombstones.deletedWearMap[id] || 0,
-        ts
-      );
-    });
-  }
-  // 配列形式の後方互換（マップにタイムスタンプが存在しない場合のみ fallback）
-  if (Array.isArray(payload.deletedWearIds)) {
-    payload.deletedWearIds.forEach(id => {
-      if (!payload.deletedWearMap || payload.deletedWearMap[id] === undefined) {
+      const ts = Number(payload.deletedWearMap[id] || 0);
+      if (ts > 0) {
         serverTombstones.deletedWearMap[id] = Math.max(
           serverTombstones.deletedWearMap[id] || 0,
-          now
+          ts
         );
       }
     });
   }
 
-  // 3. 奥様NGの個別削除マップの統合
+  // 3. 奥様NGの個別削除マップの統合（正当なタイムスタンプを持つ削除のみ統合）
   if (payload.deletedWifeNgMap && typeof payload.deletedWifeNgMap === 'object') {
     Object.keys(payload.deletedWifeNgMap).forEach(key => {
-      const ts = payload.deletedWifeNgMap[key] || now;
-      serverTombstones.deletedWifeNgMap[key] = Math.max(
-        serverTombstones.deletedWifeNgMap[key] || 0,
-        ts
-      );
-    });
-  }
-  // 配列形式の後方互換（マップにタイムスタンプが存在しない場合のみ fallback）
-  if (Array.isArray(payload.deletedWifeNgKeys)) {
-    payload.deletedWifeNgKeys.forEach(key => {
-      if (!payload.deletedWifeNgMap || payload.deletedWifeNgMap[key] === undefined) {
+      const ts = Number(payload.deletedWifeNgMap[key] || 0);
+      if (ts > 0) {
         serverTombstones.deletedWifeNgMap[key] = Math.max(
           serverTombstones.deletedWifeNgMap[key] || 0,
-          now
+          ts
         );
       }
     });

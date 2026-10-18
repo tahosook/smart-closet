@@ -50,7 +50,7 @@ export function pruneCompletedTombstones(
       !sent.clearCustomClosetData ||
       (currentTs !== undefined && (sentTs === undefined || currentTs > sentTs))
     ) {
-      nextCustomClosetDataClearedAt = currentTs ?? (current.customClosetDataClearedAt || Date.now());
+      nextCustomClosetDataClearedAt = currentTs ?? current.customClosetDataClearedAt;
     }
   }
   const nextClearCustomClosetData =
