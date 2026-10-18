@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef } from 'react';
 import {
   CheckCircle2,
   AlertTriangle,
@@ -12,6 +12,7 @@ import {
   Thermometer,
   X,
   Maximize2,
+  ArrowUp,
 } from 'lucide-react';
 import { SceneMode, ClosetItem } from '../types/closet';
 import { useClosetStore } from '../hooks/useClosetStore';
@@ -39,10 +40,33 @@ export const TodayView: React.FC = () => {
     null
   );
 
+  const recommendationsRef = useRef<HTMLElement>(null);
+  const shirtSectionRef = useRef<HTMLElement>(null);
+
   // Default selected shirt: today's recorded shirt, or first shirt
   const [selectedShirtId, setSelectedShirtId] = useState<string>(
     () => todayRecord?.shirtId || 'S1'
   );
+
+  const handleSelectShirt = (shirtId: string) => {
+    setSelectedShirtId(shirtId);
+    // On mobile (< lg), smoothly scroll to recommendations so user immediately sees recommended bottoms
+    if (typeof window !== 'undefined' && window.innerWidth < 1024) {
+      setTimeout(() => {
+        recommendationsRef.current?.scrollIntoView({
+          behavior: 'smooth',
+          block: 'start',
+        });
+      }, 50);
+    }
+  };
+
+  const handleScrollToShirts = () => {
+    shirtSectionRef.current?.scrollIntoView({
+      behavior: 'smooth',
+      block: 'start',
+    });
+  };
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
@@ -195,49 +219,49 @@ export const TodayView: React.FC = () => {
       )}
 
       {/* 3. Upper: Shirt Grid (Weather-filtered) */}
-      <section className="space-y-1.5 sm:space-y-2">
+      <section ref={shirtSectionRef} className="scroll-mt-16 space-y-2">
         <div className="flex items-center justify-between px-1">
-          <h2 className="text-xs sm:text-sm font-bold text-slate-200 flex items-center gap-1.5">
+          <h2 className="text-sm font-bold text-slate-200 flex items-center gap-1.5">
             <span className="w-2 h-2 rounded-full bg-blue-500"></span>
             <span>今日のシャツを選ぶ（1タップ）</span>
           </h2>
-          <span className="text-[11px] sm:text-xs text-blue-400 font-medium">
+          <span className="text-xs text-blue-400 font-medium">
             気温に最適 {matchingShirts.length}着
           </span>
         </div>
 
-        {/* Matching Shirts (Primary View) */}
-        <div className="grid grid-cols-4 sm:grid-cols-4 lg:grid-cols-3 gap-1.5 lg:gap-2">
+        {/* Matching Shirts (Primary View - Large 3-Column Grid) */}
+        <div className="grid grid-cols-3 gap-2">
           {matchingShirts.map((shirt) => {
             const isSelected = shirt.id === selectedShirt.id;
             return (
               <button
                 key={shirt.id}
-                onClick={() => setSelectedShirtId(shirt.id)}
-                className={`flex flex-col text-left p-1 sm:p-1.5 rounded-xl border transition-all relative ${
+                onClick={() => handleSelectShirt(shirt.id)}
+                className={`flex flex-col text-left p-1.5 rounded-xl border transition-all relative ${
                   isSelected
                     ? 'bg-blue-950/70 border-blue-500 ring-2 ring-blue-500/50 shadow-lg'
                     : 'bg-slate-800/80 border-slate-700/60 hover:border-slate-600 hover:bg-slate-800'
                 }`}
               >
-                <div className="h-14 sm:h-20 lg:h-auto lg:aspect-square w-full rounded-lg overflow-hidden bg-slate-900">
+                <div className="aspect-square w-full rounded-lg overflow-hidden bg-slate-900">
                   <ItemImage item={shirt} className="w-full h-full" imgClassName="object-contain" />
                 </div>
-                <div className="mt-0.5 sm:mt-1 px-0.5">
+                <div className="mt-1 px-0.5">
                   <div className="flex items-center justify-between">
                     <span className="text-[10px] font-bold text-blue-400">{shirt.id}</span>
-                    <span className="text-[8px] sm:text-[9px] text-slate-400 truncate max-w-[45px] sm:max-w-[55px]">
+                    <span className="text-[9px] text-slate-400 truncate max-w-[55px]">
                       {shirt.seasonSleeve.split('・')[0]}
                     </span>
                   </div>
-                  <div className="text-[10px] sm:text-[11px] font-semibold text-slate-100 line-clamp-1 leading-tight mt-0.5">
+                  <div className="text-[11px] font-semibold text-slate-100 line-clamp-1 leading-tight mt-0.5">
                     {shirt.name}
                   </div>
                 </div>
 
                 {isSelected && (
                   <div className="absolute top-1 right-1 bg-blue-600 text-white p-0.5 rounded-full shadow">
-                    <Check className="w-2.5 h-2.5 sm:w-3 sm:h-3 stroke-[3]" />
+                    <Check className="w-3 h-3 stroke-[3]" />
                   </div>
                 )}
               </button>
@@ -247,10 +271,10 @@ export const TodayView: React.FC = () => {
 
         {/* Hidden Shirts Accordion Toggle (For shirts that don't match today's weather) */}
         {hiddenShirts.length > 0 && (
-          <div className="pt-0.5 sm:pt-1">
+          <div className="pt-1">
             <button
               onClick={() => setShowHiddenShirts(!showHiddenShirts)}
-              className="w-full py-1.5 sm:py-2 px-2.5 sm:px-3 rounded-xl bg-slate-800/40 hover:bg-slate-800/70 border border-slate-700/50 text-[10px] sm:text-[11px] font-medium text-slate-400 hover:text-slate-200 flex items-center justify-between transition-colors"
+              className="w-full py-2 px-3 rounded-xl bg-slate-800/40 hover:bg-slate-800/70 border border-slate-700/50 text-[11px] font-medium text-slate-400 hover:text-slate-200 flex items-center justify-between transition-colors"
             >
               <div className="flex items-center gap-1.5">
                 <Thermometer className="w-3.5 h-3.5 text-slate-500" />
@@ -268,41 +292,41 @@ export const TodayView: React.FC = () => {
             </button>
 
             {(showHiddenShirts || isSelectedShirtHidden) && (
-              <div className="mt-1.5 sm:mt-2 p-2 sm:p-2.5 bg-slate-900/60 rounded-xl border border-slate-800 space-y-1.5 sm:space-y-2">
-                <div className="text-[9px] sm:text-[10px] text-slate-400 font-semibold px-1">
+              <div className="mt-2 p-2.5 bg-slate-900/60 rounded-xl border border-slate-800 space-y-2">
+                <div className="text-[10px] text-slate-400 font-semibold px-1">
                   ※ 気温目安に合っていませんが、タップすれば選択できます
                 </div>
-                <div className="grid grid-cols-4 sm:grid-cols-4 lg:grid-cols-3 gap-1.5 lg:gap-2">
+                <div className="grid grid-cols-3 gap-2">
                   {hiddenShirts.map((shirt) => {
                     const isSelected = shirt.id === selectedShirt.id;
                     return (
                       <button
                         key={shirt.id}
-                        onClick={() => setSelectedShirtId(shirt.id)}
-                        className={`flex flex-col text-left p-1 sm:p-1.5 rounded-xl border transition-all relative ${
+                        onClick={() => handleSelectShirt(shirt.id)}
+                        className={`flex flex-col text-left p-1.5 rounded-xl border transition-all relative ${
                           isSelected
                             ? 'bg-blue-950/70 border-blue-500 ring-2 ring-blue-500/50 shadow-lg'
                             : 'bg-slate-800/40 border-slate-700/40 hover:border-slate-600 hover:bg-slate-800 opacity-75 hover:opacity-100'
                         }`}
                       >
-                        <div className="h-14 sm:h-20 lg:h-auto lg:aspect-square w-full rounded-lg overflow-hidden bg-slate-900">
+                        <div className="aspect-square w-full rounded-lg overflow-hidden bg-slate-900">
                           <ItemImage item={shirt} className="w-full h-full" imgClassName="object-contain" />
                         </div>
-                        <div className="mt-0.5 sm:mt-1 px-0.5">
+                        <div className="mt-1 px-0.5">
                           <div className="flex items-center justify-between">
                             <span className="text-[10px] font-bold text-slate-400">{shirt.id}</span>
-                            <span className="text-[8px] sm:text-[9px] text-amber-400/80 truncate">
+                            <span className="text-[9px] text-amber-400/80 truncate">
                               {shirt.seasonSleeve.split('・')[0]}
                             </span>
                           </div>
-                          <div className="text-[10px] sm:text-[11px] font-semibold text-slate-300 line-clamp-1 leading-tight mt-0.5">
+                          <div className="text-[11px] font-semibold text-slate-300 line-clamp-1 leading-tight mt-0.5">
                             {shirt.name}
                           </div>
                         </div>
 
                         {isSelected && (
                           <div className="absolute top-1 right-1 bg-blue-600 text-white p-0.5 rounded-full shadow">
-                            <Check className="w-2.5 h-2.5 sm:w-3 sm:h-3 stroke-[3]" />
+                            <Check className="w-3 h-3 stroke-[3]" />
                           </div>
                         )}
                       </button>
@@ -317,31 +341,42 @@ export const TodayView: React.FC = () => {
         </div>
 
         {/* Right Pane (Desktop 7 cols): Instant Pants Decision Panel, Other Pants, NG List */}
-        <div className="space-y-2.5 lg:space-y-4 lg:col-span-7">
+        <div className="space-y-4 lg:col-span-7">
           {/* 4. Lower: Instant Pants Decision Panel (Large Photo Cards) */}
-          <section className="space-y-2 sm:space-y-3 pt-0 sm:pt-2 lg:pt-0">
+          <section ref={recommendationsRef} className="scroll-mt-16 space-y-3 pt-1 lg:pt-0">
         <div className="flex items-center justify-between px-1">
-          <h2 className="text-xs sm:text-sm font-bold text-slate-200 flex items-center gap-1.5">
+          <h2 className="text-sm font-bold text-slate-200 flex items-center gap-1.5">
             <span className="w-2 h-2 rounded-full bg-amber-400"></span>
             <span>【1秒即決】おすすめパンツ（写真拡大版）</span>
           </h2>
-          <span className="text-[11px] sm:text-xs text-slate-400">
+          <span className="text-xs text-slate-400">
             {selectedShirt.name.split('（')[0]} に合う候補
           </span>
         </div>
 
-        {/* Selected Shirt Context Capsule (Desktop only: on mobile the shirt grid is immediately above) */}
-        <div className="hidden lg:flex p-2.5 bg-slate-800/60 border border-slate-700/60 rounded-xl items-center gap-3">
-          <div className="w-10 h-10 rounded-lg overflow-hidden flex-shrink-0 bg-slate-900">
-            <ItemImage item={selectedShirt} showBadge={false} className="w-full h-full" />
-          </div>
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-1.5">
-              <span className="text-[10px] font-bold text-blue-400">{selectedShirt.id}</span>
-              <div className="text-xs font-bold text-white truncate">{selectedShirt.name}</div>
+        {/* Selected Shirt Context Capsule with Mobile Quick Return */}
+        <div className="p-2.5 bg-slate-800/80 border border-slate-700/80 rounded-xl flex items-center justify-between gap-3 shadow-sm">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-10 h-10 rounded-lg overflow-hidden flex-shrink-0 bg-slate-900 border border-slate-700/60">
+              <ItemImage item={selectedShirt} showBadge={false} className="w-full h-full" imgClassName="object-contain" />
             </div>
-            <div className="text-[11px] text-slate-400 truncate mt-0.5">{selectedShirt.notes}</div>
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5">
+                <span className="text-[10px] font-bold text-blue-400">{selectedShirt.id}</span>
+                <div className="text-xs font-bold text-white truncate">{selectedShirt.name}</div>
+              </div>
+              <div className="text-[11px] text-slate-400 truncate mt-0.5">{selectedShirt.notes}</div>
+            </div>
           </div>
+
+          <button
+            onClick={handleScrollToShirts}
+            className="lg:hidden flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-blue-950/70 hover:bg-blue-900 border border-blue-700/50 text-[11px] font-bold text-blue-300 flex-shrink-0 transition-colors active:scale-95 shadow"
+            title="シャツ一覧へ戻る"
+          >
+            <ArrowUp className="w-3.5 h-3.5" />
+            <span>シャツ変更</span>
+          </button>
         </div>
 
         {/* Top Recommendations (1st to 3rd candidates) with ENLARGED photos */}
@@ -350,7 +385,7 @@ export const TodayView: React.FC = () => {
             このシャツに合う推奨パンツがありません。
           </div>
         ) : (
-          <div className="space-y-2.5 sm:space-y-3.5">
+          <div className="space-y-3.5">
             {topRecommendations.map((rec) => {
               const p = rec.pants;
               const isTodayChosen =
@@ -365,17 +400,17 @@ export const TodayView: React.FC = () => {
               return (
                 <div
                   key={p.id}
-                  className={`p-2.5 sm:p-3.5 rounded-xl sm:rounded-2xl border transition-all ${
+                  className={`p-3.5 rounded-2xl border transition-all ${
                     isTodayChosen
                       ? 'bg-slate-800/95 border-emerald-500/80 ring-2 ring-emerald-500/30'
                       : 'bg-slate-800/90 border-slate-700/80 shadow-md'
                   }`}
                 >
-                  <div className="flex gap-2.5 sm:gap-3.5 items-stretch">
+                  <div className="flex gap-3.5 items-stretch">
                     {/* Enlarged Pants Photo Card (Optimized for 1:2 ~ 3:5 portrait aspect ratio) */}
                     <div
                       onClick={() => setZoomItemPair({ shirt: selectedShirt, pants: p })}
-                      className="w-28 h-40 sm:w-44 sm:h-60 flex-shrink-0 rounded-xl sm:rounded-2xl overflow-hidden bg-gradient-to-b from-slate-900 via-slate-950 to-slate-900 border border-slate-700/80 shadow-inner relative group cursor-pointer"
+                      className="w-36 h-52 sm:w-44 sm:h-60 flex-shrink-0 rounded-2xl overflow-hidden bg-gradient-to-b from-slate-900 via-slate-950 to-slate-900 border border-slate-700/80 shadow-inner relative group cursor-pointer"
                       title="タップして上下拡大プレビュー"
                     >
                       <ItemImage
@@ -386,7 +421,7 @@ export const TodayView: React.FC = () => {
 
                       {/* Mini Shirt Thumbnail overlay in top-right corner */}
                       <div
-                        className="absolute top-1.5 right-1.5 w-7 h-9 sm:w-8 sm:h-10 rounded-lg border border-slate-600/80 overflow-hidden shadow-lg bg-slate-900"
+                        className="absolute top-1.5 right-1.5 w-8 h-10 rounded-lg border border-slate-600/80 overflow-hidden shadow-lg bg-slate-900"
                         title="選択中のシャツ"
                       >
                         <ItemImage item={selectedShirt} showBadge={false} className="w-full h-full" />
@@ -402,9 +437,9 @@ export const TodayView: React.FC = () => {
                     <div className="flex-1 flex flex-col justify-between min-w-0">
                       <div>
                         {/* Badges row */}
-                        <div className="flex items-center gap-1.5 flex-wrap mb-1 sm:mb-1.5">
+                        <div className="flex items-center gap-1.5 flex-wrap mb-1.5">
                           <span
-                            className={`px-1.5 sm:px-2 py-0.5 rounded-md text-[9px] sm:text-[10px] font-bold border ${
+                            className={`px-2 py-0.5 rounded-md text-[10px] font-bold border ${
                               rankColors[rec.rank - 1] || 'bg-slate-700 text-slate-300'
                             }`}
                           >
@@ -412,48 +447,48 @@ export const TodayView: React.FC = () => {
                           </span>
 
                           {rec.isYesterdayWorn && (
-                            <span className="px-1.5 sm:px-2 py-0.5 rounded-md text-[9px] sm:text-[10px] font-bold bg-rose-950/70 text-rose-300 border border-rose-800/70 flex items-center gap-1">
-                              <AlertTriangle className="w-2.5 h-2.5 sm:w-3 sm:h-3 text-rose-400" />
-                              昨日着用
+                            <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-rose-950/70 text-rose-300 border border-rose-800/70 flex items-center gap-1">
+                              <AlertTriangle className="w-3 h-3 text-rose-400" />
+                              昨日着用（冷却中）
                             </span>
                           )}
 
-                          <span className="px-1.5 py-0.5 rounded text-[8px] sm:text-[9px] text-slate-400 bg-slate-900 border border-slate-700">
+                          <span className="px-1.5 py-0.5 rounded text-[9px] text-slate-400 bg-slate-900 border border-slate-700">
                             ドレス度 {p.dressScore}
                           </span>
                         </div>
 
                         {/* Pants Name */}
-                        <h3 className="text-xs sm:text-base font-bold text-white leading-snug line-clamp-1 sm:line-clamp-2">
+                        <h3 className="text-sm sm:text-base font-bold text-white leading-snug line-clamp-2">
                           {p.name}
                         </h3>
 
                         {/* Affinity Reason */}
-                        <p className="text-[11px] sm:text-xs text-slate-300 leading-relaxed mt-1 sm:mt-1.5 line-clamp-2 sm:line-clamp-3">
+                        <p className="text-xs text-slate-300 leading-relaxed mt-1.5 line-clamp-3">
                           {rec.affinityReason}
                         </p>
                       </div>
 
                       {/* Action Buttons */}
-                      <div className="flex items-center gap-1.5 sm:gap-2 mt-2 sm:mt-3 pt-1.5 sm:pt-2 border-t border-slate-700/50">
+                      <div className="flex items-center gap-2 mt-3 pt-2 border-t border-slate-700/50">
                         <button
                           onClick={() => handleSelectWear(p)}
-                          className={`flex-1 py-2 sm:py-2.5 px-2.5 sm:px-3 rounded-lg sm:rounded-xl text-[11px] sm:text-xs font-bold flex items-center justify-center gap-1 sm:gap-1.5 transition-all ${
+                          className={`flex-1 py-2.5 px-3 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all ${
                             isTodayChosen
                               ? 'bg-emerald-600 text-white shadow-md shadow-emerald-900/40'
                               : 'bg-blue-600 hover:bg-blue-500 text-white shadow-md shadow-blue-900/40 active:scale-[0.98]'
                           }`}
                         >
-                          <CheckCircle2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                          <CheckCircle2 className="w-4 h-4" />
                           <span>{isTodayChosen ? '本日着用中' : '✅ 今日これ着る'}</span>
                         </button>
 
                         <button
                           onClick={() => handleRegisterWifeNg(p)}
-                          className="py-2 sm:py-2.5 px-2 sm:px-2.5 rounded-lg sm:rounded-xl text-[10px] sm:text-[11px] font-semibold bg-rose-950/40 hover:bg-rose-900/60 text-rose-300 border border-rose-800/50 flex items-center gap-1 transition-colors active:scale-[0.98]"
+                          className="py-2.5 px-2.5 rounded-xl text-[11px] font-semibold bg-rose-950/40 hover:bg-rose-900/60 text-rose-300 border border-rose-800/50 flex items-center gap-1 transition-colors active:scale-[0.98]"
                           title="この組み合わせを奥様NGリストに登録"
                         >
-                          <AlertTriangle className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-rose-400" />
+                          <AlertTriangle className="w-3.5 h-3.5 text-rose-400" />
                           <span className="hidden sm:inline">奥様NG</span>
                         </button>
                       </div>
