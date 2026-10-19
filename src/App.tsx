@@ -8,19 +8,27 @@ import {
   History,
   Shirt,
   CalendarCheck2,
+  Cloud,
+  CloudOff,
+  RefreshCw,
 } from 'lucide-react';
+import { ClosetProvider, useClosetStore } from './hooks/useClosetStore';
 import { TodayView } from './components/TodayView';
 import { AiSyncView } from './components/AiSyncView';
 import { TravelPlannerView } from './components/TravelPlannerView';
 import { MatrixView } from './components/MatrixView';
 import { HistoryModal } from './components/HistoryModal';
+import { GasSyncModal } from './components/GasSyncModal';
 
 type ActiveTab = 'today' | 'ai' | 'travel' | 'matrix';
 
-export const App: React.FC = () => {
+const AppShell: React.FC = () => {
   const [activeTab, setActiveTab] = useState<ActiveTab>('today');
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
+  const [isGasModalOpen, setIsGasModalOpen] = useState(false);
   const [isDark, setIsDark] = useState(true);
+
+  const { syncStatus } = useClosetStore();
 
   const toggleTheme = () => {
     setIsDark(!isDark);
@@ -52,6 +60,30 @@ export const App: React.FC = () => {
           </div>
 
           <div className="flex items-center gap-1.5">
+            {/* Cloud Sync Status Button */}
+            <button
+              onClick={() => setIsGasModalOpen(true)}
+              className="p-2 text-slate-300 hover:text-white rounded-xl bg-slate-800/80 hover:bg-slate-700 transition-colors border border-slate-700/60 relative"
+              title="クラウド同期・スプレッドシート設定"
+            >
+              {syncStatus === 'syncing' ? (
+                <RefreshCw className="w-4 h-4 text-blue-400 animate-spin" />
+              ) : syncStatus === 'synced' ? (
+                <div className="relative">
+                  <Cloud className="w-4 h-4 text-emerald-400" />
+                  <span className="absolute -top-1 -right-1 w-2 h-2 bg-emerald-400 rounded-full shadow-sm shadow-emerald-500/80 ring-2 ring-slate-900" />
+                </div>
+              ) : syncStatus === 'offline_pending' || syncStatus === 'error' ? (
+                <div className="relative">
+                  <CloudOff className="w-4 h-4 text-amber-400" />
+                  <span className="absolute -top-1 -right-1 w-2 h-2 bg-amber-400 rounded-full shadow-sm shadow-amber-500/80 ring-2 ring-slate-900" />
+                </div>
+              ) : (
+                <Cloud className="w-4 h-4 text-slate-400 hover:text-slate-200" />
+              )}
+            </button>
+
+            {/* Wear History Button */}
             <button
               onClick={() => setIsHistoryOpen(true)}
               className="p-2 text-slate-300 hover:text-white rounded-xl bg-slate-800/80 hover:bg-slate-700 transition-colors border border-slate-700/60"
@@ -59,6 +91,8 @@ export const App: React.FC = () => {
             >
               <History className="w-4 h-4" />
             </button>
+
+            {/* Theme Toggle Button */}
             <button
               onClick={toggleTheme}
               className="p-2 text-slate-300 hover:text-white rounded-xl bg-slate-800/80 hover:bg-slate-700 transition-colors border border-slate-700/60"
@@ -80,6 +114,9 @@ export const App: React.FC = () => {
 
       {/* History Modal */}
       <HistoryModal isOpen={isHistoryOpen} onClose={() => setIsHistoryOpen(false)} />
+
+      {/* GAS Cloud Sync Modal */}
+      <GasSyncModal isOpen={isGasModalOpen} onClose={() => setIsGasModalOpen(false)} />
 
       {/* Fixed Bottom Navigation (Pixel 9a Thumb Friendly) */}
       <nav className="fixed bottom-0 left-0 right-0 z-40 bg-slate-900/95 backdrop-blur-lg border-t border-slate-800/80 pb-safe">
@@ -138,5 +175,13 @@ export const App: React.FC = () => {
         </div>
       </nav>
     </div>
+  );
+};
+
+export const App: React.FC = () => {
+  return (
+    <ClosetProvider>
+      <AppShell />
+    </ClosetProvider>
   );
 };
