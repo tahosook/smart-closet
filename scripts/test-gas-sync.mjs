@@ -21,25 +21,22 @@ const { pruneCompletedTombstones, hasRemainingTombstones, reconcileSyncResponse 
 
 console.log('🧪 Running GAS backend and sync logic tests...');
 
-// 1. gas/Code.gs と src/data/gasScriptTemplate.ts の同期検証
+// 1. gas/Code.gs Single Source of Truth および GasSyncModal ?raw import の検証
 const codeGsPath = path.join(projectRoot, 'gas/Code.gs');
-const templateTsPath = path.join(projectRoot, 'src/data/gasScriptTemplate.ts');
+const gasSyncModalPath = path.join(projectRoot, 'src/components/GasSyncModal.tsx');
+const obsoleteTemplatePath = path.join(projectRoot, 'src/data/gasScriptTemplate.ts');
 
 assert.ok(fs.existsSync(codeGsPath), 'gas/Code.gs must exist');
-assert.ok(fs.existsSync(templateTsPath), 'src/data/gasScriptTemplate.ts must exist');
+assert.equal(fs.existsSync(obsoleteTemplatePath), false, 'gasScriptTemplate.ts must be eliminated in favor of ?raw import');
 
 const codeGsContent = fs.readFileSync(codeGsPath, 'utf-8');
-const templateTsContent = fs.readFileSync(templateTsPath, 'utf-8');
+const gasSyncModalContent = fs.readFileSync(gasSyncModalPath, 'utf-8');
 
 assert.ok(
-  templateTsContent.includes('export const GAS_SCRIPT_TEMPLATE = `'),
-  'gasScriptTemplate.ts must export GAS_SCRIPT_TEMPLATE'
+  gasSyncModalContent.includes("import GAS_SCRIPT_TEMPLATE from '../../gas/Code.gs?raw'"),
+  'GasSyncModal.tsx must import GAS_SCRIPT_TEMPLATE directly via ?raw'
 );
-assert.ok(
-  templateTsContent.includes(codeGsContent.trim()),
-  'gasScriptTemplate.ts must contain exact code from gas/Code.gs'
-);
-console.log('  ✅ Template synchronization verified');
+console.log('  ✅ Code.gs Single Source of Truth & ?raw import verified');
 
 // 2. インメモリ Google Apps Script モック環境の構築
 class MockRange {
@@ -476,7 +473,23 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
   assert.equal(conflictRes.ok, false);
   assert.match(conflictRes.error, /他端末と同期処理中です/);
 
-  console.log('  ✅ LockService concurrency control and lock lifecycle verified');
+  // 3. doGet でのロック制御検証 (マージ前改修)
+  const getSuccess = JSON.parse(
+    vm.runInContext('doGet({ parameter: { token: "sync-token-111" } })', context).getContent()
+  );
+  assert.equal(getSuccess.ok, true);
+  const getLockStat = getLockStatus();
+  assert.equal(getLockStat.lockTryCount, 2, 'Lock must be requested for doGet');
+  assert.equal(getLockStat.lockReleaseCount, 2, 'Lock must be released after doGet');
+  assert.equal(getLockStat.lockAcquired, false, 'Lock must not remain held after doGet');
+
+  const getConflictRes = JSON.parse(
+    vm.runInContext('doGet({ parameter: { token: "sync-token-111" } })', lockedContext).getContent()
+  );
+  assert.equal(getConflictRes.ok, false);
+  assert.match(getConflictRes.error, /他端末と同期処理中です/);
+
+  console.log('  ✅ LockService concurrency control and lock lifecycle verified (doGet & doPost)');
 }
 
 // -------------------------------------------------------------
@@ -1078,6 +1091,30 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
   );
   assert.equal(noTsRes.ok, true);
   assert.equal(noTsRes.wifeNgPairs.length, 1, 'Re-added wifeNg pair must NOT be deleted by timestamp-less deletedWifeNgKeys');
+
+  // 2c. スプレッドシートに手動追加された登録日時なしの奥様NGペアが、現在時刻に補完されず、
+  // タイムスタンプ付きの deletedWifeNgMap で正常に削除できることの検証
+  const ngSheet = ss.getSheetByName('wife_ng');
+  ngSheet.appendRow(['S5', '柄シャツ', 'P10', 'チェックパンツ', '手動追加NG', '']); // 登録日時が空
+  const pullResManual = JSON.parse(
+    vm.runInContext('doGet({ parameter: { token: "sync-token-222" } })', context).getContent()
+  );
+  assert.equal(pullResManual.ok, true);
+  const manualPair = pullResManual.wifeNgPairs.find(p => p.shirtId === 'S5' && p.pantsId === 'P10');
+  assert.ok(manualPair, 'Manual pair without createdAt must be read');
+  assert.equal(manualPair.createdAt, '', 'Empty createdAt must remain empty, NOT synthesized to Date.now');
+
+  // クライアントから S5_P10 の削除を Push -> createdAt が空（時刻0）なので正常に削除されること
+  const deleteManualPayload = {
+    action: 'push',
+    token: 'sync-token-222',
+    deletedWifeNgMap: { 'S5_P10': Date.now() },
+  };
+  const deleteManualRes = JSON.parse(
+    vm.runInContext(`doPost({ postData: { contents: ${JSON.stringify(JSON.stringify(deleteManualPayload))} } })`, context).getContent()
+  );
+  assert.equal(deleteManualRes.ok, true);
+  assert.equal(deleteManualRes.wifeNgPairs.some(p => p.shirtId === 'S5' && p.pantsId === 'P10'), false, 'Manual pair must be successfully deleted');
 
   // 3. 同日着用履歴の置換とTombstone検証
   const t0_wear = baseTime - 5000;

@@ -58,10 +58,8 @@ export function pruneCompletedTombstones(
 
   return {
     deletedWearMap: nextDeletedWearMap,
-    deletedWearIds: Object.keys(nextDeletedWearMap),
     wearHistoryClearedAt: nextWearHistoryClearedAt,
     deletedWifeNgMap: nextDeletedWifeNgMap,
-    deletedWifeNgKeys: Object.keys(nextDeletedWifeNgMap),
     clearCustomClosetData: nextClearCustomClosetData,
     customClosetDataClearedAt: nextCustomClosetDataClearedAt,
   };

@@ -18,7 +18,7 @@ smart-closet/
 ├── AGENTS.md                    # This guideline (Constitution)
 ├── README.md                    # Human operator & deployment guide
 ├── gas/
-│   └── Code.gs                  # Google Apps Script Web App (Spreadsheet backend)
+│   └── Code.gs                  # Google Apps Script Web App (Single Source of Truth; imported via ?raw into GasSyncModal)
 ├── docs/
 │   ├── SPECIFICATION.md         # UI, data model & scoring specifications
 │   └── STYLING_RULES.md         # 40s male styling principles & bias analysis
@@ -29,8 +29,7 @@ smart-closet/
 │   └── validate-closet.mjs      # Data & asset integrity validation CLI
 ├── src/
 │   ├── data/
-│   │   ├── closet.json          # Master database of 24 garments (Single Source of Truth)
-│   │   └── gasScriptTemplate.ts # Embedded GAS script template for 1-click in-app setup
+│   │   └── closet.json          # Master database of 24 garments (Single Source of Truth)
 │   ├── types/closet.ts          # TypeScript type definitions (incl. GasSync)
 │   ├── hooks/useClosetStore.tsx # Context Provider, state, cooling & GAS background sync
 │   ├── components/

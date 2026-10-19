@@ -16,7 +16,7 @@ import {
   Sparkles,
 } from 'lucide-react';
 import { useClosetStore, generateSecretToken } from '../hooks/useClosetStore';
-import { GAS_SCRIPT_TEMPLATE } from '../data/gasScriptTemplate';
+import GAS_SCRIPT_TEMPLATE from '../../gas/Code.gs?raw';
 
 interface GasSyncModalProps {
   isOpen: boolean;

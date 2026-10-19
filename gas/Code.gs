@@ -84,6 +84,15 @@ function resetAllDataDangerously() {
  * GET リクエストハンドラ (Pull: スプレッドシートから最新データを取得)
  */
 function doGet(e) {
+  const lock = LockService.getScriptLock();
+  const hasLock = lock.tryLock(10000);
+  if (!hasLock) {
+    return createJsonResponse({
+      ok: false,
+      error: '他端末と同期処理中です。少し待ってから再試行してください'
+    });
+  }
+
   try {
     const ss = SpreadsheetApp.getActiveSpreadsheet();
     const token = e && e.parameter ? e.parameter.token : null;
@@ -109,6 +118,8 @@ function doGet(e) {
     });
   } catch (err) {
     return createJsonResponse({ ok: false, error: err.toString() });
+  } finally {
+    lock.releaseLock();
   }
 }
 
@@ -517,7 +528,7 @@ function writeWearHistory(ss, list, itemNamesMap) {
     itemNamesMap[item.shirtId] || '',
     item.pantsId,
     itemNamesMap[item.pantsId] || '',
-    item.timestamp || Date.now()
+    item.timestamp || ''
   ]);
 
   sheet.getRange(2, 1, rows.length, 8).setValues(rows);
@@ -536,7 +547,7 @@ function readWifeNg(ss) {
       shirtId: String(row[0]),
       pantsId: String(row[2]),
       reason: String(row[4] || '🚨 奥様からNG指定'),
-      createdAt: row[5] ? (typeof row[5] === 'string' ? row[5] : (row[5] instanceof Date ? row[5].toISOString() : String(row[5]))) : new Date().toISOString()
+      createdAt: row[5] ? (typeof row[5] === 'string' ? row[5] : (row[5] instanceof Date ? row[5].toISOString() : String(row[5]))) : ''
     });
   }
   return list;
@@ -555,7 +566,7 @@ function writeWifeNg(ss, list, itemNamesMap) {
     item.pantsId,
     itemNamesMap[item.pantsId] || '',
     item.reason || '🚨 奥様からNG指定',
-    item.createdAt || new Date().toISOString()
+    item.createdAt || ''
   ]);
 
   sheet.getRange(2, 1, rows.length, 6).setValues(rows);

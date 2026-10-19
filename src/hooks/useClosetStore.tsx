@@ -45,12 +45,9 @@ function getYesterdayString(): string {
 }
 
 export function generateSecretToken(): string {
-  const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
-  let result = 'sc_';
-  for (let i = 0; i < 16; i++) {
-    result += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  return result;
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  return 'sc_' + Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
 }
 
 export interface ClosetStoreContextType {
@@ -183,6 +180,7 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const customDataSeqRef = useRef<number>(0);
   const inFlightRef = useRef<boolean>(false);
   const pendingPushRef = useRef<boolean>(false);
+  const lastAutoSyncAtRef = useRef<number>(0);
 
   const stateRef = useRef({
     closetData,
@@ -483,10 +481,8 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       ),
       customClosetDataClearedAt: sentTombstones.customClosetDataClearedAt,
       deletedWearMap: sentTombstones.deletedWearMap,
-      deletedWearIds: Object.keys(sentTombstones.deletedWearMap || {}),
       wearHistoryClearedAt: sentTombstones.wearHistoryClearedAt,
       deletedWifeNgMap: sentTombstones.deletedWifeNgMap,
-      deletedWifeNgKeys: Object.keys(sentTombstones.deletedWifeNgMap || {}),
       itemNamesMap,
     };
 
@@ -715,20 +711,29 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }
   }, [pushToGas]);
 
-  // Initial sync on app start and reconnect listener (with strict autoSync check)
+  // Initial sync on app start, reconnect listener, and visibilitychange listener (with 30s throttle)
   useEffect(() => {
     if (!gasConfig.webAppUrl) {
       setSyncStatus('unconfigured');
       return;
     }
 
-    if (gasConfig.autoSync) {
+    const runAutoSync = () => {
+      const cfg = stateRef.current.gasConfig;
+      if (!cfg.webAppUrl || !cfg.autoSync) return;
+      const nowMs = Date.now();
+      if (nowMs - lastAutoSyncAtRef.current < 30_000) return;
+      lastAutoSyncAtRef.current = nowMs;
       const isDirty = localStorage.getItem(STORAGE_KEYS.SYNC_DIRTY) === 'true';
       if (isDirty) {
         pushToGas();
       } else {
         pullFromGas();
       }
+    };
+
+    if (gasConfig.autoSync) {
+      runAutoSync();
     }
 
     const handleOnline = () => {
@@ -741,9 +746,17 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       }
     };
 
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        runAutoSync();
+      }
+    };
+
     window.addEventListener('online', handleOnline);
+    document.addEventListener('visibilitychange', handleVisibility);
     return () => {
       window.removeEventListener('online', handleOnline);
+      document.removeEventListener('visibilitychange', handleVisibility);
     };
   }, [gasConfig.webAppUrl, gasConfig.autoSync, pushToGas, pullFromGas]);
 
