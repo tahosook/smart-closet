@@ -979,3 +979,32 @@ function testDriveAccess() {
   }
 }
 
+/**
+ * ルーティングと既存同期の検証用関数 (指示1)
+ */
+function verifyRoutingAndSync() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const token = readConfigValue(ss, 'secretToken');
+  Logger.log('🔑 secretToken: ' + (token ? '設定済み' : '未設定'));
+
+  // 1. 通常のデータ同期 (doGet) のテスト
+  const getReq = { parameter: { token: token } };
+  const getRes = JSON.parse(doGet(getReq).getContent());
+  Logger.log('✅ doGet (Pull) 検証: ok=' + getRes.ok + ', wearCount=' + (getRes.wearHistory ? getRes.wearHistory.length : 0) + ', imageFolderId=' + (getRes.imageFolderId || '未登録'));
+
+  // 2. 画像同期プラン (getImageSyncPlan) のルーティングテスト
+  const postReq = {
+    postData: {
+      contents: JSON.stringify({
+        token: token,
+        action: 'getImageSyncPlan',
+        localMeta: {}
+      })
+    }
+  };
+  const planRes = JSON.parse(doPost(postReq).getContent());
+  Logger.log('✅ getImageSyncPlan 検証: ok=' + planRes.ok + ', error=' + (planRes.error || 'なし'));
+
+  return { getRes: getRes, planRes: planRes };
+}
+
