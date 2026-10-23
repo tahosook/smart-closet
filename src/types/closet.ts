@@ -113,6 +113,7 @@ export interface GetImageSyncPlanResponse {
   validItemIds: string[];            // ドライブ上に現存する全有効アイテムID (大文字正規化済み、Prune用)
   neededItemIds: string[];           // 新規または更新された取得対象アイテムID
   imagesLastUpdatedAt: number;       // フォルダ内の最新更新タイムスタンプ
+  warnings?: string[];               // 非対応形式 (HEIC等) の注意喚起警告 (指摘B)
 }
 
 export interface FetchImagesRequest {

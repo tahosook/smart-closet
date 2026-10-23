@@ -1449,6 +1449,8 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
   assert.deepEqual(planRes.validItemIds, ['P2', 'P4', 'S1']);
   // neededItemIds: P2 (更新差分) と P4 (新規差分)、S1 はすでに最新なので不要
   assert.deepEqual(planRes.neededItemIds, ['P2', 'P4']);
+  // HEIC 形式に対する警告が含まれていること (指摘B)
+  assert.ok(planRes.warnings && planRes.warnings.some((w) => w.includes('p3.heic')), 'Warning for HEIC format must be returned');
 
   // 5. fetchImages の実行
   context.DriveApp = {

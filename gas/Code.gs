@@ -704,6 +704,8 @@ function formatDateString(val) {
 
 // サポートする画像拡張子の正規表現 (大文字小文字不問: jpg, jpeg, png, webp)
 const SUPPORTED_IMAGE_REGEX = /^([A-Za-z0-9_-]+)\.(jpe?g|png|webp)$/i;
+// ブラウザ非対応または推奨されない画像形式 (HEIC, HEIF, BMP 等) の検出用正規表現 (指摘B)
+const UNSUPPORTED_IMAGE_REGEX = /^([A-Za-z0-9_-]+)\.(heic|heif|bmp|gif|tiff|svg)$/i;
 
 /**
  * 画像フォルダ内の最新更新タイムスタンプを超軽量に取得 (仕様4)
@@ -744,9 +746,11 @@ function getImagesLastUpdatedAt(folderId) {
  * 同名ファイルは modifiedTime が最新のものを優先 (決定3)
  * IDは大文字に正規化 (仕様8)
  * trashed = false でゴミ箱ファイルを除外 (仕様3)
+ * 非対応形式 (HEIC等) を検知して warnings を収集 (指摘B)
  */
 function scanImageFolder(folderId) {
   const itemMap = {};
+  const warnings = [];
 
   if (typeof Drive !== 'undefined' && Drive.Files && Drive.Files.list) {
     let pageToken = null;
@@ -760,19 +764,27 @@ function scanImageFolder(folderId) {
       if (res && res.files) {
         for (let i = 0; i < res.files.length; i++) {
           const f = res.files[i];
-          const match = f.name ? f.name.match(SUPPORTED_IMAGE_REGEX) : null;
-          if (!match) continue; // 非対応形式 (HEIC等) や無関係なファイルはスキップ
-          const itemId = match[1].toUpperCase();
-          const modifiedTime = new Date(f.modifiedTime).getTime();
-          if (!itemMap[itemId] || modifiedTime > itemMap[itemId].modifiedTime) {
-            itemMap[itemId] = {
-              fileId: f.id,
-              name: f.name,
-              modifiedTime: modifiedTime,
-              thumbnailLink: f.thumbnailLink,
-              size: Number(f.size || 0),
-              mimeType: f.mimeType
-            };
+          const fileName = f.name || '';
+          const match = fileName.match(SUPPORTED_IMAGE_REGEX);
+          if (match) {
+            const itemId = match[1].toUpperCase();
+            const modifiedTime = new Date(f.modifiedTime).getTime();
+            if (!itemMap[itemId] || modifiedTime > itemMap[itemId].modifiedTime) {
+              itemMap[itemId] = {
+                fileId: f.id,
+                name: fileName,
+                modifiedTime: modifiedTime,
+                thumbnailLink: f.thumbnailLink,
+                size: Number(f.size || 0),
+                mimeType: f.mimeType
+              };
+            }
+          } else {
+            // 指摘B: HEIC や非対応形式の注意喚起
+            const unMatch = fileName.match(UNSUPPORTED_IMAGE_REGEX);
+            if (unMatch) {
+              warnings.push(`[${fileName}] はブラウザ非対応の形式です。jpg または png に変換して保存してください`);
+            }
           }
         }
       }
@@ -783,24 +795,31 @@ function scanImageFolder(folderId) {
     const files = folder.getFiles();
     while (files.hasNext()) {
       const f = files.next();
-      const match = f.getName().match(SUPPORTED_IMAGE_REGEX);
-      if (!match) continue;
-      const itemId = match[1].toUpperCase();
-      const modifiedTime = f.getLastUpdated().getTime();
-      if (!itemMap[itemId] || modifiedTime > itemMap[itemId].modifiedTime) {
-        itemMap[itemId] = {
-          fileId: f.getId(),
-          name: f.getName(),
-          modifiedTime: modifiedTime,
-          thumbnailLink: null,
-          size: f.getSize(),
-          mimeType: f.getMimeType()
-        };
+      const fileName = f.getName() || '';
+      const match = fileName.match(SUPPORTED_IMAGE_REGEX);
+      if (match) {
+        const itemId = match[1].toUpperCase();
+        const modifiedTime = f.getLastUpdated().getTime();
+        if (!itemMap[itemId] || modifiedTime > itemMap[itemId].modifiedTime) {
+          itemMap[itemId] = {
+            fileId: f.getId(),
+            name: fileName,
+            modifiedTime: modifiedTime,
+            thumbnailLink: null,
+            size: f.getSize(),
+            mimeType: f.getMimeType()
+          };
+        }
+      } else {
+        const unMatch = fileName.match(UNSUPPORTED_IMAGE_REGEX);
+        if (unMatch) {
+          warnings.push(`[${fileName}] はブラウザ非対応の形式です。jpg または png に変換して保存してください`);
+        }
       }
     }
   }
 
-  return itemMap;
+  return { itemMap: itemMap, warnings: warnings };
 }
 
 /**
@@ -817,7 +836,9 @@ function handleGetImageSyncPlan(ss, payload) {
 
   try {
     const localMeta = (payload && payload.localMeta) || {};
-    const itemMap = scanImageFolder(folderId);
+    const scanResult = scanImageFolder(folderId);
+    const itemMap = scanResult.itemMap;
+    const warnings = scanResult.warnings;
     const validItemIds = Object.keys(itemMap).sort();
     const neededItemIds = [];
     let latestTime = 0;
@@ -838,7 +859,8 @@ function handleGetImageSyncPlan(ss, payload) {
       ok: true,
       validItemIds: validItemIds,
       neededItemIds: neededItemIds,
-      imagesLastUpdatedAt: latestTime
+      imagesLastUpdatedAt: latestTime,
+      warnings: warnings
     });
   } catch (err) {
     return createJsonResponse({ ok: false, error: '画像フォルダ走査エラー: ' + err.toString() });
@@ -860,7 +882,8 @@ function handleFetchImages(ss, payload) {
   }
 
   try {
-    const itemMap = scanImageFolder(folderId);
+    const scanResult = scanImageFolder(folderId);
+    const itemMap = scanResult.itemMap;
     const images = {};
     const timestamps = {};
     const warnings = [];

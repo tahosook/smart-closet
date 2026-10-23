@@ -131,8 +131,11 @@ export const GasSyncModal: React.FC<GasSyncModalProps> = ({ isOpen, onClose }) =
       const planData: GetImageSyncPlanResponse = await planRes.json();
       if (!planData.ok) throw new Error(planData.error || 'プラン策定エラー');
 
-      const { validItemIds, neededItemIds, imagesLastUpdatedAt } = planData;
+      const { validItemIds, neededItemIds, imagesLastUpdatedAt, warnings: planWarnings } = planData;
       const allWarnings: string[] = [];
+      if (planWarnings && planWarnings.length > 0) {
+        allWarnings.push(...planWarnings);
+      }
 
       // 2. チャンク取得 (6件ずつ、仕様6 ステップ2)
       const CHUNK_SIZE = 6;

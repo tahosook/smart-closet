@@ -52,7 +52,8 @@ export const ItemImage: React.FC<ItemImageProps> = ({
   showBadge = true,
 }) => {
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
-  const [hasError, setHasError] = useState(false);
+  const [blobError, setBlobError] = useState(false);
+  const [fallbackError, setFallbackError] = useState(false);
   const colors = getColorForGarment(item.name, item.category);
 
   // 1. IndexedDB から Blob を非同期取得して ObjectURL を発行 (決定5・仕様5)
@@ -60,7 +61,7 @@ export const ItemImage: React.FC<ItemImageProps> = ({
     let isMounted = true;
     let currentUrl: string | null = null;
 
-    setHasError(false);
+    setBlobError(false);
     getImageBlob(item.id)
       .then((blob) => {
         if (!isMounted) return;
@@ -97,16 +98,27 @@ export const ItemImage: React.FC<ItemImageProps> = ({
   })();
 
   // 3段階優先順位解決 (1. Blob URL -> 2. 既存 imageUrl -> 3. SVG フォールバック)
-  const activeImageSrc = blobUrl || (!hasError ? fallbackImageUrl : '');
+  // 指摘A対応: Blob用と fallback用のエラー状態を完全分離し、Blobがfallbackエラーに影響されないようにする
+  const shouldUseBlob = Boolean(blobUrl && !blobError);
+  const shouldUseFallback = Boolean(!shouldUseBlob && fallbackImageUrl && !fallbackError);
+  const activeImageSrc = shouldUseBlob ? blobUrl : (shouldUseFallback ? fallbackImageUrl : '');
+
+  const handleImageError = () => {
+    if (shouldUseBlob) {
+      setBlobError(true);
+    } else {
+      setFallbackError(true);
+    }
+  };
 
   return (
     <div className={`relative overflow-hidden bg-slate-800/80 rounded-xl flex items-center justify-center ${className}`}>
-      {activeImageSrc && !hasError ? (
+      {activeImageSrc ? (
         <img
           src={activeImageSrc}
           alt={item.name}
           className={`w-full h-full object-contain transition-transform duration-300 ${imgClassName}`}
-          onError={() => setHasError(true)}
+          onError={handleImageError}
           loading="lazy"
         />
       ) : (
