@@ -24,3 +24,7 @@ dist-ssr
 *.sw?
 
 tsconfig.tsbuildinfo
+
+# Google Apps Script (clasp)
+.clasp.json
+.clasprc.json

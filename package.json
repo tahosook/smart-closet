@@ -10,7 +10,11 @@
     "sync-images": "bash scripts/sync-images.sh",
     "validate-data": "node scripts/validate-closet.mjs",
     "test-sync": "node scripts/test-gas-sync.mjs",
-    "check": "npm run validate-data && npm run test-sync && npm run build"
+    "check": "npm run validate-data && npm run test-sync && npm run build",
+    "gas:login": "clasp login",
+    "gas:push": "clasp push",
+    "gas:pull": "clasp pull",
+    "gas:open": "clasp open"
   },
   "dependencies": {
     "lucide-react": "^0.453.0",
@@ -18,6 +22,7 @@
     "react-dom": "^18.3.1"
   },
   "devDependencies": {
+    "@google/clasp": "^3.4.1",
     "@types/react": "^18.3.11",
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.3",

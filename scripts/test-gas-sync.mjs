@@ -36,7 +36,25 @@ assert.ok(
   gasSyncModalContent.includes("import GAS_SCRIPT_TEMPLATE from '../../gas/Code.gs?raw'"),
   'GasSyncModal.tsx must import GAS_SCRIPT_TEMPLATE directly via ?raw'
 );
-console.log('  ✅ Code.gs Single Source of Truth & ?raw import verified');
+
+// clasp configuration and appsscript.json manifest validation
+const appsscriptJsonPath = path.join(projectRoot, 'gas/appsscript.json');
+const claspSamplePath = path.join(projectRoot, '.clasp.json.sample');
+
+assert.ok(fs.existsSync(appsscriptJsonPath), 'gas/appsscript.json must exist');
+assert.ok(fs.existsSync(claspSamplePath), '.clasp.json.sample must exist');
+
+const appsscriptConfig = JSON.parse(fs.readFileSync(appsscriptJsonPath, 'utf-8'));
+assert.equal(appsscriptConfig.runtimeVersion, 'V8', 'appsscript.json runtimeVersion must be V8');
+assert.equal(appsscriptConfig.timeZone, 'Asia/Tokyo', 'appsscript.json timeZone must be Asia/Tokyo');
+assert.equal(appsscriptConfig.webapp?.access, 'ANYONE_ANONYMOUS', 'appsscript.json webapp.access must be ANYONE_ANONYMOUS');
+assert.equal(appsscriptConfig.webapp?.executeAs, 'USER_DEPLOYING', 'appsscript.json webapp.executeAs must be USER_DEPLOYING');
+
+const claspSampleConfig = JSON.parse(fs.readFileSync(claspSamplePath, 'utf-8'));
+assert.equal(claspSampleConfig.rootDir, './gas', '.clasp.json.sample rootDir must be ./gas');
+assert.ok(claspSampleConfig.scriptId, '.clasp.json.sample must have a scriptId placeholder');
+
+console.log('  ✅ Code.gs Single Source of Truth, clasp sample & appsscript.json verified');
 
 // 2. インメモリ Google Apps Script モック環境の構築
 class MockRange {
@@ -284,6 +302,67 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
   assert.equal(postSuccessRes.ok, true);
 
   console.log('  ✅ Fail-Closed authentication (doGet & doPost) verified');
+}
+
+// -------------------------------------------------------------
+// Test Case 2-B: 生 Code.gs（clasp push 想定）での fail-closed および meta_config 直接登録による認証検証
+// -------------------------------------------------------------
+{
+  const ss = new MockSpreadsheet();
+  const sandbox = {
+    SpreadsheetApp: { getActiveSpreadsheet: () => ss },
+    LockService: {
+      getScriptLock: () => ({
+        tryLock: () => true,
+        releaseLock: () => {},
+      }),
+    },
+    Logger: { log: () => {} },
+    ContentService: {
+      MimeType: { JSON: 'application/json' },
+      createTextOutput: (str) => ({
+        setMimeType: () => ({ getContent: () => str }),
+      }),
+    },
+    Date, Math, String, Number, Array, Object, Set, Map, JSON, console,
+  };
+  const context = vm.createContext(sandbox);
+
+  // トークン置換を行わず生の Code.gs で実行 (clasp push 相当)
+  vm.runInContext(codeGsContent, context);
+  vm.runInContext('setupSpreadsheet()', context);
+
+  // 1. 初期状態（meta_config 未設定）: 正しい形式のトークンを送っても fail-closed で拒否される
+  const unconfiguredRes = JSON.parse(
+    vm.runInContext('doGet({ parameter: { token: "my-clasp-token" } })', context).getContent()
+  );
+  assert.equal(unconfiguredRes.ok, false);
+  assert.match(unconfiguredRes.error, /認証エラー/);
+
+  // 2. スプレッドシートの meta_config に secretToken を登録 (手動登録手順相当)
+  const metaSheet = ss.getSheetByName('meta_config');
+  assert.ok(metaSheet, 'meta_config sheet must exist after setupSpreadsheet');
+  metaSheet.appendRow(['secretToken', 'my-clasp-token', new Date().toISOString()]);
+
+  // 3. 不一致トークンでは拒否される
+  const wrongTokenRes = JSON.parse(
+    vm.runInContext('doGet({ parameter: { token: "wrong-token" } })', context).getContent()
+  );
+  assert.equal(wrongTokenRes.ok, false);
+  assert.match(wrongTokenRes.error, /認証エラー/);
+
+  // 4. meta_config に登録されたトークンと一致すれば認証成功する (GET & POST)
+  const successGetRes = JSON.parse(
+    vm.runInContext('doGet({ parameter: { token: "my-clasp-token" } })', context).getContent()
+  );
+  assert.equal(successGetRes.ok, true);
+
+  const successPostRes = JSON.parse(
+    vm.runInContext('doPost({ postData: { contents: JSON.stringify({ action: "push", token: "my-clasp-token" }) } })', context).getContent()
+  );
+  assert.equal(successPostRes.ok, true);
+
+  console.log('  ✅ Clasp push raw Code.gs fail-closed & meta_config manual token registration verified');
 }
 
 // -------------------------------------------------------------
