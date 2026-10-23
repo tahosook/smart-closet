@@ -214,6 +214,33 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
         }),
       }),
     },
+    Utilities: {
+      base64Encode: (bytes) => Buffer.from(bytes || '').toString('base64'),
+    },
+    ScriptApp: {
+      getOAuthToken: () => 'mock-oauth-token',
+    },
+    Drive: {
+      Files: {
+        list: () => ({ files: [] }),
+      },
+    },
+    DriveApp: {
+      getFolderById: () => ({
+        getName: () => 'MockFolder',
+        getFiles: () => ({
+          hasNext: () => false,
+          next: () => null,
+        }),
+      }),
+      getFileById: () => ({
+        getSize: () => 1024,
+        getBlob: () => ({
+          getContentType: () => 'image/jpeg',
+          getBytes: () => Buffer.from('mock-image-bytes'),
+        }),
+      }),
+    },
     Date,
     Math,
     String,
@@ -1334,6 +1361,123 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
   assert.equal(reconciledLocalWins.closetData.items[0].id, 'P101', 'Local newer custom data must NOT be overwritten by older server data');
 
   console.log('  ✅ Client reconcileSyncResponse LWW resolution verified');
+}
+
+// -------------------------------------------------------------
+// Test Case 12: Google ドライブ画像同期 (getImageSyncPlan & fetchImages)
+// -------------------------------------------------------------
+{
+  const token = 'token-img-sync-test';
+  const { ss, context } = createGasEnvironment(token);
+  vm.runInContext('setupSpreadsheet()', context);
+
+  // 1. フォルダID未登録時のエラーハンドリング
+  const noFolderReq = {
+    postData: {
+      contents: JSON.stringify({
+        token,
+        action: 'getImageSyncPlan',
+        localMeta: {},
+      }),
+    },
+  };
+  context.mockReqNoFolder = noFolderReq;
+  const noFolderRes = JSON.parse(vm.runInContext('doPost(mockReqNoFolder).getContent()', context));
+  assert.equal(noFolderRes.ok, false);
+  assert.ok(noFolderRes.error.includes('画像フォルダ ID'));
+
+  // 2. folderId の登録 (Push経由)
+  const pushFolderReq = {
+    postData: {
+      contents: JSON.stringify({
+        token,
+        action: 'push',
+        imageFolderId: 'folder-12345',
+      }),
+    },
+  };
+  context.mockPushFolder = pushFolderReq;
+  const pushRes = JSON.parse(vm.runInContext('doPost(mockPushFolder).getContent()', context));
+  assert.equal(pushRes.ok, true);
+  assert.equal(pushRes.imageFolderId, 'folder-12345');
+
+  // 3. Drive API のレスポンスをモック（同名ファイル・大文字小文字・HEIC除外）
+  const t_old = 1700000000000;
+  const t_new = 1700005000000;
+  let passedQuery = '';
+
+  context.Drive = {
+    Files: {
+      list: (params) => {
+        passedQuery = params.q;
+        if (params.pageSize === 1) {
+          // 超軽量メタチェック用
+          return { files: [{ modifiedTime: new Date(t_new).toISOString() }] };
+        }
+        return {
+          files: [
+            { id: 'f1_old', name: 's1.jpg', modifiedTime: new Date(t_old).toISOString(), size: 50000 },
+            { id: 'f1_new', name: 'S1.JPG', modifiedTime: new Date(t_new).toISOString(), size: 60000, thumbnailLink: 'https://lh3.googleusercontent.com/d/xxx=s220' },
+            { id: 'f2', name: 'p2.png', modifiedTime: new Date(t_new).toISOString(), size: 80000 },
+            { id: 'f3', name: 'p3.heic', modifiedTime: new Date(t_new).toISOString(), size: 100000 }, // HEIC (除外されるべき)
+            { id: 'f_huge', name: 'P4.jpg', modifiedTime: new Date(t_new).toISOString(), size: 3 * 1024 * 1024 }, // 2MB超過
+          ],
+        };
+      },
+    },
+  };
+
+  // 4. getImageSyncPlan の実行
+  const planReq = {
+    postData: {
+      contents: JSON.stringify({
+        token,
+        action: 'getImageSyncPlan',
+        localMeta: {
+          S1: t_new, // 既に最新を持っている
+          P2: t_old, // 古いものを持っている (更新必要)
+        },
+      }),
+    },
+  };
+  context.mockPlanReq = planReq;
+  const planRes = JSON.parse(vm.runInContext('doPost(mockPlanReq).getContent()', context));
+  assert.equal(planRes.ok, true);
+  assert.ok(passedQuery.includes('trashed = false'), 'Drive search query must include trashed = false');
+  
+  // validItemIds: S1, P2, P4 (HEIC は除外、IDは大文字正規化)
+  assert.deepEqual(planRes.validItemIds, ['P2', 'P4', 'S1']);
+  // neededItemIds: P2 (更新差分) と P4 (新規差分)、S1 はすでに最新なので不要
+  assert.deepEqual(planRes.neededItemIds, ['P2', 'P4']);
+
+  // 5. fetchImages の実行
+  context.DriveApp = {
+    getFileById: (id) => ({
+      getSize: () => (id === 'f_huge' ? 3 * 1024 * 1024 : 10000),
+      getBlob: () => ({
+        getContentType: () => 'image/jpeg',
+        getBytes: () => Buffer.from('mock-bytes-data'),
+      }),
+    }),
+  };
+
+  const fetchReq = {
+    postData: {
+      contents: JSON.stringify({
+        token,
+        action: 'fetchImages',
+        itemIds: ['P2', 'P4'],
+      }),
+    },
+  };
+  context.mockFetchReq = fetchReq;
+  const fetchRes = JSON.parse(vm.runInContext('doPost(mockFetchReq).getContent()', context));
+  assert.equal(fetchRes.ok, true);
+  assert.ok(fetchRes.images['P2'], 'P2 must be fetched as Base64 data URL');
+  assert.equal(fetchRes.images['P4'], undefined, 'P4 exceeds 2MB and must be skipped');
+  assert.ok(fetchRes.warnings.some((w) => w.includes('2MB')), 'Warning for 2MB limit must be recorded');
+
+  console.log('  ✅ Google Drive image sync (plan, trashed=false, diff & fetch) verified');
 }
 
 console.log('🎉 All GAS backend & sync logic tests passed successfully!');

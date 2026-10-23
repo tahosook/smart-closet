@@ -14,8 +14,23 @@ import {
   DownloadCloud,
   ShieldCheck,
   Sparkles,
+  Image as ImageIcon,
+  Trash2,
+  Folder,
 } from 'lucide-react';
 import { useClosetStore, generateSecretToken } from '../hooks/useClosetStore';
+import {
+  getLocalImageMeta,
+  saveImageBlobs,
+  pruneImages,
+  clearAllImages,
+  dataUrlToBlob,
+  getAllImageKeys,
+} from '../utils/imageStore';
+import {
+  GetImageSyncPlanResponse,
+  FetchImagesResponse,
+} from '../types/closet';
 import GAS_SCRIPT_TEMPLATE from '../../gas/Code.gs?raw';
 
 interface GasSyncModalProps {
@@ -36,10 +51,20 @@ export const GasSyncModal: React.FC<GasSyncModalProps> = ({ isOpen, onClose }) =
   const [urlInput, setUrlInput] = useState(gasConfig.webAppUrl);
   const [tokenInput, setTokenInput] = useState(() => gasConfig.secretToken || generateSecretToken());
   const [autoSyncInput, setAutoSyncInput] = useState(gasConfig.autoSync);
+  const [imageFolderIdInput, setImageFolderIdInput] = useState(gasConfig.imageFolderId || '');
   const [copiedScript, setCopiedScript] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [isGuideOpen, setIsGuideOpen] = useState(!gasConfig.webAppUrl);
   const [manualSyncMsg, setManualSyncMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  // 画像同期用の状態 (Phase 2)
+  const [isImageSyncing, setIsImageSyncing] = useState(false);
+  const [imageSyncProgress, setImageSyncProgress] = useState<string | null>(null);
+  const [imageSyncResult, setImageSyncResult] = useState<{
+    type: 'success' | 'warning' | 'error';
+    text: string;
+    details?: string[];
+  } | null>(null);
 
   if (!isOpen) return null;
 
@@ -58,9 +83,164 @@ export const GasSyncModal: React.FC<GasSyncModalProps> = ({ isOpen, onClose }) =
       webAppUrl: urlInput.trim(),
       secretToken: finalToken,
       autoSync: autoSyncInput,
+      imageFolderId: imageFolderIdInput.trim(),
     });
     setSaveSuccess(true);
     setTimeout(() => setSaveSuccess(false), 2000);
+  };
+
+  // Google ドライブ画像同期コントローラー (仕様6, 7)
+  const handleSyncImages = async () => {
+    const webAppUrl = urlInput.trim() || gasConfig.webAppUrl;
+    if (!webAppUrl) {
+      setImageSyncResult({
+        type: 'error',
+        text: '先に Web アプリ URL を設定してください。',
+      });
+      return;
+    }
+    const folderId = imageFolderIdInput.trim() || gasConfig.imageFolderId;
+    if (!folderId) {
+      setImageSyncResult({
+        type: 'error',
+        text: 'Google ドライブの画像フォルダ ID を入力・保存してください。',
+      });
+      return;
+    }
+
+    setIsImageSyncing(true);
+    setImageSyncProgress('同期プランを策定中...');
+    setImageSyncResult(null);
+
+    try {
+      const localMeta = await getLocalImageMeta();
+
+      // 1. 同期プランの策定リクエスト (仕様6 ステップ1)
+      const planRes = await fetch(webAppUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({
+          action: 'getImageSyncPlan',
+          token: tokenInput.trim() || gasConfig.secretToken,
+          imageFolderId: folderId,
+          localMeta,
+        }),
+      });
+
+      if (!planRes.ok) throw new Error(`HTTPエラー ${planRes.status}`);
+      const planData: GetImageSyncPlanResponse = await planRes.json();
+      if (!planData.ok) throw new Error(planData.error || 'プラン策定エラー');
+
+      const { validItemIds, neededItemIds, imagesLastUpdatedAt } = planData;
+      const allWarnings: string[] = [];
+
+      // 2. チャンク取得 (6件ずつ、仕様6 ステップ2)
+      const CHUNK_SIZE = 6;
+      let fetchedCount = 0;
+
+      for (let i = 0; i < neededItemIds.length; i += CHUNK_SIZE) {
+        const chunk = neededItemIds.slice(i, i + CHUNK_SIZE);
+        setImageSyncProgress(`写真を取得中... (${fetchedCount}/${neededItemIds.length}枚)`);
+
+        const fetchRes = await fetch(webAppUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          body: JSON.stringify({
+            action: 'fetchImages',
+            token: tokenInput.trim() || gasConfig.secretToken,
+            imageFolderId: folderId,
+            itemIds: chunk,
+          }),
+        });
+
+        if (!fetchRes.ok) throw new Error(`HTTPエラー ${fetchRes.status}`);
+        const fetchData: FetchImagesResponse = await fetchRes.json();
+        if (!fetchData.ok) throw new Error(fetchData.error || '写真取得エラー');
+
+        if (fetchData.warnings && fetchData.warnings.length > 0) {
+          allWarnings.push(...fetchData.warnings);
+        }
+
+        // Blob 変換と保存 (仕様5)
+        const blobsMap: Record<string, Blob> = {};
+        for (const [id, dataUrl] of Object.entries(fetchData.images)) {
+          blobsMap[id] = await dataUrlToBlob(dataUrl);
+        }
+        await saveImageBlobs(blobsMap, fetchData.timestamps);
+
+        fetchedCount += chunk.length;
+        setImageSyncProgress(
+          `写真を取得中... (${Math.min(fetchedCount, neededItemIds.length)}/${neededItemIds.length}枚)`
+        );
+      }
+
+      // 3. 安全弁付き Prune (削除伝播、仕様7)
+      setImageSyncProgress('ローカル画像の整合性を確認中...');
+      let pruneRes = await pruneImages(validItemIds);
+
+      if (pruneRes.skipped) {
+        let confirmMsg = '';
+        if (pruneRes.reason === 'empty_valid_ids') {
+          confirmMsg =
+            'Google ドライブ上に写真が見つかりません。端末に保存されている写真をすべて削除して初期状態（SVG）に戻しますか？';
+        } else if (pruneRes.reason === 'rapid_decrease') {
+          confirmMsg =
+            'ドライブ上の写真が端末保持数より大幅に減少しています。端末側の写真を一括削除して同期しますか？';
+        }
+        if (confirmMsg && window.confirm(confirmMsg)) {
+          pruneRes = await pruneImages(validItemIds, true);
+        }
+      }
+
+      // 4. 設定のローカル更新
+      updateGasConfig({
+        imageFolderId: folderId,
+        imagesLastUpdatedAt,
+      });
+
+      const totalLocal = (await getAllImageKeys()).length;
+      let summary =
+        neededItemIds.length > 0
+          ? `同期完了: ${neededItemIds.length}枚の写真を更新しました（現在${totalLocal}着分保持）`
+          : `写真データはすべて最新です（全${totalLocal}着分保持）`;
+      if (pruneRes.prunedIds.length > 0) {
+        summary += `、${pruneRes.prunedIds.length}枚の不要な写真を整理しました`;
+      }
+
+      setImageSyncResult({
+        type: allWarnings.length > 0 ? 'warning' : 'success',
+        text: summary,
+        details: allWarnings.length > 0 ? allWarnings : undefined,
+      });
+    } catch (err: any) {
+      console.error('Image sync failed:', err);
+      setImageSyncResult({
+        type: 'error',
+        text: err?.message || '写真同期中にエラーが発生しました',
+      });
+    } finally {
+      setIsImageSyncing(false);
+      setImageSyncProgress(null);
+    }
+  };
+
+  // 端末の画像キャッシュ全消去 (仕様7)
+  const handleClearImageCache = async () => {
+    if (!window.confirm('端末に保存されている服の写真キャッシュを全消去して、初期状態（SVGシルエット表示）に戻しますか？')) {
+      return;
+    }
+    try {
+      await clearAllImages();
+      setImageSyncResult({
+        type: 'success',
+        text: '端末内の写真キャッシュを全消去しました。',
+      });
+    } catch (err: any) {
+      setImageSyncResult({
+        type: 'error',
+        text: 'キャッシュ消去に失敗しました: ' + (err?.message || ''),
+      });
+    }
   };
 
   const handleCopyScript = async () => {
@@ -259,6 +439,25 @@ export const GasSyncModal: React.FC<GasSyncModalProps> = ({ isOpen, onClose }) =
               </p>
             </div>
 
+            <div>
+              <label className="block text-xs font-bold text-slate-300 mb-1 flex items-center justify-between">
+                <span>Google ドライブ画像フォルダ ID（完全非公開・任意）</span>
+              </label>
+              <div className="relative">
+                <input
+                  type="text"
+                  value={imageFolderIdInput}
+                  onChange={(e) => setImageFolderIdInput(e.target.value)}
+                  placeholder="例: 1a2B3c4D5e... (フォルダURL末尾の英数字)"
+                  className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 font-mono"
+                />
+                <Folder className="w-3.5 h-3.5 text-slate-500 absolute right-3 top-2.5" />
+              </div>
+              <p className="text-[10px] text-slate-400 mt-1">
+                ドライブに作成した写真フォルダの URL 内の ID を入力します（公開共有は不要・非公開のままでOK）。
+              </p>
+            </div>
+
             <div className="flex items-center justify-between pt-1">
               <label className="flex items-center gap-2 cursor-pointer text-xs text-slate-300">
                 <input
@@ -285,6 +484,101 @@ export const GasSyncModal: React.FC<GasSyncModalProps> = ({ isOpen, onClose }) =
               </button>
             </div>
           </form>
+
+          {/* Photo Synchronization Section (Phase 2) */}
+          <div className="p-3.5 bg-slate-800/40 rounded-2xl border border-slate-800 space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="w-7 h-7 rounded-lg bg-sky-600/20 border border-sky-500/40 flex items-center justify-center text-sky-400">
+                  <ImageIcon className="w-3.5 h-3.5" />
+                </div>
+                <div>
+                  <h4 className="text-xs font-bold text-white flex items-center gap-1.5">
+                    服の写真データ同期
+                    {gasConfig.imagesLastUpdatedAt ? (
+                      <span className="text-[10px] font-normal text-emerald-400">
+                        (更新有)
+                      </span>
+                    ) : null}
+                  </h4>
+                  <p className="text-[10px] text-slate-400">
+                    Google ドライブの写真を端末内（IndexedDB）へ安全に差分保存
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={handleSyncImages}
+                disabled={isImageSyncing}
+                className="py-1.5 px-3 bg-sky-600 hover:bg-sky-500 disabled:bg-slate-700 text-white rounded-xl text-xs font-bold transition-colors flex items-center gap-1.5 shadow-md shadow-sky-900/40"
+              >
+                {isImageSyncing ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    <span>同期中...</span>
+                  </>
+                ) : (
+                  <>
+                    <DownloadCloud className="w-3.5 h-3.5" />
+                    <span>写真データを同期</span>
+                  </>
+                )}
+              </button>
+            </div>
+
+            {/* Sync Progress Indicator */}
+            {imageSyncProgress && (
+              <div className="p-2.5 bg-sky-950/40 border border-sky-800/60 rounded-xl flex items-center gap-2 text-xs text-sky-200">
+                <RefreshCw className="w-3.5 h-3.5 text-sky-400 animate-spin flex-shrink-0" />
+                <span>{imageSyncProgress}</span>
+              </div>
+            )}
+
+            {/* Sync Result Feedback */}
+            {imageSyncResult && (
+              <div
+                className={`p-2.5 rounded-xl text-xs font-medium space-y-1 ${
+                  imageSyncResult.type === 'success'
+                    ? 'bg-emerald-950/60 border border-emerald-600/60 text-emerald-200'
+                    : imageSyncResult.type === 'warning'
+                    ? 'bg-amber-950/60 border border-amber-600/60 text-amber-200'
+                    : 'bg-rose-950/60 border border-rose-600/60 text-rose-200'
+                }`}
+              >
+                <div className="flex items-center gap-1.5">
+                  {imageSyncResult.type === 'success' ? (
+                    <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0" />
+                  ) : imageSyncResult.type === 'warning' ? (
+                    <AlertTriangle className="w-4 h-4 text-amber-400 flex-shrink-0" />
+                  ) : (
+                    <AlertTriangle className="w-4 h-4 text-rose-400 flex-shrink-0" />
+                  )}
+                  <span>{imageSyncResult.text}</span>
+                </div>
+                {imageSyncResult.details && (
+                  <ul className="text-[11px] list-disc list-inside text-amber-300/90 pl-1 space-y-0.5">
+                    {imageSyncResult.details.map((d, i) => (
+                      <li key={i}>{d}</li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
+
+            {/* Cache Reset Action */}
+            <div className="pt-1 flex items-center justify-between border-t border-slate-700/40 text-[11px] text-slate-400">
+              <span>端末保存の写真を初期化したい場合</span>
+              <button
+                type="button"
+                onClick={handleClearImageCache}
+                className="text-rose-400 hover:text-rose-300 flex items-center gap-1 px-2 py-1 rounded-lg hover:bg-rose-950/40 transition-colors"
+              >
+                <Trash2 className="w-3 h-3" />
+                <span>写真キャッシュ全消去</span>
+              </button>
+            </div>
+          </div>
 
           {/* Guide Accordion */}
           <div className="border border-slate-800 rounded-2xl bg-slate-900/50 overflow-hidden">

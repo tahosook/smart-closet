@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { ClosetItem } from '../types/closet';
+import { getImageBlob } from '../utils/imageStore';
 
 interface ItemImageProps {
   item: ClosetItem;
@@ -50,11 +51,42 @@ export const ItemImage: React.FC<ItemImageProps> = ({
   imgClassName = '',
   showBadge = true,
 }) => {
+  const [blobUrl, setBlobUrl] = useState<string | null>(null);
   const [hasError, setHasError] = useState(false);
   const colors = getColorForGarment(item.name, item.category);
 
-  // Resolve image URL against Vite BASE_URL (essential for GitHub Pages sub-path hosting)
-  const resolvedImageUrl = (() => {
+  // 1. IndexedDB から Blob を非同期取得して ObjectURL を発行 (決定5・仕様5)
+  useEffect(() => {
+    let isMounted = true;
+    let currentUrl: string | null = null;
+
+    setHasError(false);
+    getImageBlob(item.id)
+      .then((blob) => {
+        if (!isMounted) return;
+        if (blob) {
+          currentUrl = URL.createObjectURL(blob);
+          setBlobUrl(currentUrl);
+        } else {
+          setBlobUrl(null);
+        }
+      })
+      .catch((err) => {
+        if (!isMounted) return;
+        console.warn(`[ItemImage] Failed to load image from IndexedDB for ${item.id}:`, err);
+        setBlobUrl(null);
+      });
+
+    return () => {
+      isMounted = false;
+      if (currentUrl) {
+        URL.revokeObjectURL(currentUrl);
+      }
+    };
+  }, [item.id]);
+
+  // 2. 移行期間フォールバック用: 既存の imageUrl を解決 (Vite BASE_URL 考慮)
+  const fallbackImageUrl = (() => {
     if (!item.imageUrl) return '';
     if (item.imageUrl.startsWith('http://') || item.imageUrl.startsWith('https://')) {
       return item.imageUrl;
@@ -64,11 +96,14 @@ export const ItemImage: React.FC<ItemImageProps> = ({
     return `${baseUrl}${cleanPath}`;
   })();
 
+  // 3段階優先順位解決 (1. Blob URL -> 2. 既存 imageUrl -> 3. SVG フォールバック)
+  const activeImageSrc = blobUrl || (!hasError ? fallbackImageUrl : '');
+
   return (
     <div className={`relative overflow-hidden bg-slate-800/80 rounded-xl flex items-center justify-center ${className}`}>
-      {!hasError ? (
+      {activeImageSrc && !hasError ? (
         <img
-          src={resolvedImageUrl}
+          src={activeImageSrc}
           alt={item.name}
           className={`w-full h-full object-contain transition-transform duration-300 ${imgClassName}`}
           onError={() => setHasError(true)}
