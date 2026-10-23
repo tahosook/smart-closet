@@ -14,8 +14,7 @@
     "gas:login": "clasp login",
     "gas:push": "clasp push",
     "gas:pull": "clasp pull",
-    "gas:open": "clasp open",
-    "gas:deploy": "clasp deploy"
+    "gas:open": "clasp open"
   },
   "dependencies": {
     "lucide-react": "^0.453.0",
@@ -23,6 +22,7 @@
     "react-dom": "^18.3.1"
   },
   "devDependencies": {
+    "@google/clasp": "^3.4.1",
     "@types/react": "^18.3.11",
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.3",

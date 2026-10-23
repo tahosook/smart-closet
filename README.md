@@ -86,10 +86,10 @@ Pixel 9a と Mac mini の間で着用履歴・奥様NGを完全自動同期し�
 
 > [!NOTE]
 > **便利な npm scripts:**
-> - `npm run gas:push`: ローカルの `gas/` を Apps Script にプッシュ
+> - `npm run gas:login`: clasp ログイン
+> - `npm run gas:push`: ローカルの `gas/`（Code.gs / appsscript.json）を Apps Script にプッシュ
 > - `npm run gas:pull`: Apps Script 側のコードをローカルへプル
 > - `npm run gas:open`: ブラウザで対象の Apps Script エディタを直接起動
-> - `npm run gas:deploy`: Apps Script をデプロイ
 
 #### 方法 B: ブラウザエディタへの手動コピペ（従来通り）
 - 本リポジトリの `gas/Code.gs`（またはアプリ内ヘッダーの雲アイコン >「GASコードをコピー」）を Apps Script エディタに貼り付けて保存します。
@@ -113,7 +113,7 @@ Pixel 9a と Mac mini の間で着用履歴・奥様NGを完全自動同期し�
 
 > [!TIP]
 > **運用上の注意点:**
-> - **スクリプト更新時の再デプロイ:** `gas/Code.gs` を更新して `npm run gas:push` した後は、Apps Script 画面右上「デプロイ」>「デプロイを管理」から鉛筆アイコンをクリックし、バージョンを「新バージョン」にして再デプロイしてください。
+> - **スクリプト更新時の再デプロイ:** `gas/Code.gs` を更新して `npm run gas:push` した後は、Apps Script 画面右上「デプロイ」>「デプロイを管理」から鉛筆アイコンをクリックし、バージョンを「新バージョン」にして再デプロイしてください（既存の Web アプリ URL がそのまま維持されます）。
 > - **スプレッドシートへの手動追加:** `wife_ng` シートに手動で行を追加する場合は「登録日時」列に現在日時（例: `2026-10-18T12:00:00Z`）を記入してください（空欄の場合は古い登録として扱われ、過去にアプリ側で削除記録があるペアは除外されます）。
 
 ---
