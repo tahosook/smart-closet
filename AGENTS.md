@@ -15,10 +15,12 @@ This file serves as the operational contract for AI agents (Antigravity, Codex, 
 ## 2. Directory Structure & Key Files
 ```text
 smart-closet/
+├── .clasp.json.sample           # Clasp configuration template (scriptId placeholder)
 ├── AGENTS.md                    # This guideline (Constitution)
 ├── README.md                    # Human operator & deployment guide
 ├── gas/
-│   └── Code.gs                  # Google Apps Script Web App (Single Source of Truth; imported via ?raw into GasSyncModal)
+│   ├── Code.gs                  # Google Apps Script Web App (Single Source of Truth; imported via ?raw into GasSyncModal)
+│   └── appsscript.json          # Google Apps Script manifest (V8, Asia/Tokyo, webapp)
 ├── docs/
 │   ├── SPECIFICATION.md         # UI, data model & scoring specifications
 │   └── STYLING_RULES.md         # 40s male styling principles & bias analysis

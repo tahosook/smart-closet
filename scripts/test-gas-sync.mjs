@@ -36,7 +36,25 @@ assert.ok(
   gasSyncModalContent.includes("import GAS_SCRIPT_TEMPLATE from '../../gas/Code.gs?raw'"),
   'GasSyncModal.tsx must import GAS_SCRIPT_TEMPLATE directly via ?raw'
 );
-console.log('  ✅ Code.gs Single Source of Truth & ?raw import verified');
+
+// clasp configuration and appsscript.json manifest validation
+const appsscriptJsonPath = path.join(projectRoot, 'gas/appsscript.json');
+const claspSamplePath = path.join(projectRoot, '.clasp.json.sample');
+
+assert.ok(fs.existsSync(appsscriptJsonPath), 'gas/appsscript.json must exist');
+assert.ok(fs.existsSync(claspSamplePath), '.clasp.json.sample must exist');
+
+const appsscriptConfig = JSON.parse(fs.readFileSync(appsscriptJsonPath, 'utf-8'));
+assert.equal(appsscriptConfig.runtimeVersion, 'V8', 'appsscript.json runtimeVersion must be V8');
+assert.equal(appsscriptConfig.timeZone, 'Asia/Tokyo', 'appsscript.json timeZone must be Asia/Tokyo');
+assert.equal(appsscriptConfig.webapp?.access, 'ANYONE_ANONYMOUS', 'appsscript.json webapp.access must be ANYONE_ANONYMOUS');
+assert.equal(appsscriptConfig.webapp?.executeAs, 'USER_DEPLOYING', 'appsscript.json webapp.executeAs must be USER_DEPLOYING');
+
+const claspSampleConfig = JSON.parse(fs.readFileSync(claspSamplePath, 'utf-8'));
+assert.equal(claspSampleConfig.rootDir, './gas', '.clasp.json.sample rootDir must be ./gas');
+assert.ok(claspSampleConfig.scriptId, '.clasp.json.sample must have a scriptId placeholder');
+
+console.log('  ✅ Code.gs Single Source of Truth, clasp sample & appsscript.json verified');
 
 // 2. インメモリ Google Apps Script モック環境の構築
 class MockRange {

@@ -10,7 +10,12 @@
     "sync-images": "bash scripts/sync-images.sh",
     "validate-data": "node scripts/validate-closet.mjs",
     "test-sync": "node scripts/test-gas-sync.mjs",
-    "check": "npm run validate-data && npm run test-sync && npm run build"
+    "check": "npm run validate-data && npm run test-sync && npm run build",
+    "gas:login": "clasp login",
+    "gas:push": "clasp push",
+    "gas:pull": "clasp pull",
+    "gas:open": "clasp open",
+    "gas:deploy": "clasp deploy"
   },
   "dependencies": {
     "lucide-react": "^0.453.0",
