@@ -305,6 +305,67 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
 }
 
 // -------------------------------------------------------------
+// Test Case 2-B: 生 Code.gs（clasp push 想定）での fail-closed および meta_config 直接登録による認証検証
+// -------------------------------------------------------------
+{
+  const ss = new MockSpreadsheet();
+  const sandbox = {
+    SpreadsheetApp: { getActiveSpreadsheet: () => ss },
+    LockService: {
+      getScriptLock: () => ({
+        tryLock: () => true,
+        releaseLock: () => {},
+      }),
+    },
+    Logger: { log: () => {} },
+    ContentService: {
+      MimeType: { JSON: 'application/json' },
+      createTextOutput: (str) => ({
+        setMimeType: () => ({ getContent: () => str }),
+      }),
+    },
+    Date, Math, String, Number, Array, Object, Set, Map, JSON, console,
+  };
+  const context = vm.createContext(sandbox);
+
+  // トークン置換を行わず生の Code.gs で実行 (clasp push 相当)
+  vm.runInContext(codeGsContent, context);
+  vm.runInContext('setupSpreadsheet()', context);
+
+  // 1. 初期状態（meta_config 未設定）: 正しい形式のトークンを送っても fail-closed で拒否される
+  const unconfiguredRes = JSON.parse(
+    vm.runInContext('doGet({ parameter: { token: "my-clasp-token" } })', context).getContent()
+  );
+  assert.equal(unconfiguredRes.ok, false);
+  assert.match(unconfiguredRes.error, /認証エラー/);
+
+  // 2. スプレッドシートの meta_config に secretToken を登録 (手動登録手順相当)
+  const metaSheet = ss.getSheetByName('meta_config');
+  assert.ok(metaSheet, 'meta_config sheet must exist after setupSpreadsheet');
+  metaSheet.appendRow(['secretToken', 'my-clasp-token', new Date().toISOString()]);
+
+  // 3. 不一致トークンでは拒否される
+  const wrongTokenRes = JSON.parse(
+    vm.runInContext('doGet({ parameter: { token: "wrong-token" } })', context).getContent()
+  );
+  assert.equal(wrongTokenRes.ok, false);
+  assert.match(wrongTokenRes.error, /認証エラー/);
+
+  // 4. meta_config に登録されたトークンと一致すれば認証成功する (GET & POST)
+  const successGetRes = JSON.parse(
+    vm.runInContext('doGet({ parameter: { token: "my-clasp-token" } })', context).getContent()
+  );
+  assert.equal(successGetRes.ok, true);
+
+  const successPostRes = JSON.parse(
+    vm.runInContext('doPost({ postData: { contents: JSON.stringify({ action: "push", token: "my-clasp-token" }) } })', context).getContent()
+  );
+  assert.equal(successPostRes.ok, true);
+
+  console.log('  ✅ Clasp push raw Code.gs fail-closed & meta_config manual token registration verified');
+}
+
+// -------------------------------------------------------------
 // Test Case 3: 複数端末 (Pixel ⇔ Mac) の双方向競合マージ (P1対応)
 // -------------------------------------------------------------
 {
