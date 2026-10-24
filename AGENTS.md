@@ -47,8 +47,7 @@ smart-closet/
 │   ├── main.tsx
 │   └── index.css
 ├── public/
-│   ├── images/                  # S1.jpg ~ S9.jpg, P1.jpg ~ P15.jpg
-│   └── icon.svg                 # App SVG icon
+│   └── icon.svg                 # App SVG icon (Wardrobe photos are abolished from Git; stored in private Drive)
 └── package.json
 ```
 
@@ -63,15 +62,17 @@ smart-closet/
    - Master data is `src/data/closet.json` in Git.
    - User runtime state (`wearHistory`, emergency `wifeNgPairs`, custom imported data) is saved in browser `localStorage`.
    - Any runtime wife NG pairs (`smart_closet_wife_ng`) must be merged into exported/copied `closet.json` so that offline/backup data always preserves user decisions.
-4. **Asset Rules:**
-   - Garment images must be stored at `public/images/{ID}.jpg` (e.g. `/images/S1.jpg`, `/images/P16.jpg`). Never use Japanese or irregular file names.
+4. **Asset Rules (Private Google Drive Hosting & IndexedDB Persistence):**
+   - **No Wardrobe Photos in Repository:** Private wardrobe photos must never be committed to Git or hosted in `public/images/`. The `public/images/` directory is abolished to ensure complete privacy.
+   - **Private Drive Storage:** Garment photos are stored in the user's private Google Drive folder (e.g. `SmartCloset_Photos`) with the filename `{ID}.jpg` (e.g. `S1.jpg`, `P16.jpg`). Never use Japanese or irregular file names.
+   - **IndexedDB Client Storage:** The app synchronizes photos via Google Apps Script (`getImageSyncPlan` & `fetchImages`) and caches them permanently in browser `IndexedDB`. Display is served from local Blobs with 0ms latency and full offline support.
+   - **SVG Fallback:** If a photo is not yet synced in IndexedDB or not found, an SVG silhouette placeholder is displayed gracefully without breaking the layout.
 
 ## 4. Essential Commands
 - `npm run dev`: Launch local development server
-- `npm run check`: Run full verification (data integrity + escape hatch scan + type-check + build)
+- `npm run check`: Run full verification (data integrity + privacy guard + escape hatch scan + type-check + build)
 - `npm run build`: Type-check (`tsc -b`) and build for production (`vite build`)
-- `npm run sync-images`: Synchronize and normalize images from `~/Downloads` into `public/images/`
-- `npm run validate-data`: Run integrity validator for `closet.json`, image files, and escape hatch scan
+- `npm run validate-data`: Run integrity validator for `closet.json`, escape hatch scan, and privacy guard (checks that no private photos exist in `public/`)
 
 ## 5. Wardrobe Domain Invariants & Rules (See docs/STYLING_RULES.md)
 1. **IDs and Categories:**

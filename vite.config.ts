@@ -8,7 +8,7 @@ export default defineConfig(({ mode }) => ({
     react(),
     VitePWA({
       registerType: 'autoUpdate',
-      includeAssets: ['icon.svg', 'images/*.jpg'],
+      includeAssets: ['icon.svg'],
       manifest: {
         name: 'Smart Closet - 1秒即決コーデ',
         short_name: 'SmartCloset',

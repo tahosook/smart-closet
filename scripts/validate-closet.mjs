@@ -42,6 +42,9 @@ for (const item of data.items) {
     errors.push(`Item missing string id: ${JSON.stringify(item)}`);
     continue;
   }
+  if (!/^[A-Za-z0-9_-]+$/.test(item.id)) {
+    errors.push(`[${item.id}] Invalid ID format. Must contain only alphanumeric characters, dashes, or underscores.`);
+  }
   if (idSet.has(item.id)) {
     errors.push(`Duplicate item id: ${item.id}`);
   }
@@ -59,15 +62,18 @@ for (const item of data.items) {
     errors.push(`[${item.id}] Invalid comfortScore: ${item.comfortScore} (must be 1.0 - 5.0)`);
   }
 
-  // Check image file in public
-  if (item.imageUrl) {
-    const relPath = item.imageUrl.startsWith('/') ? item.imageUrl.slice(1) : item.imageUrl;
-    const fullImagePath = path.join(publicDir, relPath);
-    if (!fs.existsSync(fullImagePath)) {
-      warnings.push(`[${item.id}] Image file not found at ${fullImagePath} (fallback SVG will be used)`);
-    }
-  } else {
-    warnings.push(`[${item.id}] Missing imageUrl`);
+  // Validate imageUrl if present (photos are hosted on private Google Drive; imageUrl serves as legacy fallback path)
+  if (item.imageUrl && typeof item.imageUrl !== 'string') {
+    errors.push(`[${item.id}] imageUrl must be a string path`);
+  }
+}
+
+// Check that no private photo files are committed in public/
+const publicImagesDir = path.join(publicDir, 'images');
+if (fs.existsSync(publicImagesDir)) {
+  const imageFiles = fs.readdirSync(publicImagesDir).filter(f => /\.(jpe?g|png|webp|gif)$/i.test(f));
+  if (imageFiles.length > 0) {
+    errors.push(`[Privacy Guard] Found ${imageFiles.length} private image file(s) in public/images/ (${imageFiles.slice(0, 3).join(', ')}${imageFiles.length > 3 ? '...' : ''}). Photos must be stored in private Google Drive ("SmartCloset_Photos"), not committed to the repository.`);
   }
 }
 
