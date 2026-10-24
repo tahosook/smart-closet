@@ -218,6 +218,7 @@ export async function pruneImages(validIds: string[], force = false): Promise<Pr
  * 端末の画像キャッシュとメタデータを全消去 (仕様7)
  */
 export async function clearAllImages(): Promise<void> {
+  clearSyncedFolderId();
   const db = await getDB();
   return new Promise((resolve, reject) => {
     const tx = db.transaction([STORE_IMAGES, STORE_META], 'readwrite');
@@ -230,6 +231,48 @@ export async function clearAllImages(): Promise<void> {
     };
     tx.onerror = () => reject(tx.error);
   });
+}
+
+const STORAGE_KEY_SYNC_FOLDER_ID = 'smart_closet_image_sync_folder_id';
+
+/**
+ * 最後に写真同期を完了した Google ドライブのフォルダ ID を取得 (指摘1)
+ */
+export function getSyncedFolderId(): string | null {
+  try {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      return localStorage.getItem(STORAGE_KEY_SYNC_FOLDER_ID);
+    }
+  } catch (e) {
+    console.warn('[imageStore] Failed to get syncedFolderId:', e);
+  }
+  return null;
+}
+
+/**
+ * 写真同期完了時に同期元フォルダ ID を端末に保存 (指摘1)
+ */
+export function setSyncedFolderId(folderId: string): void {
+  try {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      localStorage.setItem(STORAGE_KEY_SYNC_FOLDER_ID, folderId.trim());
+    }
+  } catch (e) {
+    console.warn('[imageStore] Failed to set syncedFolderId:', e);
+  }
+}
+
+/**
+ * 同期元フォルダ ID の記録をクリア (指摘1)
+ */
+export function clearSyncedFolderId(): void {
+  try {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      localStorage.removeItem(STORAGE_KEY_SYNC_FOLDER_ID);
+    }
+  } catch (e) {
+    console.warn('[imageStore] Failed to clear syncedFolderId:', e);
+  }
 }
 
 /**

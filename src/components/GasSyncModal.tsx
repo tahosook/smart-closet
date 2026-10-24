@@ -26,6 +26,8 @@ import {
   clearAllImages,
   dataUrlToBlob,
   getAllImageKeys,
+  getSyncedFolderId,
+  setSyncedFolderId,
 } from '../utils/imageStore';
 import {
   GetImageSyncPlanResponse,
@@ -66,6 +68,13 @@ export const GasSyncModal: React.FC<GasSyncModalProps> = ({ isOpen, onClose }) =
     details?: string[];
   } | null>(null);
 
+  // モーダルオープン時または外部Pull時に最新設定値を反映
+  React.useEffect(() => {
+    if (isOpen) {
+      setImageFolderIdInput(gasConfig.imageFolderId || '');
+    }
+  }, [isOpen, gasConfig.imageFolderId]);
+
   if (!isOpen) return null;
 
   const handleRegenerateToken = () => {
@@ -99,11 +108,12 @@ export const GasSyncModal: React.FC<GasSyncModalProps> = ({ isOpen, onClose }) =
       });
       return;
     }
-    const folderId = imageFolderIdInput.trim() || gasConfig.imageFolderId;
+    // 指摘3: 入力欄の値を正とし、空の場合は保存値へフォールバックせず未設定エラーにする
+    const folderId = imageFolderIdInput.trim();
     if (!folderId) {
       setImageSyncResult({
         type: 'error',
-        text: 'Google ドライブの画像フォルダ ID を入力・保存してください。',
+        text: 'Google ドライブの画像フォルダ ID が未設定です。フォルダ ID を入力してください。',
       });
       return;
     }
@@ -113,7 +123,11 @@ export const GasSyncModal: React.FC<GasSyncModalProps> = ({ isOpen, onClose }) =
     setImageSyncResult(null);
 
     try {
-      const localMeta = await getLocalImageMeta();
+      // 指摘1: 端末の同期元フォルダ ID と現在のフォルダ ID を比較
+      // 異なるフォルダに切り替わった場合は、古いフォルダの画像メタを使わず空にして全件再取得
+      const lastSyncedFolderId = getSyncedFolderId();
+      const isDifferentFolder = Boolean(lastSyncedFolderId && lastSyncedFolderId !== folderId);
+      const localMeta = isDifferentFolder ? {} : await getLocalImageMeta();
 
       // 1. 同期プランの策定リクエスト (仕様6 ステップ1)
       const planRes = await fetch(webAppUrl, {
@@ -195,7 +209,10 @@ export const GasSyncModal: React.FC<GasSyncModalProps> = ({ isOpen, onClose }) =
         }
       }
 
-      // 4. 設定のローカル更新
+      // 4. 同期成功後に同期元フォルダ ID を保存 (指摘1)
+      setSyncedFolderId(folderId);
+
+      // 設定のローカル更新 (入力欄の folderId を正とする、指摘3)
       updateGasConfig({
         imageFolderId: folderId,
         imagesLastUpdatedAt,

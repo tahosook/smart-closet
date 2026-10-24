@@ -1480,6 +1480,47 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
   assert.ok(fetchRes.warnings.some((w) => w.includes('2MB')), 'Warning for 2MB limit must be recorded');
 
   console.log('  ✅ Google Drive image sync (plan, trashed=false, diff & fetch) verified');
+
+  // 6. 指摘1回帰テスト: 同期元フォルダ変更時の全件再取得
+  // フォルダAで S1 を同期済み (S1: t_new) の状態
+  let mockSyncedFolderId = 'folder-A';
+  const getMockLocalMetaForFolder = (currentFolderId, actualLocalMeta) => {
+    const isDifferent = Boolean(mockSyncedFolderId && mockSyncedFolderId !== currentFolderId);
+    return isDifferent ? {} : actualLocalMeta;
+  };
+
+  // (a) 同一フォルダ (folder-A) の場合: S1 は更新不要
+  const sameFolderMeta = getMockLocalMetaForFolder('folder-A', { S1: t_new });
+  assert.deepEqual(sameFolderMeta, { S1: t_new });
+
+  // (b) 別フォルダ (folder-B) に切り替えた場合:
+  // 同一 ID (S1) かつ同一更新日時 (t_new) であっても、localMeta が空となり再取得対象になること
+  const diffFolderMeta = getMockLocalMetaForFolder('folder-B', { S1: t_new });
+  assert.deepEqual(diffFolderMeta, {}, 'localMeta must be empty when folder changes');
+
+  const diffFolderPlanReq = {
+    postData: {
+      contents: JSON.stringify({
+        token,
+        action: 'getImageSyncPlan',
+        imageFolderId: 'folder-B',
+        localMeta: diffFolderMeta, // 空マップで送信
+      }),
+    },
+  };
+  context.mockDiffPlanReq = diffFolderPlanReq;
+  const diffPlanRes = JSON.parse(vm.runInContext('doPost(mockDiffPlanReq).getContent()', context));
+  assert.equal(diffPlanRes.ok, true);
+  // S1 も同一更新日時に関わらず neededItemIds に含まれていること（全件再取得）
+  assert.ok(diffPlanRes.neededItemIds.includes('S1'), 'S1 must be in neededItemIds when folder changes even if timestamp matches');
+  assert.deepEqual(diffPlanRes.neededItemIds, ['P2', 'P4', 'S1']);
+
+  // (c) 同期成功後は同期元フォルダIDが保存され、次回以降は差分同期に戻ること
+  mockSyncedFolderId = 'folder-B';
+  const nextSyncMeta = getMockLocalMetaForFolder('folder-B', { S1: t_new, P2: t_new, P4: t_new });
+  assert.deepEqual(nextSyncMeta, { S1: t_new, P2: t_new, P4: t_new }, 'Subsequent sync in same folder retains localMeta');
+
+  console.log('  ✅ Regression test: Folder switch resets localMeta & re-fetches all verified');
 }
 
 console.log('🎉 All GAS backend & sync logic tests passed successfully!');
