@@ -68,14 +68,24 @@ for (const item of data.items) {
   }
 }
 
-// Check that no private photo files are committed in public/
-const publicImagesDir = path.join(publicDir, 'images');
-if (fs.existsSync(publicImagesDir)) {
-  const imageFiles = fs.readdirSync(publicImagesDir).filter(f => /\.(jpe?g|png|webp|gif)$/i.test(f));
-  if (imageFiles.length > 0) {
-    errors.push(`[Privacy Guard] Found ${imageFiles.length} private image file(s) in public/images/ (${imageFiles.slice(0, 3).join(', ')}${imageFiles.length > 3 ? '...' : ''}). Photos must be stored in private Google Drive ("SmartCloset_Photos"), not committed to the repository.`);
+// Check that no private photo files are committed anywhere under public/
+const photoRegex = /\.(jpe?g|png|webp|gif)$/i;
+
+function scanDirForPrivatePhotos(dir) {
+  if (!fs.existsSync(dir)) return;
+  const entries = fs.readdirSync(dir, { withFileTypes: true });
+  for (const entry of entries) {
+    const fullPath = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      scanDirForPrivatePhotos(fullPath);
+    } else if (photoRegex.test(entry.name)) {
+      const relPath = path.relative(projectRoot, fullPath);
+      errors.push(`[Privacy Guard] Forbidden private photo file at ${relPath}. Photos must be stored in private Google Drive ("SmartCloset_Photos"), not committed to the repository.`);
+    }
   }
 }
+
+scanDirForPrivatePhotos(publicDir);
 
 // 2. Check relationship references
 for (const item of data.items) {
