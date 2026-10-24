@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Sun,
   Moon,
@@ -19,6 +19,7 @@ import { TravelPlannerView } from './components/TravelPlannerView';
 import { MatrixView } from './components/MatrixView';
 import { HistoryModal } from './components/HistoryModal';
 import { GasSyncModal } from './components/GasSyncModal';
+import { initStorage } from './utils/imageStore';
 
 type ActiveTab = 'today' | 'ai' | 'travel' | 'matrix';
 
@@ -29,6 +30,10 @@ const AppShell: React.FC = () => {
   const [isDark, setIsDark] = useState(true);
 
   const { syncStatus } = useClosetStore();
+
+  useEffect(() => {
+    initStorage();
+  }, []);
 
   const toggleTheme = () => {
     setIsDark(!isDark);

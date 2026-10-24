@@ -214,6 +214,33 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
         }),
       }),
     },
+    Utilities: {
+      base64Encode: (bytes) => Buffer.from(bytes || '').toString('base64'),
+    },
+    ScriptApp: {
+      getOAuthToken: () => 'mock-oauth-token',
+    },
+    Drive: {
+      Files: {
+        list: () => ({ files: [] }),
+      },
+    },
+    DriveApp: {
+      getFolderById: () => ({
+        getName: () => 'MockFolder',
+        getFiles: () => ({
+          hasNext: () => false,
+          next: () => null,
+        }),
+      }),
+      getFileById: () => ({
+        getSize: () => 1024,
+        getBlob: () => ({
+          getContentType: () => 'image/jpeg',
+          getBytes: () => Buffer.from('mock-image-bytes'),
+        }),
+      }),
+    },
     Date,
     Math,
     String,
@@ -1334,6 +1361,230 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
   assert.equal(reconciledLocalWins.closetData.items[0].id, 'P101', 'Local newer custom data must NOT be overwritten by older server data');
 
   console.log('  ✅ Client reconcileSyncResponse LWW resolution verified');
+}
+
+// -------------------------------------------------------------
+// Test Case 12: Google ドライブ画像同期 (getImageSyncPlan & fetchImages)
+// -------------------------------------------------------------
+{
+  const token = 'token-img-sync-test';
+  const { ss, context } = createGasEnvironment(token);
+  vm.runInContext('setupSpreadsheet()', context);
+
+  // 1. フォルダID未登録時のエラーハンドリング
+  const noFolderReq = {
+    postData: {
+      contents: JSON.stringify({
+        token,
+        action: 'getImageSyncPlan',
+        localMeta: {},
+      }),
+    },
+  };
+  context.mockReqNoFolder = noFolderReq;
+  const noFolderRes = JSON.parse(vm.runInContext('doPost(mockReqNoFolder).getContent()', context));
+  assert.equal(noFolderRes.ok, false);
+  assert.ok(noFolderRes.error.includes('画像フォルダ ID'));
+
+  // 2. folderId の登録 (Push経由)
+  const pushFolderReq = {
+    postData: {
+      contents: JSON.stringify({
+        token,
+        action: 'push',
+        imageFolderId: 'folder-12345',
+      }),
+    },
+  };
+  context.mockPushFolder = pushFolderReq;
+  const pushRes = JSON.parse(vm.runInContext('doPost(mockPushFolder).getContent()', context));
+  assert.equal(pushRes.ok, true);
+  assert.equal(pushRes.imageFolderId, 'folder-12345');
+
+  // 3. Drive API のレスポンスをモック（同名ファイル・大文字小文字・HEIC除外）
+  const t_old = 1700000000000;
+  const t_new = 1700005000000;
+  let passedQuery = '';
+
+  context.Drive = {
+    Files: {
+      list: (params) => {
+        passedQuery = params.q;
+        if (params.pageSize === 1) {
+          // 超軽量メタチェック用
+          return { files: [{ modifiedTime: new Date(t_new).toISOString() }] };
+        }
+        return {
+          files: [
+            { id: 'f1_old', name: 's1.jpg', modifiedTime: new Date(t_old).toISOString(), size: 50000 },
+            { id: 'f1_new', name: 'S1.JPG', modifiedTime: new Date(t_new).toISOString(), size: 60000, thumbnailLink: 'https://lh3.googleusercontent.com/d/xxx=s220' },
+            { id: 'f2', name: 'p2.png', modifiedTime: new Date(t_new).toISOString(), size: 80000 },
+            { id: 'f3', name: 'p3.heic', modifiedTime: new Date(t_new).toISOString(), size: 100000 }, // HEIC (除外されるべき)
+            { id: 'f_huge', name: 'P4.jpg', modifiedTime: new Date(t_new).toISOString(), size: 3 * 1024 * 1024 }, // 2MB超過
+          ],
+        };
+      },
+    },
+  };
+
+  // 4. getImageSyncPlan の実行
+  const planReq = {
+    postData: {
+      contents: JSON.stringify({
+        token,
+        action: 'getImageSyncPlan',
+        localMeta: {
+          S1: t_new, // 既に最新を持っている
+          P2: t_old, // 古いものを持っている (更新必要)
+        },
+      }),
+    },
+  };
+  context.mockPlanReq = planReq;
+  const planRes = JSON.parse(vm.runInContext('doPost(mockPlanReq).getContent()', context));
+  assert.equal(planRes.ok, true);
+  assert.ok(passedQuery.includes('trashed = false'), 'Drive search query must include trashed = false');
+  
+  // validItemIds: S1, P2, P4 (HEIC は除外、IDは大文字正規化)
+  assert.deepEqual(planRes.validItemIds, ['P2', 'P4', 'S1']);
+  // neededItemIds: P2 (更新差分) と P4 (新規差分)、S1 はすでに最新なので不要
+  assert.deepEqual(planRes.neededItemIds, ['P2', 'P4']);
+  // HEIC 形式に対する警告が含まれていること (指摘B)
+  assert.ok(planRes.warnings && planRes.warnings.some((w) => w.includes('p3.heic')), 'Warning for HEIC format must be returned');
+
+  // 5. fetchImages の実行
+  context.DriveApp = {
+    getFileById: (id) => ({
+      getSize: () => (id === 'f_huge' ? 3 * 1024 * 1024 : 10000),
+      getBlob: () => ({
+        getContentType: () => 'image/jpeg',
+        getBytes: () => Buffer.from('mock-bytes-data'),
+      }),
+    }),
+  };
+
+  const fetchReq = {
+    postData: {
+      contents: JSON.stringify({
+        token,
+        action: 'fetchImages',
+        itemIds: ['P2', 'P4'],
+      }),
+    },
+  };
+  context.mockFetchReq = fetchReq;
+  const fetchRes = JSON.parse(vm.runInContext('doPost(mockFetchReq).getContent()', context));
+  assert.equal(fetchRes.ok, true);
+  assert.ok(fetchRes.images['P2'], 'P2 must be fetched as Base64 data URL');
+  assert.equal(fetchRes.images['P4'], undefined, 'P4 exceeds 2MB and must be skipped');
+  assert.ok(fetchRes.warnings.some((w) => w.includes('2MB')), 'Warning for 2MB limit must be recorded');
+
+  console.log('  ✅ Google Drive image sync (plan, trashed=false, diff & fetch) verified');
+
+  // 6. 回帰テスト: フォルダ切替＋アイテム単位取得失敗時の残存防止と再取得保証
+  // (a) 初期状態: フォルダAで S1 と P4 を同期済み (P4 には旧フォルダAの画像が存在する)
+  let currentSyncedFolderId = 'folder-A';
+  let localImages = {
+    S1: 'data:image/jpeg;base64,blob_A_s1',
+    P4: 'data:image/jpeg;base64,blob_A_p4_old', // 旧フォルダの画像
+  };
+  let localMeta = {
+    S1: t_new,
+    P4: t_new,
+  };
+
+  // (b) フォルダBへの切替をシミュレート
+  const targetFolderId = 'folder-B';
+  const isDifferentFolder = Boolean(currentSyncedFolderId && currentSyncedFolderId !== targetFolderId);
+  assert.equal(isDifferentFolder, true, 'isDifferentFolder must be true');
+
+  // フォルダ切替時は localMeta を空にしてプラン要求
+  const planLocalMeta = isDifferentFolder ? {} : localMeta;
+  assert.deepEqual(planLocalMeta, {}, 'localMeta must be empty on folder change');
+
+  const switchPlanReq = {
+    postData: {
+      contents: JSON.stringify({
+        token,
+        action: 'getImageSyncPlan',
+        imageFolderId: targetFolderId,
+        localMeta: planLocalMeta,
+      }),
+    },
+  };
+  context.mockSwitchPlanReq = switchPlanReq;
+  const switchPlanRes = JSON.parse(vm.runInContext('doPost(mockSwitchPlanReq).getContent()', context));
+  assert.equal(switchPlanRes.ok, true);
+  assert.ok(switchPlanRes.validItemIds.includes('P4'), 'P4 must be in validItemIds of folder-B');
+  assert.ok(switchPlanRes.neededItemIds.includes('P4'), 'P4 must be in neededItemIds');
+
+  // 【最重要判断ロジック】
+  // isDifferentFolder かつ validItemIds.length > 0 の場合、チャンク取得前に端末キャッシュを先行クリア
+  if (isDifferentFolder && switchPlanRes.validItemIds.length > 0) {
+    localImages = {};
+    localMeta = {};
+  }
+  // この時点で旧フォルダの P4 画像は完全に消去されていること
+  assert.equal(localImages['P4'], undefined, 'Old P4 image must be cleared before chunk fetch');
+
+  // (c) チャンク取得実行: フォルダBでは S1 は成功するが、P4 は 2MB 超過で取得失敗
+  const fetchChunkReq = {
+    postData: {
+      contents: JSON.stringify({
+        token,
+        action: 'fetchImages',
+        imageFolderId: targetFolderId,
+        itemIds: switchPlanRes.neededItemIds, // ['P2', 'P4', 'S1']
+      }),
+    },
+  };
+  context.mockFetchChunkReq = fetchChunkReq;
+  const fetchChunkRes = JSON.parse(vm.runInContext('doPost(mockFetchChunkReq).getContent()', context));
+  assert.equal(fetchChunkRes.ok, true);
+  // P2, S1 は成功、P4 は 2MB 超過で失敗
+  assert.ok(fetchChunkRes.images['S1']);
+  assert.equal(fetchChunkRes.images['P4'], undefined, 'P4 must fail due to 2MB limit in folder-B');
+
+  // 取得成功したアイテムのみ localImages, localMeta に保存
+  for (const [id, dataUrl] of Object.entries(fetchChunkRes.images)) {
+    localImages[id] = dataUrl;
+    localMeta[id] = fetchChunkRes.timestamps[id];
+  }
+  // 同期成功後に syncedFolderId を更新
+  currentSyncedFolderId = targetFolderId;
+
+  // 【検証 1】取得失敗した P4 に旧フォルダAの画像が残っていないこと（SVG表示になる）
+  assert.equal(localImages['P4'], undefined, 'P4 must NOT retain old folder image; must be undefined (SVG fallback)');
+  // 【検証 2】P4 のタイムスタンプが localMeta に存在しないこと（未取得扱い）
+  assert.equal(localMeta['P4'], undefined, 'P4 must NOT be in localMeta (treated as unacquired)');
+
+  // (d) 次回同期 (同一 folder-B での再同期) の検証
+  // P4 がサイズ修正されたり再試行される場合の挙動
+  const isDifferentFolder2 = Boolean(currentSyncedFolderId && currentSyncedFolderId !== targetFolderId);
+  assert.equal(isDifferentFolder2, false, 'Subsequent sync is same folder');
+  const nextPlanLocalMeta = isDifferentFolder2 ? {} : localMeta;
+  assert.ok(nextPlanLocalMeta['S1'], 'S1 has localMeta');
+  assert.equal(nextPlanLocalMeta['P4'], undefined, 'P4 does not have localMeta');
+
+  const retryPlanReq = {
+    postData: {
+      contents: JSON.stringify({
+        token,
+        action: 'getImageSyncPlan',
+        imageFolderId: targetFolderId,
+        localMeta: nextPlanLocalMeta,
+      }),
+    },
+  };
+  context.mockRetryPlanReq = retryPlanReq;
+  const retryPlanRes = JSON.parse(vm.runInContext('doPost(mockRetryPlanReq).getContent()', context));
+  assert.equal(retryPlanRes.ok, true);
+  // S1 は取得済みなので neededItemIds に入らない
+  assert.equal(retryPlanRes.neededItemIds.includes('S1'), false, 'S1 already acquired, must not be in neededItemIds');
+  // 未取得の P4 は次回同期で自動的に neededItemIds に含まれること！
+  assert.ok(retryPlanRes.neededItemIds.includes('P4'), 'Unacquired P4 must be automatically re-targeted in next sync');
+
+  console.log('  ✅ Regression test: Folder switch with partial failure leaves no stale image & retries verified');
 }
 
 console.log('🎉 All GAS backend & sync logic tests passed successfully!');

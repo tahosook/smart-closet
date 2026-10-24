@@ -484,6 +484,7 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       wearHistoryClearedAt: sentTombstones.wearHistoryClearedAt,
       deletedWifeNgMap: sentTombstones.deletedWifeNgMap,
       itemNamesMap,
+      imageFolderId: stateRef.current.gasConfig.imageFolderId,
     };
 
     try {
@@ -550,7 +551,16 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       }
 
       const syncedAt = data.syncedAt || new Date().toISOString();
-      setGasConfig((prev) => ({ ...prev, lastSyncedAt: syncedAt }));
+      setGasConfig((prev) => {
+        const updated: GasSyncConfig = {
+          ...prev,
+          lastSyncedAt: syncedAt,
+          imageFolderId: data.imageFolderId !== undefined ? data.imageFolderId : prev.imageFolderId,
+          imagesLastUpdatedAt: data.imagesLastUpdatedAt !== undefined ? data.imagesLastUpdatedAt : prev.imagesLastUpdatedAt,
+        };
+        localStorage.setItem(STORAGE_KEYS.GAS_CONFIG, JSON.stringify(updated));
+        return updated;
+      });
 
       if (reconcileResult.stillDirty) {
         localStorage.setItem(STORAGE_KEYS.SYNC_DIRTY, 'true');
@@ -670,7 +680,16 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       }
 
       const syncedAt = data.syncedAt || new Date().toISOString();
-      setGasConfig((prev) => ({ ...prev, lastSyncedAt: syncedAt }));
+      setGasConfig((prev) => {
+        const updated: GasSyncConfig = {
+          ...prev,
+          lastSyncedAt: syncedAt,
+          imageFolderId: data.imageFolderId !== undefined ? data.imageFolderId : prev.imageFolderId,
+          imagesLastUpdatedAt: data.imagesLastUpdatedAt !== undefined ? data.imagesLastUpdatedAt : prev.imagesLastUpdatedAt,
+        };
+        localStorage.setItem(STORAGE_KEYS.GAS_CONFIG, JSON.stringify(updated));
+        return updated;
+      });
 
       if (reconcileResult.stillDirty) {
         localStorage.setItem(STORAGE_KEYS.SYNC_DIRTY, 'true');

@@ -106,6 +106,8 @@ function doGet(e) {
     const wifeNgPairs = readWifeNg(ss);
     const customClosetData = readCustomData(ss);
     const tombstones = readTombstones(ss);
+    const imageFolderId = readConfigValue(ss, 'imageFolderId') || '';
+    const imagesLastUpdatedAt = getImagesLastUpdatedAt(imageFolderId);
 
     return createJsonResponse({
       ok: true,
@@ -114,6 +116,8 @@ function doGet(e) {
       customClosetData: customClosetData,
       customClosetDataClearedAt: tombstones.customClosetDataClearedAt || undefined,
       tombstones: tombstones,
+      imageFolderId: imageFolderId,
+      imagesLastUpdatedAt: imagesLastUpdatedAt,
       syncedAt: new Date().toISOString()
     });
   } catch (err) {
@@ -149,6 +153,14 @@ function doPost(e) {
     // Fail-Closed 認証検証
     if (!validateToken(ss, token)) {
       return createJsonResponse({ ok: false, error: '認証エラー: トークンが無効または未設定です' });
+    }
+
+    // Google ドライブ画像同期アクションのルーティング (Phase 2)
+    if (payload.action === 'getImageSyncPlan') {
+      return handleGetImageSyncPlan(ss, payload);
+    }
+    if (payload.action === 'fetchImages') {
+      return handleFetchImages(ss, payload);
     }
 
     const itemNamesMap = payload.itemNamesMap || {};
@@ -224,6 +236,13 @@ function doPost(e) {
     // 5. analytics シートの再集計
     updateAnalyticsSheet(ss, mergedWearHistory, itemNamesMap);
 
+    // 6. imageFolderId の更新 (送信されている場合)
+    if (payload.imageFolderId !== undefined) {
+      writeConfigValue(ss, 'imageFolderId', String(payload.imageFolderId).trim());
+    }
+    const currentFolderId = readConfigValue(ss, 'imageFolderId') || '';
+    const imagesLastUpdatedAt = getImagesLastUpdatedAt(currentFolderId);
+
     // マージ後の最新データを返却（古い状態の端末もこれで最新化される）
     return createJsonResponse({
       ok: true,
@@ -232,6 +251,8 @@ function doPost(e) {
       customClosetData: readCustomData(ss),
       customClosetDataClearedAt: tombstones.customClosetDataClearedAt || undefined,
       tombstones: tombstones,
+      imageFolderId: currentFolderId,
+      imagesLastUpdatedAt: imagesLastUpdatedAt,
       syncedAt: new Date().toISOString()
     });
   } catch (err) {
@@ -676,3 +697,314 @@ function formatDateString(val) {
   }
   return String(val).slice(0, 10);
 }
+
+// -------------------------------------------------------------
+// Google ドライブ画像同期ロジック (Phase 2)
+// -------------------------------------------------------------
+
+// サポートする画像拡張子の正規表現 (大文字小文字不問: jpg, jpeg, png, webp)
+const SUPPORTED_IMAGE_REGEX = /^([A-Za-z0-9_-]+)\.(jpe?g|png|webp)$/i;
+// ブラウザ非対応または推奨されない画像形式 (HEIC, HEIF, BMP 等) の検出用正規表現 (指摘B)
+const UNSUPPORTED_IMAGE_REGEX = /^([A-Za-z0-9_-]+)\.(heic|heif|bmp|gif|tiff|svg)$/i;
+
+/**
+ * 画像フォルダ内の最新更新タイムスタンプを超軽量に取得 (仕様4)
+ * orderBy: 'modifiedTime desc', pageSize: 1 で最新1件のみ取得
+ */
+function getImagesLastUpdatedAt(folderId) {
+  if (!folderId) return 0;
+  try {
+    if (typeof Drive !== 'undefined' && Drive.Files && Drive.Files.list) {
+      const res = Drive.Files.list({
+        q: "'" + folderId + "' in parents and trashed = false",
+        orderBy: 'modifiedTime desc',
+        pageSize: 1,
+        fields: 'files(modifiedTime)'
+      });
+      if (res && res.files && res.files.length > 0) {
+        return new Date(res.files[0].modifiedTime).getTime();
+      }
+    } else if (typeof DriveApp !== 'undefined') {
+      const folder = DriveApp.getFolderById(folderId);
+      const files = folder.getFiles();
+      let maxTime = 0;
+      while (files.hasNext()) {
+        const file = files.next();
+        const time = file.getLastUpdated().getTime();
+        if (time > maxTime) maxTime = time;
+      }
+      return maxTime;
+    }
+  } catch (err) {
+    Logger.log('⚠️ Warning in getImagesLastUpdatedAt: ' + err.toString());
+  }
+  return 0;
+}
+
+/**
+ * フォルダ内の全ファイルから、アイテムID -> 最新ファイル情報のマップを構築
+ * 同名ファイルは modifiedTime が最新のものを優先 (決定3)
+ * IDは大文字に正規化 (仕様8)
+ * trashed = false でゴミ箱ファイルを除外 (仕様3)
+ * 非対応形式 (HEIC等) を検知して warnings を収集 (指摘B)
+ */
+function scanImageFolder(folderId) {
+  const itemMap = {};
+  const warnings = [];
+
+  if (typeof Drive !== 'undefined' && Drive.Files && Drive.Files.list) {
+    let pageToken = null;
+    do {
+      const res = Drive.Files.list({
+        q: "'" + folderId + "' in parents and trashed = false",
+        pageSize: 100,
+        fields: 'nextPageToken, files(id, name, modifiedTime, thumbnailLink, size, mimeType)',
+        pageToken: pageToken
+      });
+      if (res && res.files) {
+        for (let i = 0; i < res.files.length; i++) {
+          const f = res.files[i];
+          const fileName = f.name || '';
+          const match = fileName.match(SUPPORTED_IMAGE_REGEX);
+          if (match) {
+            const itemId = match[1].toUpperCase();
+            const modifiedTime = new Date(f.modifiedTime).getTime();
+            if (!itemMap[itemId] || modifiedTime > itemMap[itemId].modifiedTime) {
+              itemMap[itemId] = {
+                fileId: f.id,
+                name: fileName,
+                modifiedTime: modifiedTime,
+                thumbnailLink: f.thumbnailLink,
+                size: Number(f.size || 0),
+                mimeType: f.mimeType
+              };
+            }
+          } else {
+            // 指摘B: HEIC や非対応形式の注意喚起
+            const unMatch = fileName.match(UNSUPPORTED_IMAGE_REGEX);
+            if (unMatch) {
+              warnings.push(`[${fileName}] はブラウザ非対応の形式です。jpg または png に変換して保存してください`);
+            }
+          }
+        }
+      }
+      pageToken = res ? res.nextPageToken : null;
+    } while (pageToken);
+  } else if (typeof DriveApp !== 'undefined') {
+    const folder = DriveApp.getFolderById(folderId);
+    const files = folder.getFiles();
+    while (files.hasNext()) {
+      const f = files.next();
+      const fileName = f.getName() || '';
+      const match = fileName.match(SUPPORTED_IMAGE_REGEX);
+      if (match) {
+        const itemId = match[1].toUpperCase();
+        const modifiedTime = f.getLastUpdated().getTime();
+        if (!itemMap[itemId] || modifiedTime > itemMap[itemId].modifiedTime) {
+          itemMap[itemId] = {
+            fileId: f.getId(),
+            name: fileName,
+            modifiedTime: modifiedTime,
+            thumbnailLink: null,
+            size: f.getSize(),
+            mimeType: f.getMimeType()
+          };
+        }
+      } else {
+        const unMatch = fileName.match(UNSUPPORTED_IMAGE_REGEX);
+        if (unMatch) {
+          warnings.push(`[${fileName}] はブラウザ非対応の形式です。jpg または png に変換して保存してください`);
+        }
+      }
+    }
+  }
+
+  return { itemMap: itemMap, warnings: warnings };
+}
+
+/**
+ * 画像同期プランの策定 (action: 'getImageSyncPlan', 仕様6)
+ */
+function handleGetImageSyncPlan(ss, payload) {
+  const folderId = (payload && payload.imageFolderId) || readConfigValue(ss, 'imageFolderId');
+  if (!folderId) {
+    return createJsonResponse({
+      ok: false,
+      error: 'Google ドライブの画像フォルダ ID が設定されていません。クラウド設定画面または meta_config に登録してください。'
+    });
+  }
+
+  try {
+    const localMeta = (payload && payload.localMeta) || {};
+    const scanResult = scanImageFolder(folderId);
+    const itemMap = scanResult.itemMap;
+    const warnings = scanResult.warnings;
+    const validItemIds = Object.keys(itemMap).sort();
+    const neededItemIds = [];
+    let latestTime = 0;
+
+    for (let i = 0; i < validItemIds.length; i++) {
+      const id = validItemIds[i];
+      const info = itemMap[id];
+      if (info.modifiedTime > latestTime) {
+        latestTime = info.modifiedTime;
+      }
+      const localTime = localMeta[id] || 0;
+      if (localTime === 0 || info.modifiedTime > localTime) {
+        neededItemIds.push(id);
+      }
+    }
+
+    return createJsonResponse({
+      ok: true,
+      validItemIds: validItemIds,
+      neededItemIds: neededItemIds,
+      imagesLastUpdatedAt: latestTime,
+      warnings: warnings
+    });
+  } catch (err) {
+    return createJsonResponse({ ok: false, error: '画像フォルダ走査エラー: ' + err.toString() });
+  }
+}
+
+/**
+ * 指定アイテムの写真データをバッチ取得して Base64 化 (action: 'fetchImages', 仕様2, 6, 8)
+ */
+function handleFetchImages(ss, payload) {
+  const folderId = (payload && payload.imageFolderId) || readConfigValue(ss, 'imageFolderId');
+  if (!folderId) {
+    return createJsonResponse({ ok: false, error: '画像フォルダ ID が未設定です' });
+  }
+
+  const itemIds = Array.isArray(payload && payload.itemIds) ? payload.itemIds : [];
+  if (itemIds.length === 0) {
+    return createJsonResponse({ ok: true, images: {}, timestamps: {}, warnings: [] });
+  }
+
+  try {
+    const scanResult = scanImageFolder(folderId);
+    const itemMap = scanResult.itemMap;
+    const images = {};
+    const timestamps = {};
+    const warnings = [];
+
+    const token = typeof ScriptApp !== 'undefined' ? ScriptApp.getOAuthToken() : '';
+
+    for (let i = 0; i < itemIds.length; i++) {
+      const id = itemIds[i].toUpperCase();
+      const info = itemMap[id];
+      if (!info) {
+        warnings.push(`[${id}] フォルダ内に有効な画像ファイルが見つかりません`);
+        continue;
+      }
+
+      try {
+        let imageBlob = null;
+
+        // 1. thumbnailLink の活用 (=s1024 高解像度サムネイル取得, 仕様2-a)
+        if (info.thumbnailLink && typeof UrlFetchApp !== 'undefined' && token) {
+          const s1024Url = info.thumbnailLink.replace(/=s\d+/, '=s1024');
+          const res = UrlFetchApp.fetch(s1024Url, {
+            headers: { Authorization: 'Bearer ' + token },
+            muteHttpExceptions: true
+          });
+          if (res.getResponseCode() === 200) {
+            imageBlob = res.getBlob();
+          }
+        }
+
+        // 2. thumbnailLink 不在時または失敗時の原画フォールバック (上限2MB, 仕様2-c, 仕様8)
+        if (!imageBlob && typeof DriveApp !== 'undefined') {
+          const file = DriveApp.getFileById(info.fileId);
+          const size = file.getSize();
+          if (size > 2 * 1024 * 1024) {
+            warnings.push(
+              `[${id}] ファイルサイズが上限(2MB)を超えているためスキップされました (実測: ${(size / 1024 / 1024).toFixed(1)}MB)`
+            );
+            continue;
+          }
+          imageBlob = file.getBlob();
+        }
+
+        if (!imageBlob) {
+          warnings.push(`[${id}] 画像データの取得に失敗しました`);
+          continue;
+        }
+
+        // 動的 MIME 取得 (仕様2-b)
+        const mimeType = imageBlob.getContentType() || 'image/jpeg';
+        const base64Str = Utilities.base64Encode(imageBlob.getBytes());
+        images[id] = `data:${mimeType};base64,${base64Str}`;
+        timestamps[id] = info.modifiedTime;
+      } catch (err) {
+        warnings.push(`[${id}] 画像取得エラー: ${err.toString()}`);
+      }
+    }
+
+    return createJsonResponse({
+      ok: true,
+      images: images,
+      timestamps: timestamps,
+      warnings: warnings
+    });
+  } catch (err) {
+    return createJsonResponse({ ok: false, error: '画像バッチ取得エラー: ' + err.toString() });
+  }
+}
+
+/**
+ * ユーザーがエディタから手動実行して Drive 読み取り権限を初回承認するための関数 (決定1)
+ */
+function testDriveAccess() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const folderId = readConfigValue(ss, 'imageFolderId');
+  Logger.log('🔍 Drive 権限テストを開始します (登録 folderId: ' + (folderId || '未設定') + ')');
+  try {
+    if (folderId && typeof DriveApp !== 'undefined') {
+      const folder = DriveApp.getFolderById(folderId);
+      Logger.log('📁 フォルダ検出成功: ' + folder.getName());
+      const files = folder.getFiles();
+      let count = 0;
+      while (files.hasNext() && count < 5) {
+        const f = files.next();
+        Logger.log('  - ' + f.getName() + ' (' + f.getSize() + ' bytes)');
+        count++;
+      }
+    } else {
+      Logger.log('ℹ️ imageFolderId は未登録ですが、DriveApp API の呼び出し権限は正常に認可されました');
+    }
+    Logger.log('✅ Drive access OK');
+  } catch (e) {
+    Logger.log('❌ Drive access error: ' + e.toString());
+  }
+}
+
+/**
+ * ルーティングと既存同期の検証用関数 (指示1)
+ */
+function verifyRoutingAndSync() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const token = readConfigValue(ss, 'secretToken');
+  Logger.log('🔑 secretToken: ' + (token ? '設定済み' : '未設定'));
+
+  // 1. 通常のデータ同期 (doGet) のテスト
+  const getReq = { parameter: { token: token } };
+  const getRes = JSON.parse(doGet(getReq).getContent());
+  Logger.log('✅ doGet (Pull) 検証: ok=' + getRes.ok + ', wearCount=' + (getRes.wearHistory ? getRes.wearHistory.length : 0) + ', imageFolderId=' + (getRes.imageFolderId || '未登録'));
+
+  // 2. 画像同期プラン (getImageSyncPlan) のルーティングテスト
+  const postReq = {
+    postData: {
+      contents: JSON.stringify({
+        token: token,
+        action: 'getImageSyncPlan',
+        localMeta: {}
+      })
+    }
+  };
+  const planRes = JSON.parse(doPost(postReq).getContent());
+  Logger.log('✅ getImageSyncPlan 検証: ok=' + planRes.ok + ', error=' + (planRes.error || 'なし'));
+
+  return { getRes: getRes, planRes: planRes };
+}
+

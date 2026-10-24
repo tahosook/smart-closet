@@ -56,6 +56,8 @@ export interface GasSyncConfig {
   secretToken?: string;
   autoSync: boolean;
   lastSyncedAt?: string;
+  imageFolderId?: string;
+  imagesLastUpdatedAt?: number;
 }
 
 export interface SyncTombstones {
@@ -79,6 +81,7 @@ export interface GasSyncPayload {
   wearHistoryClearedAt?: number;
   deletedWifeNgMap?: Record<string, number>;
   itemNamesMap?: Record<string, string>;
+  imageFolderId?: string;
 }
 
 export interface GasSyncResponse {
@@ -89,7 +92,43 @@ export interface GasSyncResponse {
   customClosetData?: ClosetData | null;
   customClosetDataClearedAt?: number;       // サーバー側のカスタムデータ削除時刻
   tombstones?: SyncTombstones;              // サーバー側の削除 Tombstone 状態
+  imageFolderId?: string;                   // サーバー meta_config の画像フォルダID (Single Source of Truth)
+  imagesLastUpdatedAt?: number;             // ドライブ内画像の最新更新タイムスタンプ (超軽量チェック用)
   syncedAt?: string;
 }
+
+// ----------------------------------------------------
+// Google ドライブ画像同期関連の型定義 (Phase 1〜2)
+// ----------------------------------------------------
+
+export interface GetImageSyncPlanRequest {
+  action: 'getImageSyncPlan';
+  token?: string;
+  localMeta: Record<string, number>; // { [itemId]: lastModifiedTimestamp }
+}
+
+export interface GetImageSyncPlanResponse {
+  ok: boolean;
+  error?: string;
+  validItemIds: string[];            // ドライブ上に現存する全有効アイテムID (大文字正規化済み、Prune用)
+  neededItemIds: string[];           // 新規または更新された取得対象アイテムID
+  imagesLastUpdatedAt: number;       // フォルダ内の最新更新タイムスタンプ
+  warnings?: string[];               // 非対応形式 (HEIC等) の注意喚起警告 (指摘B)
+}
+
+export interface FetchImagesRequest {
+  action: 'fetchImages';
+  token?: string;
+  itemIds: string[];                 // チャンク指定された取得対象アイテムID (6〜8件)
+}
+
+export interface FetchImagesResponse {
+  ok: boolean;
+  error?: string;
+  images: Record<string, string>;    // { [itemId]: "data:image/jpeg;base64,..." }
+  timestamps: Record<string, number>;// { [itemId]: modifiedTimestamp }
+  warnings?: string[];               // 非対応形式やサイズ超過等の警告
+}
+
 
 
