@@ -172,17 +172,17 @@ ${JSON.stringify(mergedClosetData, null, 2)}
         </p>
 
         <div className="pl-8 bg-slate-900/60 p-3 rounded-xl border border-slate-700/50 text-xs space-y-1.5">
-          <div className="text-slate-400">推奨ファイル名:</div>
+          <div className="text-slate-400">推奨ファイル名（Google ドライブの非公開フォルダに保存）:</div>
           <div className="flex flex-wrap gap-2">
             <span className="px-2.5 py-1 bg-slate-800 rounded-lg text-blue-400 font-mono font-bold">
-              シャツ: public/images/{nextShirtId}.jpg
+              シャツ: {nextShirtId}.jpg
             </span>
             <span className="px-2.5 py-1 bg-slate-800 rounded-lg text-emerald-400 font-mono font-bold">
-              パンツ: public/images/{nextPantsId}.jpg
+              パンツ: {nextPantsId}.jpg
             </span>
           </div>
           <p className="text-[11px] text-slate-400 pt-1">
-            ※ Antigravityに「この写真で {nextPantsId} を追加して」とチャットで依頼することでも全自動で完了できます。
+            ※ 写真をドライブの非公開フォルダに保存後、クラウド同期モーダルから「写真を今すぐ同期」を押すことで端末に取り込まれます。
           </p>
         </div>
       </section>

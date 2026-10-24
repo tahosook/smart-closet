@@ -2,7 +2,7 @@
 set -euo pipefail
 
 SRC_DIR="${1:-$HOME/Downloads/クローゼット24着_個別切り抜き画像一式}"
-DEST_DIR="public/images"
+DEST_DIR="${2:-$HOME/Downloads/SmartCloset_Photos}"
 mkdir -p "$DEST_DIR"
 
 if [ ! -d "$SRC_DIR" ]; then

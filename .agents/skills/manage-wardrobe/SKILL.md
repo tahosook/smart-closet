@@ -11,14 +11,11 @@ This skill guides the AI agent to reliably add, update, and validate clothes in 
 
 ## Workflow Steps
 
-### 1. Synchronize / Place Image Assets
+### 1. Place Image Assets in Google Drive
 When a new garment photo is provided:
-1. Ensure the image is placed in `public/images/<ID>.jpg` (e.g. `P16.jpg` or `S10.jpg`).
-2. If the user placed a file in `~/Downloads/クローゼット24着_個別切り抜き画像一式` or similar with a Japanese name like `P16_黒スラックス.jpg`, run:
-   ```bash
-   ./scripts/sync-images.sh
-   ```
-3. Verify the file exists in `public/images/`.
+1. Photos are stored in the user's private Google Drive folder (e.g. `SmartCloset_Photos`) with the name `<ID>.jpg` (e.g. `P16.jpg` or `S10.jpg`).
+2. **Never commit wardrobe photos to Git or `public/images/`** to preserve complete privacy.
+3. The user synchronizes photos into the app via the cloud sync modal ("写真を今すぐ同期"), which permanently caches them in browser `IndexedDB`.
 
 ### 2. Update `src/data/closet.json`
 Consult **`docs/STYLING_RULES.md`** for 40s male fashion principles, bias analysis, and compatibility criteria.

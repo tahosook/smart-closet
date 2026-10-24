@@ -42,6 +42,9 @@ for (const item of data.items) {
     errors.push(`Item missing string id: ${JSON.stringify(item)}`);
     continue;
   }
+  if (!/^[A-Za-z0-9_-]+$/.test(item.id)) {
+    errors.push(`[${item.id}] Invalid ID format. Must contain only alphanumeric characters, dashes, or underscores.`);
+  }
   if (idSet.has(item.id)) {
     errors.push(`Duplicate item id: ${item.id}`);
   }
@@ -59,17 +62,30 @@ for (const item of data.items) {
     errors.push(`[${item.id}] Invalid comfortScore: ${item.comfortScore} (must be 1.0 - 5.0)`);
   }
 
-  // Check image file in public
-  if (item.imageUrl) {
-    const relPath = item.imageUrl.startsWith('/') ? item.imageUrl.slice(1) : item.imageUrl;
-    const fullImagePath = path.join(publicDir, relPath);
-    if (!fs.existsSync(fullImagePath)) {
-      warnings.push(`[${item.id}] Image file not found at ${fullImagePath} (fallback SVG will be used)`);
-    }
-  } else {
-    warnings.push(`[${item.id}] Missing imageUrl`);
+  // Validate imageUrl if present (photos are hosted on private Google Drive; imageUrl serves as legacy fallback path)
+  if (item.imageUrl && typeof item.imageUrl !== 'string') {
+    errors.push(`[${item.id}] imageUrl must be a string path`);
   }
 }
+
+// Check that no private photo files are committed anywhere under public/
+const photoRegex = /\.(jpe?g|png|webp|gif)$/i;
+
+function scanDirForPrivatePhotos(dir) {
+  if (!fs.existsSync(dir)) return;
+  const entries = fs.readdirSync(dir, { withFileTypes: true });
+  for (const entry of entries) {
+    const fullPath = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      scanDirForPrivatePhotos(fullPath);
+    } else if (photoRegex.test(entry.name)) {
+      const relPath = path.relative(projectRoot, fullPath);
+      errors.push(`[Privacy Guard] Forbidden private photo file at ${relPath}. Photos must be stored in private Google Drive ("SmartCloset_Photos"), not committed to the repository.`);
+    }
+  }
+}
+
+scanDirForPrivatePhotos(publicDir);
 
 // 2. Check relationship references
 for (const item of data.items) {
