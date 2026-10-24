@@ -151,6 +151,14 @@ export const GasSyncModal: React.FC<GasSyncModalProps> = ({ isOpen, onClose }) =
         allWarnings.push(...planWarnings);
       }
 
+      // 指摘対応: フォルダ切替時かつ新フォルダに有効な画像が存在する場合、
+      // 取得失敗アイテムに旧画像が残るのを防ぐため、チャンク取得前に端末キャッシュを全消去
+      // (新フォルダが空の場合は誤消去防止のため既存の確認ダイアログフローに任せる)
+      if (isDifferentFolder && validItemIds.length > 0) {
+        setImageSyncProgress('旧フォルダのキャッシュをクリア中...');
+        await clearAllImages();
+      }
+
       // 2. チャンク取得 (6件ずつ、仕様6 ステップ2)
       const CHUNK_SIZE = 6;
       let fetchedCount = 0;

@@ -1481,46 +1481,110 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
 
   console.log('  ✅ Google Drive image sync (plan, trashed=false, diff & fetch) verified');
 
-  // 6. 指摘1回帰テスト: 同期元フォルダ変更時の全件再取得
-  // フォルダAで S1 を同期済み (S1: t_new) の状態
-  let mockSyncedFolderId = 'folder-A';
-  const getMockLocalMetaForFolder = (currentFolderId, actualLocalMeta) => {
-    const isDifferent = Boolean(mockSyncedFolderId && mockSyncedFolderId !== currentFolderId);
-    return isDifferent ? {} : actualLocalMeta;
+  // 6. 回帰テスト: フォルダ切替＋アイテム単位取得失敗時の残存防止と再取得保証
+  // (a) 初期状態: フォルダAで S1 と P4 を同期済み (P4 には旧フォルダAの画像が存在する)
+  let currentSyncedFolderId = 'folder-A';
+  let localImages = {
+    S1: 'data:image/jpeg;base64,blob_A_s1',
+    P4: 'data:image/jpeg;base64,blob_A_p4_old', // 旧フォルダの画像
+  };
+  let localMeta = {
+    S1: t_new,
+    P4: t_new,
   };
 
-  // (a) 同一フォルダ (folder-A) の場合: S1 は更新不要
-  const sameFolderMeta = getMockLocalMetaForFolder('folder-A', { S1: t_new });
-  assert.deepEqual(sameFolderMeta, { S1: t_new });
+  // (b) フォルダBへの切替をシミュレート
+  const targetFolderId = 'folder-B';
+  const isDifferentFolder = Boolean(currentSyncedFolderId && currentSyncedFolderId !== targetFolderId);
+  assert.equal(isDifferentFolder, true, 'isDifferentFolder must be true');
 
-  // (b) 別フォルダ (folder-B) に切り替えた場合:
-  // 同一 ID (S1) かつ同一更新日時 (t_new) であっても、localMeta が空となり再取得対象になること
-  const diffFolderMeta = getMockLocalMetaForFolder('folder-B', { S1: t_new });
-  assert.deepEqual(diffFolderMeta, {}, 'localMeta must be empty when folder changes');
+  // フォルダ切替時は localMeta を空にしてプラン要求
+  const planLocalMeta = isDifferentFolder ? {} : localMeta;
+  assert.deepEqual(planLocalMeta, {}, 'localMeta must be empty on folder change');
 
-  const diffFolderPlanReq = {
+  const switchPlanReq = {
     postData: {
       contents: JSON.stringify({
         token,
         action: 'getImageSyncPlan',
-        imageFolderId: 'folder-B',
-        localMeta: diffFolderMeta, // 空マップで送信
+        imageFolderId: targetFolderId,
+        localMeta: planLocalMeta,
       }),
     },
   };
-  context.mockDiffPlanReq = diffFolderPlanReq;
-  const diffPlanRes = JSON.parse(vm.runInContext('doPost(mockDiffPlanReq).getContent()', context));
-  assert.equal(diffPlanRes.ok, true);
-  // S1 も同一更新日時に関わらず neededItemIds に含まれていること（全件再取得）
-  assert.ok(diffPlanRes.neededItemIds.includes('S1'), 'S1 must be in neededItemIds when folder changes even if timestamp matches');
-  assert.deepEqual(diffPlanRes.neededItemIds, ['P2', 'P4', 'S1']);
+  context.mockSwitchPlanReq = switchPlanReq;
+  const switchPlanRes = JSON.parse(vm.runInContext('doPost(mockSwitchPlanReq).getContent()', context));
+  assert.equal(switchPlanRes.ok, true);
+  assert.ok(switchPlanRes.validItemIds.includes('P4'), 'P4 must be in validItemIds of folder-B');
+  assert.ok(switchPlanRes.neededItemIds.includes('P4'), 'P4 must be in neededItemIds');
 
-  // (c) 同期成功後は同期元フォルダIDが保存され、次回以降は差分同期に戻ること
-  mockSyncedFolderId = 'folder-B';
-  const nextSyncMeta = getMockLocalMetaForFolder('folder-B', { S1: t_new, P2: t_new, P4: t_new });
-  assert.deepEqual(nextSyncMeta, { S1: t_new, P2: t_new, P4: t_new }, 'Subsequent sync in same folder retains localMeta');
+  // 【最重要判断ロジック】
+  // isDifferentFolder かつ validItemIds.length > 0 の場合、チャンク取得前に端末キャッシュを先行クリア
+  if (isDifferentFolder && switchPlanRes.validItemIds.length > 0) {
+    localImages = {};
+    localMeta = {};
+  }
+  // この時点で旧フォルダの P4 画像は完全に消去されていること
+  assert.equal(localImages['P4'], undefined, 'Old P4 image must be cleared before chunk fetch');
 
-  console.log('  ✅ Regression test: Folder switch resets localMeta & re-fetches all verified');
+  // (c) チャンク取得実行: フォルダBでは S1 は成功するが、P4 は 2MB 超過で取得失敗
+  const fetchChunkReq = {
+    postData: {
+      contents: JSON.stringify({
+        token,
+        action: 'fetchImages',
+        imageFolderId: targetFolderId,
+        itemIds: switchPlanRes.neededItemIds, // ['P2', 'P4', 'S1']
+      }),
+    },
+  };
+  context.mockFetchChunkReq = fetchChunkReq;
+  const fetchChunkRes = JSON.parse(vm.runInContext('doPost(mockFetchChunkReq).getContent()', context));
+  assert.equal(fetchChunkRes.ok, true);
+  // P2, S1 は成功、P4 は 2MB 超過で失敗
+  assert.ok(fetchChunkRes.images['S1']);
+  assert.equal(fetchChunkRes.images['P4'], undefined, 'P4 must fail due to 2MB limit in folder-B');
+
+  // 取得成功したアイテムのみ localImages, localMeta に保存
+  for (const [id, dataUrl] of Object.entries(fetchChunkRes.images)) {
+    localImages[id] = dataUrl;
+    localMeta[id] = fetchChunkRes.timestamps[id];
+  }
+  // 同期成功後に syncedFolderId を更新
+  currentSyncedFolderId = targetFolderId;
+
+  // 【検証 1】取得失敗した P4 に旧フォルダAの画像が残っていないこと（SVG表示になる）
+  assert.equal(localImages['P4'], undefined, 'P4 must NOT retain old folder image; must be undefined (SVG fallback)');
+  // 【検証 2】P4 のタイムスタンプが localMeta に存在しないこと（未取得扱い）
+  assert.equal(localMeta['P4'], undefined, 'P4 must NOT be in localMeta (treated as unacquired)');
+
+  // (d) 次回同期 (同一 folder-B での再同期) の検証
+  // P4 がサイズ修正されたり再試行される場合の挙動
+  const isDifferentFolder2 = Boolean(currentSyncedFolderId && currentSyncedFolderId !== targetFolderId);
+  assert.equal(isDifferentFolder2, false, 'Subsequent sync is same folder');
+  const nextPlanLocalMeta = isDifferentFolder2 ? {} : localMeta;
+  assert.ok(nextPlanLocalMeta['S1'], 'S1 has localMeta');
+  assert.equal(nextPlanLocalMeta['P4'], undefined, 'P4 does not have localMeta');
+
+  const retryPlanReq = {
+    postData: {
+      contents: JSON.stringify({
+        token,
+        action: 'getImageSyncPlan',
+        imageFolderId: targetFolderId,
+        localMeta: nextPlanLocalMeta,
+      }),
+    },
+  };
+  context.mockRetryPlanReq = retryPlanReq;
+  const retryPlanRes = JSON.parse(vm.runInContext('doPost(mockRetryPlanReq).getContent()', context));
+  assert.equal(retryPlanRes.ok, true);
+  // S1 は取得済みなので neededItemIds に入らない
+  assert.equal(retryPlanRes.neededItemIds.includes('S1'), false, 'S1 already acquired, must not be in neededItemIds');
+  // 未取得の P4 は次回同期で自動的に neededItemIds に含まれること！
+  assert.ok(retryPlanRes.neededItemIds.includes('P4'), 'Unacquired P4 must be automatically re-targeted in next sync');
+
+  console.log('  ✅ Regression test: Folder switch with partial failure leaves no stale image & retries verified');
 }
 
 console.log('🎉 All GAS backend & sync logic tests passed successfully!');
