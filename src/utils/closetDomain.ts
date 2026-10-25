@@ -28,6 +28,11 @@ export function validateClosetDataSchema(data: unknown): {
     return { valid: false, error: '"items" 配列が空です。最低1点以上の服が必要です。' };
   }
 
+  // updatedAt が存在する場合は数値（タイムスタンプ）であることを確認
+  if (candidate.updatedAt !== undefined && typeof candidate.updatedAt !== 'number') {
+    return { valid: false, error: 'updatedAt は数値（タイムスタンプ）である必要があります。' };
+  }
+
   const idSet = new Set<string>();
   const shirtIds = new Set<string>();
   const pantsIds = new Set<string>();
@@ -66,6 +71,14 @@ export function validateClosetDataSchema(data: unknown): {
       return { valid: false, error: `[${item.id}] のアイテム名 (name) が未設定です。` };
     }
 
+    if (typeof item.imageUrl !== 'string') {
+      return { valid: false, error: `[${item.id}] の imageUrl は文字列である必要があります。` };
+    }
+
+    if (typeof item.notes !== 'string') {
+      return { valid: false, error: `[${item.id}] の notes は文字列である必要があります。` };
+    }
+
     if (typeof item.dressScore !== 'number' || item.dressScore < 1 || item.dressScore > 5) {
       return {
         valid: false,
@@ -88,16 +101,16 @@ export function validateClosetDataSchema(data: unknown): {
       return { valid: false, error: `[${item.id}] の ngReason は文字列である必要があります。` };
     }
 
-    if (!Array.isArray(item.officeRecommendIds)) {
-      return { valid: false, error: `[${item.id}] の officeRecommendIds は配列である必要があります。` };
+    if (!Array.isArray(item.officeRecommendIds) || !item.officeRecommendIds.every((id) => typeof id === 'string')) {
+      return { valid: false, error: `[${item.id}] の officeRecommendIds は文字列配列である必要があります。` };
     }
 
-    if (!Array.isArray(item.remoteRecommendIds)) {
-      return { valid: false, error: `[${item.id}] の remoteRecommendIds は配列である必要があります。` };
+    if (!Array.isArray(item.remoteRecommendIds) || !item.remoteRecommendIds.every((id) => typeof id === 'string')) {
+      return { valid: false, error: `[${item.id}] の remoteRecommendIds は文字列配列である必要があります。` };
     }
 
-    if (!Array.isArray(item.ngIds)) {
-      return { valid: false, error: `[${item.id}] の ngIds は配列である必要があります。` };
+    if (!Array.isArray(item.ngIds) || !item.ngIds.every((id) => typeof id === 'string')) {
+      return { valid: false, error: `[${item.id}] の ngIds は文字列配列である必要があります。` };
     }
   }
 
