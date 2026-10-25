@@ -1937,21 +1937,34 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
   assert.equal(validateSingleClosetItem({ ...validP16, dressScore: 0.5 }, rawCloset).valid, false, 'Score below 1.0 should fail');
   assert.equal(validateSingleClosetItem({ ...validP16, dressScore: 5.5 }, rawCloset).valid, false, 'Score above 5.0 should fail');
 
-  // 2b. 存在しない相手IDの参照
+  // 2b. 既存IDと異なるカテゴリでの上書き拒否（レビュー指摘対応: S1=shirt に対する S1=pants の拒否）
+  const crossCategoryItem = {
+    ...validP16,
+    id: 'S1', // 既存のシャツID
+    category: 'pants', // カテゴリがパンツ
+  };
+  const crossCategoryRes = validateSingleClosetItem(crossCategoryItem, rawCloset);
+  assert.equal(crossCategoryRes.valid, false, 'Importing item with same ID but different category must fail');
+  assert.ok(
+    crossCategoryRes.error && crossCategoryRes.error.includes('既にカテゴリ "shirt" として存在'),
+    'Error message must state category mismatch'
+  );
+
+  // 2c. 存在しない相手IDの参照
   assert.equal(
     validateSingleClosetItem({ ...validP16, officeRecommendIds: ['S999'] }, rawCloset).valid,
     false,
     'Non-existent target ID must fail'
   );
 
-  // 2c. 同一カテゴリのID参照（パンツなのにパンツIDを参照）
+  // 2d. 同一カテゴリのID参照（パンツなのにパンツIDを参照）
   assert.equal(
     validateSingleClosetItem({ ...validP16, officeRecommendIds: ['P1'] }, rawCloset).valid,
     false,
     'Same category reference must fail'
   );
 
-  // 2d. 推薦と NG の重複矛盾
+  // 2e. 推薦と NG の重複矛盾
   assert.equal(
     validateSingleClosetItem(
       { ...validP16, officeRecommendIds: ['S1'], ngIds: ['S1'] },

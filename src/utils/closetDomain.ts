@@ -413,6 +413,15 @@ export function validateSingleClosetItem(
     };
   }
 
+  // 同一IDの既存アイテムが存在する場合、カテゴリの一致を必須とする（異カテゴリ上書きによるデータ破壊防止）
+  const existingSameId = existingData.items.find((i) => i.id === candidate.id);
+  if (existingSameId && existingSameId.category !== candidate.category) {
+    return {
+      valid: false,
+      error: `ID "${candidate.id}" は既にカテゴリ "${existingSameId.category}" として存在するため、カテゴリ "${candidate.category}" での上書きはできません。`,
+    };
+  }
+
   if (!candidate.name || typeof candidate.name !== 'string' || candidate.name.trim() === '') {
     return { valid: false, error: `[${candidate.id}] のアイテム名 (name) が未設定です。` };
   }
