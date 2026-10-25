@@ -91,22 +91,29 @@ export const AiSyncView: React.FC = () => {
     }
   };
 
-  // 既存の保存済み画像があればプレビューに読み込む
+  // 既存の保存済み画像があればプレビューに読み込む（Object URL の解放を徹底してメモリリーク防止）
   useEffect(() => {
     let isMounted = true;
+    let objectUrl: string | null = null;
+
     getImageBlob(targetId).then((blob) => {
       if (!isMounted) return;
       if (blob) {
+        objectUrl = URL.createObjectURL(blob);
         setCurrentBlob(blob);
-        setPreviewDataUrl(URL.createObjectURL(blob));
+        setPreviewDataUrl(objectUrl);
       } else {
         setCurrentBlob(null);
         setPreviewDataUrl(null);
       }
     });
     setImageUploadStatus({ type: 'idle', text: '' });
+
     return () => {
       isMounted = false;
+      if (objectUrl) {
+        URL.revokeObjectURL(objectUrl);
+      }
     };
   }, [targetId]);
 
@@ -114,6 +121,11 @@ export const AiSyncView: React.FC = () => {
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+
+    // 前回のプレビューが Object URL だった場合は解放
+    if (previewDataUrl && previewDataUrl.startsWith('blob:')) {
+      URL.revokeObjectURL(previewDataUrl);
+    }
 
     setIsProcessingImage(true);
     setImageUploadStatus({ type: 'idle', text: '' });

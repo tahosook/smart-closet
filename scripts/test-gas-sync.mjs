@@ -2243,6 +2243,48 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
   assert.equal(secondRes.ok, true);
   assert.equal(trashedFilesCount, 1, 'Previous file with same name must be moved to trash');
 
+  // 3b. ゴミ箱退避失敗時の処理中断（新規ファイル作成防止）検証 (ChatGPT & Grok レビュー指摘対応)
+  let shouldFailTrash = true;
+  let newFileCreatedOnFail = false;
+  context.DriveApp.getFolderById = () => ({
+    getName: () => 'SSOT_Folder',
+    getFilesByName: () => {
+      let count = 0;
+      return {
+        hasNext: () => count === 0,
+        next: () => {
+          count++;
+          return {
+            setTrashed: () => {
+              if (shouldFailTrash) throw new Error('Permission denied on DriveApp.setTrashed');
+            },
+          };
+        },
+      };
+    },
+    createFile: () => {
+      newFileCreatedOnFail = true;
+      return { getId: () => 'unexpected', getLastUpdated: () => new Date() };
+    },
+  });
+
+  const failTrashReq = {
+    postData: {
+      contents: JSON.stringify({
+        action: 'uploadImage',
+        token: correctToken,
+        itemId: 'P16',
+        mimeType: 'image/jpeg',
+        base64Data: Buffer.from('data-when-trash-fails').toString('base64'),
+      }),
+    },
+  };
+  context.mockFailTrash = failTrashReq;
+  const failTrashRes = JSON.parse(vm.runInContext('doPost(mockFailTrash).getContent()', context));
+  assert.equal(failTrashRes.ok, false, 'Must fail when setTrashed fails');
+  assert.equal(newFileCreatedOnFail, false, 'New file MUST NOT be created if trashing old file fails');
+  assert.ok(failTrashRes.error.includes('ゴミ箱退避に失敗'), 'Error message must specify trash failure');
+
   // 4. 2MB 超過時の拒否検証
   const hugeData = Buffer.alloc(3 * 1024 * 1024, 'a').toString('base64');
   const hugeUploadReq = {

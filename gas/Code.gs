@@ -1007,7 +1007,10 @@ function handleUploadImage(ss, payload) {
       try {
         oldFile.setTrashed(true);
       } catch (e) {
-        Logger.log('Warning trashing old file: ' + e.toString());
+        return createJsonResponse({
+          ok: false,
+          error: '既存ファイル(' + fileName + ')のゴミ箱退避に失敗しました: ' + e.toString()
+        });
       }
     }
 
