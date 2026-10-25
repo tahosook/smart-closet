@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useCallback } from 'react';
 import {
   Grid,
   AlertTriangle,
@@ -84,7 +84,7 @@ export const MatrixView: React.FC = () => {
     ];
   }, [stats, shirts.length, pants.length]);
 
-  const getCellStatus = (shirt: ClosetItem, p: ClosetItem) => {
+  const getCellStatus = useCallback((shirt: ClosetItem, p: ClosetItem) => {
     const ngInfo = isNgPair(shirt.id, p.id);
     if (ngInfo.isWifeNg) {
       return { symbol: '🚨', label: '奥様NG', bg: 'bg-rose-950/80 text-rose-300 border-rose-700/60' };
@@ -93,7 +93,10 @@ export const MatrixView: React.FC = () => {
       return { symbol: '×', label: '絶対NG', bg: 'bg-slate-900/90 text-slate-600 border-slate-800' };
     }
 
-    const isOffice = shirt.officeRecommendIds.includes(p.id) || p.officeRecommendIds.includes(shirt.id);
+    // 出社推奨: 双方向推薦かつスラックスのドレス度が3.0以上（analyzeWardrobeStatsと完全一致）
+    const isOffice =
+      (shirt.officeRecommendIds.includes(p.id) || p.officeRecommendIds.includes(shirt.id)) &&
+      p.dressScore >= 3.0;
     const isRemote = shirt.remoteRecommendIds.includes(p.id) || p.remoteRecommendIds.includes(shirt.id);
 
     if (isOffice) {
@@ -103,7 +106,7 @@ export const MatrixView: React.FC = () => {
       return { symbol: '○', label: 'リモート推奨', bg: 'bg-emerald-900/60 text-emerald-300 border-emerald-700/60' };
     }
     return { symbol: '△', label: '着用可', bg: 'bg-slate-800/40 text-slate-400 border-slate-700/40' };
-  };
+  }, [isNgPair]);
 
   // 統一フィルター適用後のシャツ・パンツリスト
   const filteredShirts = useMemo(() => {
@@ -130,7 +133,7 @@ export const MatrixView: React.FC = () => {
       default:
         return shirts;
     }
-  }, [shirts, pants, activeFilter, lowOfficeShirts, highNgItems, stats]);
+  }, [shirts, pants, activeFilter, lowOfficeShirts, highNgItems, stats, getCellStatus]);
 
   const filteredPants = useMemo(() => {
     switch (activeFilter) {
@@ -157,7 +160,7 @@ export const MatrixView: React.FC = () => {
       default:
         return pants;
     }
-  }, [pants, shirts, activeFilter, lowOfficePants, highNgItems, stats]);
+  }, [pants, shirts, activeFilter, lowOfficePants, highNgItems, stats, getCellStatus]);
 
   // フォーカスアイテムが選択された場合の一覧
   const focusPartners = useMemo(() => {
@@ -181,7 +184,7 @@ export const MatrixView: React.FC = () => {
         return (order[a.status.symbol] || 99) - (order[b.status.symbol] || 99);
       });
     }
-  }, [selectedFocusItem, shirts, pants]);
+  }, [selectedFocusItem, shirts, pants, wifeNgPairs, isNgPair, getCellStatus]);
 
   return (
     <div className="space-y-6 pb-20">
