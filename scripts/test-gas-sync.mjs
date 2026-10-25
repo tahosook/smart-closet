@@ -1714,6 +1714,32 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
   assert.equal(shouldBootstrap({ webAppUrl: '   ', secretToken: '  ' }), true, 'Whitespace must trigger');
   assert.equal(shouldBootstrap({ webAppUrl: 'https://script.google.com/...', secretToken: 'sc_token' }), false, 'Both set must NOT trigger');
 
+  // 1b. ペア置換ロジックの検証（レビュー指摘対応: 空URL+ローカル自動生成トークン保持端末での対不一致防止）
+  const resolveBootstrapConfig = (prev, data, onlyFillMissing) => {
+    const isPairIncomplete = !prev.webAppUrl?.trim() || !prev.secretToken?.trim();
+    const shouldReplace = !onlyFillMissing || isPairIncomplete;
+    const nextUrl = shouldReplace ? data.webAppUrl : prev.webAppUrl;
+    const nextToken = shouldReplace ? data.secretToken : (prev.secretToken ?? '');
+    return { webAppUrl: nextUrl, secretToken: nextToken };
+  };
+
+  const cloudData = { webAppUrl: 'https://script.google.com/.../exec', secretToken: 'sc_cloud_secret' };
+  // ケースA: 旧端末で URL は空だがローカル生成トークンだけがある場合 -> 両方クラウド値に置換されること
+  const migrated = resolveBootstrapConfig({ webAppUrl: '', secretToken: 'sc_old_local_token' }, cloudData, true);
+  assert.equal(migrated.webAppUrl, cloudData.webAppUrl);
+  assert.equal(migrated.secretToken, cloudData.secretToken, 'Stale local token must be replaced by cloud token when URL is missing');
+
+  // ケースB: 完全に手動設定済みのペアがある場合 (onlyFillMissing: true) -> 既存値が維持されること
+  const existingPair = { webAppUrl: 'https://custom.gas.url', secretToken: 'sc_custom_token' };
+  const preserved = resolveBootstrapConfig(existingPair, cloudData, true);
+  assert.equal(preserved.webAppUrl, existingPair.webAppUrl);
+  assert.equal(preserved.secretToken, existingPair.secretToken);
+
+  // ケースC: 手動再取得ボタン押下時 (onlyFillMissing: false) -> 強制的にクラウド値へ更新されること
+  const refreshed = resolveBootstrapConfig(existingPair, cloudData, false);
+  assert.equal(refreshed.webAppUrl, cloudData.webAppUrl);
+  assert.equal(refreshed.secretToken, cloudData.secretToken);
+
   // 2. ブートストラップで取得した設定から GAS 初回 Pull で meta_config の imageFolderId を自動取得する検証
   const bootstrappedToken = 'sync-token-bootstrap-test';
   const { ss, context } = createGasEnvironment(bootstrappedToken);

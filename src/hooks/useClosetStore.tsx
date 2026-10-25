@@ -755,12 +755,12 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         }
 
         setGasConfig((prev) => {
-          const nextUrl = onlyFillMissing
-            ? (prev.webAppUrl.trim() || data.webAppUrl!)
-            : data.webAppUrl!;
-          const nextToken = onlyFillMissing
-            ? (prev.secretToken?.trim() || data.secretToken!)
-            : data.secretToken!;
+          // URLと合言葉は対（ペア）として機能するため、片方でも欠けている場合、または手動再取得時は両方をクラウド値で置き換える
+          // （旧バージョン等で空URL＋ローカル自動生成トークンが残っていた場合に不一致で認証エラーになるのを防止）
+          const isPairIncomplete = !prev.webAppUrl.trim() || !prev.secretToken?.trim();
+          const shouldReplace = !onlyFillMissing || isPairIncomplete;
+          const nextUrl = shouldReplace ? data.webAppUrl! : prev.webAppUrl;
+          const nextToken = shouldReplace ? data.secretToken! : (prev.secretToken ?? '');
 
           const updated: GasSyncConfig = {
             ...prev,
