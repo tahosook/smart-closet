@@ -103,6 +103,7 @@ export const AiSyncView: React.FC = () => {
     type: 'success' | 'error';
     message: string;
   } | null>(null);
+  const [isBackupOpen, setIsBackupOpen] = useState(false);
 
   // Photo state (Dedicated draft 1 slot: 条件1)
   const [previewDataUrl, setPreviewDataUrl] = useState<string | null>(null);
@@ -998,40 +999,71 @@ ${
             </div>
           )}
 
-          <div className="flex flex-col sm:flex-row gap-2">
+          {/* Main Apply Button */}
+          <button
+            onClick={handleApplyJson}
+            className="w-full min-h-[44px] py-3 px-4 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-900/40 flex items-center justify-center gap-2 active:scale-[0.98] transition-all"
+          >
+            <Check className="w-4 h-4" />
+            <span>💾 JSONを適用して自動マージ・保存</span>
+          </button>
+
+          {/* Collapsible Backup & Reset Section */}
+          <div className="pt-2 border-t border-slate-800">
             <button
-              onClick={handleApplyJson}
-              className="flex-1 min-h-[44px] py-2.5 px-4 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-900/40 flex items-center justify-center gap-1.5 active:scale-[0.98] transition-all"
+              type="button"
+              onClick={() => setIsBackupOpen(!isBackupOpen)}
+              className="w-full min-h-[44px] py-2 px-3 rounded-xl bg-slate-900/60 hover:bg-slate-800 text-slate-400 hover:text-slate-300 flex items-center justify-between text-xs transition-colors border border-slate-800/80"
             >
-              <Check className="w-4 h-4" />
-              <span>💾 JSONを適用して自動マージ・保存</span>
+              <span className="font-semibold text-slate-300">
+                📦 バックアップ・復旧（ファイル保存・初期データに戻す）
+              </span>
+              {isBackupOpen ? (
+                <ChevronUp className="w-4 h-4 text-slate-400" />
+              ) : (
+                <ChevronDown className="w-4 h-4 text-slate-400" />
+              )}
             </button>
 
-            <button
-              onClick={handleDownloadJson}
-              className="min-h-[44px] py-2.5 px-3 rounded-xl text-xs font-semibold bg-slate-700 hover:bg-slate-600 text-slate-200 flex items-center justify-center gap-1.5 transition-colors"
-              title="マージ済み最新JSONをダウンロード（src/data/closet.json差し替え用）"
-            >
-              <Download className="w-4 h-4" />
-              <span>JSON保存</span>
-            </button>
+            {isBackupOpen && (
+              <div className="p-3 mt-2 bg-slate-900/80 rounded-xl border border-slate-800 space-y-2.5">
+                <p className="text-[11px] text-slate-400">
+                  通常は上の保存ボタンだけで完了します。ファイルの直接管理や初期化を行う場合のみ使用します。
+                </p>
 
-            <button
-              onClick={handleCopyMergedJson}
-              className="min-h-[44px] py-2.5 px-3 rounded-xl text-xs font-semibold bg-slate-700 hover:bg-slate-600 text-slate-200 flex items-center justify-center gap-1.5 transition-colors"
-              title="マージ済みJSONをクリップボードにコピー"
-            >
-              {copiedJson ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
-              <span>{copiedJson ? 'コピー済' : 'JSONコピー'}</span>
-            </button>
+                <div className="flex flex-col sm:flex-row gap-2">
+                  <button
+                    type="button"
+                    onClick={handleDownloadJson}
+                    className="flex-1 min-h-[44px] py-2 px-3 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 flex items-center justify-center gap-1.5 transition-colors border border-slate-700"
+                    title="マージ済み最新JSONをダウンロード（src/data/closet.json差し替え用）"
+                  >
+                    <Download className="w-4 h-4 text-blue-400" />
+                    <span>JSON保存</span>
+                  </button>
 
-            <button
-              onClick={handleReset}
-              className="min-h-[44px] py-2.5 px-3 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-rose-900/40 text-slate-400 hover:text-rose-300 border border-slate-700 transition-colors"
-              title="初期データに戻す"
-            >
-              <RotateCcw className="w-3.5 h-3.5" />
-            </button>
+                  <button
+                    type="button"
+                    onClick={handleCopyMergedJson}
+                    className="flex-1 min-h-[44px] py-2 px-3 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 flex items-center justify-center gap-1.5 transition-colors border border-slate-700"
+                    title="マージ済みJSONをクリップボードにコピー"
+                  >
+                    {copiedJson ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
+                    <span>{copiedJson ? 'コピー済' : 'JSONコピー'}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleReset}
+                    className="min-h-[44px] py-2 px-3 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-rose-950/60 text-rose-300 hover:text-rose-200 border border-slate-700 hover:border-rose-800/80 flex items-center justify-center gap-1.5 transition-colors"
+                    title="初期データに戻す"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5 text-rose-400" />
+                    <span>初期データに戻す</span>
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </section>

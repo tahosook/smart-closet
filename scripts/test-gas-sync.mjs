@@ -2461,4 +2461,109 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
   console.log('  ✅ ID prefix validation, switchDraftItemCategory, and draft store isolation verified');
 }
 
+// 21. 「覚えなくていい」クラウド同期画面 (GasSyncModal) およびバックアップ操作 (AiSyncView) の静的検証
+{
+  const gasSyncModalCode = fs.readFileSync(path.join(projectRoot, 'src/components/GasSyncModal.tsx'), 'utf-8');
+  const aiSyncViewCode = fs.readFileSync(path.join(projectRoot, 'src/components/AiSyncView.tsx'), 'utf-8');
+
+  // 【条件1検証】統合ボタン (handleUnifiedSync) が未送信フラグ (smart_closet_sync_dirty) を事前検査し、
+  // dirty 時は pushToGas() を先に実行し、成功後に pullFromGas() を実行する順序になっていること
+  assert.ok(
+    gasSyncModalCode.includes('handleUnifiedSync'),
+    'GasSyncModal must implement handleUnifiedSync'
+  );
+  assert.ok(
+    gasSyncModalCode.includes("localStorage.getItem('smart_closet_sync_dirty') === 'true'"),
+    'handleUnifiedSync must explicitly check smart_closet_sync_dirty'
+  );
+
+  const unifiedSyncStart = gasSyncModalCode.indexOf('const handleUnifiedSync = async');
+  const unifiedSyncEnd = gasSyncModalCode.indexOf('const handleClearImageCache = async', unifiedSyncStart);
+  assert.ok(unifiedSyncStart > 0 && unifiedSyncEnd > unifiedSyncStart, 'handleUnifiedSync block must exist');
+  const unifiedSyncFnStr = gasSyncModalCode.slice(unifiedSyncStart, unifiedSyncEnd);
+
+  const pushIndex = unifiedSyncFnStr.indexOf('pushToGas()');
+  const pullIndex = unifiedSyncFnStr.indexOf('pullFromGas()');
+  assert.ok(pushIndex > 0, 'handleUnifiedSync must call pushToGas() when dirty');
+  assert.ok(pullIndex > 0, 'handleUnifiedSync must call pullFromGas()');
+  assert.ok(pushIndex < pullIndex, 'pushToGas() must be called before pullFromGas() when local changes are pending');
+
+  // 【条件2検証】写真同期において handleSyncImages の安全装置がすべて維持されていること
+  assert.ok(
+    gasSyncModalCode.includes('getSyncedFolderId()'),
+    'GasSyncModal must call getSyncedFolderId to detect folder switch'
+  );
+  assert.ok(
+    gasSyncModalCode.includes('clearAllImages()'),
+    'GasSyncModal must call clearAllImages on folder switch with valid items'
+  );
+  assert.ok(
+    gasSyncModalCode.includes('CHUNK_SIZE = 6'),
+    'GasSyncModal must retain CHUNK_SIZE = 6'
+  );
+  assert.ok(
+    gasSyncModalCode.includes('pruneImages(validItemIds)'),
+    'GasSyncModal must run pruneImages with validItemIds'
+  );
+  assert.ok(
+    gasSyncModalCode.includes('window.confirm('),
+    'GasSyncModal must retain confirmation dialog for empty or rapid-decrease prune'
+  );
+  assert.ok(
+    gasSyncModalCode.includes('setSyncedFolderId(folderId)'),
+    'GasSyncModal must update syncedFolderId upon success'
+  );
+
+  // 表示専用画像フォルダID & 平易な日本語表現
+  assert.ok(
+    gasSyncModalCode.includes('readOnly') && gasSyncModalCode.includes('Google ドライブ画像フォルダ ID（表示専用）'),
+    'imageFolderId input must be readOnly and labeled as display-only'
+  );
+  assert.ok(
+    gasSyncModalCode.includes('今すぐ同期'),
+    'GasSyncModal must have unified "今すぐ同期" button'
+  );
+  assert.ok(
+    gasSyncModalCode.includes('シートから取り直す'),
+    'GasSyncModal must label manual pull as "シートから取り直す"'
+  );
+  assert.ok(
+    gasSyncModalCode.includes('端末の内容でシートを上書きする'),
+    'GasSyncModal must label manual push as "端末の内容でシートを上書きする"'
+  );
+  assert.ok(
+    gasSyncModalCode.includes('写真キャッシュ全消去'),
+    'GasSyncModal must retain "写真キャッシュ全消去" in danger zone'
+  );
+  assert.ok(
+    gasSyncModalCode.includes('smart_closet_valid_photo_ids'),
+    'GasSyncModal must track verified valid photo IDs from GAS sync to avoid false missing detection for silhouette items'
+  );
+  assert.equal(
+    gasSyncModalCode.includes('closetItemIds.some'),
+    false,
+    'GasSyncModal must NOT check closetData items directly for photo missing detection'
+  );
+  assert.ok(
+    gasSyncModalCode.includes('着分の写真を保存済み'),
+    'GasSyncModal must display verified fact "端末にN着分の写真を保存済み"'
+  );
+
+  // AiSyncView: バックアップ折りたたみ & 「初期データに戻す」文言の検証
+  assert.ok(
+    aiSyncViewCode.includes('isBackupOpen'),
+    'AiSyncView must have isBackupOpen collapsible state'
+  );
+  assert.ok(
+    aiSyncViewCode.includes('📦 バックアップ・復旧'),
+    'AiSyncView must have backup and restore collapsible section'
+  );
+  assert.ok(
+    aiSyncViewCode.includes('<span>初期データに戻す</span>'),
+    'AiSyncView must display explicit text label for reset button'
+  );
+
+  console.log('  ✅ Zero-memorization Cloud Sync & AiSyncView backup collapsible UI verified');
+}
+
 console.log('🎉 All GAS backend & sync logic tests passed successfully!');
