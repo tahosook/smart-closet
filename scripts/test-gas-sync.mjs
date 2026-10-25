@@ -2536,8 +2536,13 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
     'GasSyncModal must retain "写真キャッシュ全消去" in danger zone'
   );
   assert.ok(
-    gasSyncModalCode.includes('closetItemIds.some') || gasSyncModalCode.includes('hasMissingItems'),
-    'GasSyncModal must check for missing closet items against local keys'
+    gasSyncModalCode.includes('smart_closet_valid_photo_ids'),
+    'GasSyncModal must track verified valid photo IDs from GAS sync to avoid false missing detection for silhouette items'
+  );
+  assert.equal(
+    gasSyncModalCode.includes('closetItemIds.some'),
+    false,
+    'GasSyncModal must NOT check closetData items directly for photo missing detection'
   );
   assert.ok(
     gasSyncModalCode.includes('着分の写真を保存済み'),

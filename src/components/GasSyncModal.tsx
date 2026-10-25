@@ -51,7 +51,6 @@ export const GasSyncModal: React.FC<GasSyncModalProps> = ({ isOpen, onClose }) =
     pullFromGas,
     pushToGas,
     fetchBootstrapConfig,
-    closetData,
   } = useClosetStore();
 
   const [urlInput, setUrlInput] = useState(gasConfig.webAppUrl);
@@ -116,21 +115,31 @@ export const GasSyncModal: React.FC<GasSyncModalProps> = ({ isOpen, onClose }) =
       const remoteTs = gasConfig.imagesLastUpdatedAt || 0;
       const isFolderDifferent = Boolean(syncedFolder && syncedFolder !== targetFolder);
 
-      // ワードローブ全アイテムとローカルキーの差分を確認（部分欠落の検出）
-      const closetItemIds = closetData.items.map((i) => i.id);
-      const hasMissingItems = closetItemIds.some((id) => !keys.includes(id));
+      // GAS の同期プラン策定で確認された有効写真ID一覧があれば、その中でのローカル欠落を判定
+      // ※ シルエット表示の服（写真を持たないアイテム）が存在するため、closetData 全体との比較は行わない
+      let hasMissingValidItems = false;
+      try {
+        const rawValidIds = localStorage.getItem('smart_closet_valid_photo_ids');
+        if (rawValidIds) {
+          const validIds: string[] = JSON.parse(rawValidIds);
+          if (Array.isArray(validIds) && validIds.length > 0) {
+            hasMissingValidItems = validIds.some((id) => !keys.includes(id));
+          }
+        }
+      } catch {
+        // fallback to false
+      }
 
       const needsUpdate =
-        keys.length === 0 ||
         isFolderDifferent ||
-        hasMissingItems ||
-        (remoteTs > 0 && remoteTs > maxLocalTs);
+        hasMissingValidItems ||
+        (remoteTs > 0 && (keys.length === 0 || remoteTs > maxLocalTs));
 
       setHasPhotoUpdate(needsUpdate);
     } catch (e) {
       console.warn('Failed to inspect photo status', e);
     }
-  }, [gasConfig.imageFolderId, gasConfig.imagesLastUpdatedAt, closetData.items]);
+  }, [gasConfig.imageFolderId, gasConfig.imagesLastUpdatedAt]);
 
   useEffect(() => {
     if (isOpen) {
@@ -298,8 +307,13 @@ export const GasSyncModal: React.FC<GasSyncModalProps> = ({ isOpen, onClose }) =
         }
       }
 
-      // 4. 同期成功後に同期元フォルダ ID を保存
+      // 4. 同期成功後に同期元フォルダ ID と有効写真 ID 一覧を保存
       setSyncedFolderId(folderId);
+      try {
+        localStorage.setItem('smart_closet_valid_photo_ids', JSON.stringify(validItemIds));
+      } catch {
+        // quota ignore
+      }
 
       // 設定のローカル更新
       updateGasConfig({
@@ -420,6 +434,7 @@ export const GasSyncModal: React.FC<GasSyncModalProps> = ({ isOpen, onClose }) =
     }
     try {
       await clearAllImages();
+      localStorage.removeItem('smart_closet_valid_photo_ids');
       setImageSyncResult({
         type: 'success',
         text: '端末内の写真キャッシュを全消去しました。',
