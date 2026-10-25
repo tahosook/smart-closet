@@ -149,12 +149,20 @@ export const MatrixView: React.FC = () => {
         {(() => {
           const officeAcePants = pants.filter((p) => p.dressScore >= 3.5);
           const s1Item = shirts.find((s) => s.id === 'S1');
+          const isOfficePair = (shirt: ClosetItem, p: ClosetItem) => {
+            if (isNgPair(shirt.id, p.id).isNg) return false;
+            return (
+              shirt.officeRecommendIds.includes(p.id) ||
+              p.officeRecommendIds.includes(shirt.id)
+            );
+          };
+
           const s1CompatibleOfficePants = s1Item
-            ? officeAcePants.filter((p) => !isNgPair('S1', p.id).isNg)
+            ? officeAcePants.filter((p) => isOfficePair(s1Item, p))
             : [];
           const blackOfficeSlacks = pants.find((p) => p.name.includes('黒') && p.dressScore >= 3.5);
           const blackSlacksCompatibleShirts = blackOfficeSlacks
-            ? shirts.filter((s) => !isNgPair(s.id, blackOfficeSlacks.id).isNg)
+            ? shirts.filter((s) => isOfficePair(s, blackOfficeSlacks))
             : [];
           const isUniversalHub =
             Boolean(blackOfficeSlacks && blackSlacksCompatibleShirts.length === shirts.length);
