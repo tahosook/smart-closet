@@ -1,7 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import {
-  Sun,
-  Moon,
   Sparkles,
   Compass,
   Grid,
@@ -27,22 +25,12 @@ const AppShell: React.FC = () => {
   const [activeTab, setActiveTab] = useState<ActiveTab>('today');
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [isGasModalOpen, setIsGasModalOpen] = useState(false);
-  const [isDark, setIsDark] = useState(true);
 
   const { syncStatus } = useClosetStore();
 
   useEffect(() => {
     initStorage();
   }, []);
-
-  const toggleTheme = () => {
-    setIsDark(!isDark);
-    if (isDark) {
-      document.documentElement.classList.remove('dark');
-    } else {
-      document.documentElement.classList.add('dark');
-    }
-  };
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col justify-between selection:bg-blue-600 selection:text-white">
@@ -64,11 +52,11 @@ const AppShell: React.FC = () => {
             </div>
           </div>
 
-          <div className="flex items-center gap-1.5">
-            {/* Cloud Sync Status Button */}
+          <div className="flex items-center gap-2">
+            {/* Cloud Sync Status Button (min 44x44px tap target) */}
             <button
               onClick={() => setIsGasModalOpen(true)}
-              className="p-2 text-slate-300 hover:text-white rounded-xl bg-slate-800/80 hover:bg-slate-700 transition-colors border border-slate-700/60 relative"
+              className="min-w-[44px] min-h-[44px] p-2.5 text-slate-300 hover:text-white rounded-xl bg-slate-800/80 hover:bg-slate-700 transition-colors border border-slate-700/60 relative flex items-center justify-center"
               title="クラウド同期・スプレッドシート設定"
             >
               {syncStatus === 'syncing' ? (
@@ -88,22 +76,13 @@ const AppShell: React.FC = () => {
               )}
             </button>
 
-            {/* Wear History Button */}
+            {/* Wear History Button (min 44x44px tap target) */}
             <button
               onClick={() => setIsHistoryOpen(true)}
-              className="p-2 text-slate-300 hover:text-white rounded-xl bg-slate-800/80 hover:bg-slate-700 transition-colors border border-slate-700/60"
+              className="min-w-[44px] min-h-[44px] p-2.5 text-slate-300 hover:text-white rounded-xl bg-slate-800/80 hover:bg-slate-700 transition-colors border border-slate-700/60 flex items-center justify-center"
               title="着用履歴と冷却テスト"
             >
               <History className="w-4 h-4" />
-            </button>
-
-            {/* Theme Toggle Button */}
-            <button
-              onClick={toggleTheme}
-              className="p-2 text-slate-300 hover:text-white rounded-xl bg-slate-800/80 hover:bg-slate-700 transition-colors border border-slate-700/60"
-              title="テーマ切替"
-            >
-              {isDark ? <Sun className="w-4 h-4 text-amber-400" /> : <Moon className="w-4 h-4 text-blue-400" />}
             </button>
           </div>
         </div>

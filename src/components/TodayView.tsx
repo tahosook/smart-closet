@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useRef } from 'react';
+import React, { useState, useMemo, useRef, useCallback } from 'react';
 import {
   CheckCircle2,
   AlertTriangle,
@@ -75,31 +75,40 @@ export const TodayView: React.FC = () => {
     }, 3500);
   };
 
-  const handleWeatherLoaded = (data: WeatherData) => {
-    setSleeveCategory(data.recommendedCategory);
-    // If current selected shirt doesn't match weather, pick the first matching shirt
-    const isCurrentMatching = isShirtMatching(selectedShirtId, data.recommendedCategory);
-    if (!isCurrentMatching) {
-      const firstMatch = shirts.find((s) => isShirtMatching(s.id, data.recommendedCategory));
-      if (firstMatch) {
-        setSelectedShirtId(firstMatch.id);
+  const isShirtMatching = useCallback(
+    (shirtId: string, category: 'short' | 'seven' | 'long'): boolean => {
+      const s = itemMap.get(shirtId);
+      if (!s) return true;
+      const sleeve = s.seasonSleeve;
+      if (category === 'long') {
+        return sleeve.includes('長袖');
       }
-    }
-  };
+      if (category === 'seven') {
+        return sleeve.includes('七分袖') || sleeve.includes('長袖');
+      }
+      return sleeve.includes('半袖') || sleeve.includes('七分袖');
+    },
+    [itemMap]
+  );
 
-  function isShirtMatching(shirtId: string, category: 'short' | 'seven' | 'long'): boolean {
-    const s = itemMap.get(shirtId);
-    if (!s) return true;
-    const sleeve = s.seasonSleeve;
-    if (category === 'long') {
-      return sleeve.includes('長袖');
-    }
-    if (category === 'seven') {
-      return sleeve.includes('七分袖') || sleeve.includes('長袖');
-    }
-    // short
-    return sleeve.includes('半袖') || sleeve.includes('七分袖');
-  }
+  const handleWeatherLoaded = useCallback(
+    (data: WeatherData) => {
+      setSleeveCategory(data.recommendedCategory);
+      // 当日着用記録が既にある場合は、選んだシャツを上書きしない
+      if (todayRecord?.shirtId) {
+        return;
+      }
+      // If current selected shirt doesn't match weather, pick the first matching shirt
+      const isCurrentMatching = isShirtMatching(selectedShirtId, data.recommendedCategory);
+      if (!isCurrentMatching) {
+        const firstMatch = shirts.find((s) => isShirtMatching(s.id, data.recommendedCategory));
+        if (firstMatch) {
+          setSelectedShirtId(firstMatch.id);
+        }
+      }
+    },
+    [todayRecord, selectedShirtId, shirts, isShirtMatching]
+  );
 
   // Partition shirts by weather appropriateness
   const { matchingShirts, hiddenShirts } = useMemo(() => {
