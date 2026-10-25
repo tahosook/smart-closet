@@ -142,6 +142,50 @@ export interface BootstrapConfigResponse {
   error?: string;
 }
 
+// ----------------------------------------------------
+// Google ドライブ画像直接アップロード関連の型定義
+// ----------------------------------------------------
+
+export interface UploadImageRequest {
+  action: 'uploadImage';
+  token?: string;
+  itemId: string;
+  mimeType: string;
+  base64Data: string; // data URL または純粋な base64
+}
+
+export interface UploadImageResponse {
+  ok: boolean;
+  error?: string;
+  itemId?: string;
+  fileId?: string;
+  modifiedTime?: number;
+}
+
+// ----------------------------------------------------
+// ワードローブ分析・インサイト関連の型定義
+// ----------------------------------------------------
+
+export interface ItemCompatibilityStats {
+  item: ClosetItem;
+  officeRecommendIds: string[];
+  remoteRecommendIds: string[];
+  acceptableIds: string[];
+  ngIds: string[];
+  wifeNgIds: string[];
+  isBottleneck: boolean;
+  bottleneckReason?: string;
+}
+
+export interface WardrobeAnalysisResult {
+  shirtStats: ItemCompatibilityStats[];
+  pantsStats: ItemCompatibilityStats[];
+  bottleneckShirts: ItemCompatibilityStats[];
+  bottleneckPants: ItemCompatibilityStats[];
+  officeAcePants: ClosetItem[];
+}
+
+
 
 
 

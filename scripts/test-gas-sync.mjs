@@ -33,6 +33,10 @@ const {
   checkIsNgPair,
   getAffinityReason,
   calculateRecommendationsForShirt,
+  getNextSequentialId,
+  validateSingleClosetItem,
+  mergeSingleItemIntoClosetData,
+  analyzeWardrobeStats,
 } = closetDomain;
 
 console.log('🧪 Running GAS backend and sync logic tests...');
@@ -1883,6 +1887,201 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
   assert.equal(p8WifeNg.isWifeNg, true, 'isWifeNg flag must be true');
 
   console.log('  ✅ Domain logic & runtime schema validator unit tests verified');
+}
+
+// -------------------------------------------------------------
+// Test Case 18: 単一アイテム差分マージ＆ドメイン分析ロジック恒常テスト (Phase 1 恒常テスト)
+// -------------------------------------------------------------
+{
+  const rawCloset = JSON.parse(fs.readFileSync(path.join(projectRoot, 'src/data/closet.json'), 'utf-8'));
+
+  // 1. getNextSequentialId の検証
+  assert.equal(getNextSequentialId(rawCloset.items, 'shirt'), 'S10', 'Next shirt should be S10');
+  assert.equal(getNextSequentialId(rawCloset.items, 'pants'), 'P16', 'Next pants should be P16');
+
+  // 欠番や順序不同、空配列のケース
+  const disorderedItems = [
+    { id: 'S1', category: 'shirt' },
+    { id: 'S15', category: 'shirt' },
+    { id: 'S3', category: 'shirt' },
+  ];
+  assert.equal(getNextSequentialId(disorderedItems, 'shirt'), 'S16', 'Should handle disordered and gap IDs correctly');
+  assert.equal(getNextSequentialId([], 'shirt'), 'S1', 'Empty items should yield S1');
+  assert.equal(getNextSequentialId([], 'pants'), 'P1', 'Empty items should yield P1');
+
+  // 2. validateSingleClosetItem の境界ケース検証
+  const validP16 = {
+    id: 'P16',
+    category: 'pants',
+    name: '黒テーパードスラックス',
+    imageUrl: '/images/P16.jpg',
+    seasonSleeve: '通年',
+    dressScore: 4.5,
+    comfortScore: 4.0,
+    officeRecommendIds: ['S1', 'S2', 'S3'],
+    remoteRecommendIds: ['S4', 'S5'],
+    ngIds: ['S8'],
+    ngReason: '生成りワークシャツと黒スラックスはテイストが合わないため',
+    notes: '万能黒スラックス',
+  };
+
+  const validRes = validateSingleClosetItem(validP16, rawCloset);
+  assert.equal(validRes.valid, true, 'Valid single item must pass validation');
+  assert.ok(validRes.item && validRes.item.id === 'P16');
+
+  // 2a. 不正な基本フィールド
+  assert.equal(validateSingleClosetItem(null, rawCloset).valid, false);
+  assert.equal(validateSingleClosetItem({ ...validP16, id: 'P 16' }, rawCloset).valid, false, 'ID with space should fail');
+  assert.equal(validateSingleClosetItem({ ...validP16, category: 'jacket' }, rawCloset).valid, false, 'Invalid category should fail');
+  assert.equal(validateSingleClosetItem({ ...validP16, name: '' }, rawCloset).valid, false, 'Empty name should fail');
+  assert.equal(validateSingleClosetItem({ ...validP16, dressScore: 0.5 }, rawCloset).valid, false, 'Score below 1.0 should fail');
+  assert.equal(validateSingleClosetItem({ ...validP16, dressScore: 5.5 }, rawCloset).valid, false, 'Score above 5.0 should fail');
+
+  // 2b. 既存IDと異なるカテゴリでの上書き拒否（レビュー指摘対応: S1=shirt に対する S1=pants の拒否）
+  const crossCategoryItem = {
+    ...validP16,
+    id: 'S1', // 既存のシャツID
+    category: 'pants', // カテゴリがパンツ
+  };
+  const crossCategoryRes = validateSingleClosetItem(crossCategoryItem, rawCloset);
+  assert.equal(crossCategoryRes.valid, false, 'Importing item with same ID but different category must fail');
+  assert.ok(
+    crossCategoryRes.error && crossCategoryRes.error.includes('既にカテゴリ "shirt" として存在'),
+    'Error message must state category mismatch'
+  );
+
+  // 2c. 存在しない相手IDの参照
+  assert.equal(
+    validateSingleClosetItem({ ...validP16, officeRecommendIds: ['S999'] }, rawCloset).valid,
+    false,
+    'Non-existent target ID must fail'
+  );
+
+  // 2d. 同一カテゴリのID参照（パンツなのにパンツIDを参照）
+  assert.equal(
+    validateSingleClosetItem({ ...validP16, officeRecommendIds: ['P1'] }, rawCloset).valid,
+    false,
+    'Same category reference must fail'
+  );
+
+  // 2e. 推薦と NG の重複矛盾
+  assert.equal(
+    validateSingleClosetItem(
+      { ...validP16, officeRecommendIds: ['S1'], ngIds: ['S1'] },
+      rawCloset
+    ).valid,
+    false,
+    'Conflict between recommend and ngIds must fail'
+  );
+  assert.equal(
+    validateSingleClosetItem(
+      { ...validP16, remoteRecommendIds: ['S2'], ngIds: ['S2'] },
+      rawCloset
+    ).valid,
+    false,
+    'Conflict between remote recommend and ngIds must fail'
+  );
+
+  // 3. mergeSingleItemIntoClosetData の検証（不変性＆双方向更新）
+  // マージ前の既存アイテム同士の相性スナップショットを記録
+  const snapshotBefore = new Map();
+  for (const item of rawCloset.items) {
+    snapshotBefore.set(item.id, {
+      office: [...item.officeRecommendIds],
+      remote: [...item.remoteRecommendIds],
+      ng: [...item.ngIds],
+    });
+  }
+
+  const mergedCloset = mergeSingleItemIntoClosetData(rawCloset, validP16);
+  assert.equal(mergedCloset.items.length, rawCloset.items.length + 1, 'Total item count must increase by 1');
+  assert.ok(mergedCloset.items.some((i) => i.id === 'P16'), 'P16 must exist in merged items');
+
+  // 3a. 【最重要】既存の全ペア（S1〜S9 と P1〜P15 の間）の相性が一切変化していないことの厳密検証
+  for (const item of mergedCloset.items) {
+    if (item.id === 'P16') continue;
+    const prev = snapshotBefore.get(item.id);
+    assert.ok(prev, `Previous snapshot for ${item.id} must exist`);
+
+    if (item.category === 'pants') {
+      // 既存のパンツ同士・シャツに対する配列は P16 を含まず、かつ完全一致すること
+      assert.deepEqual(item.officeRecommendIds, prev.office, `Pants ${item.id} officeRecommendIds must not change`);
+      assert.deepEqual(item.remoteRecommendIds, prev.remote, `Pants ${item.id} remoteRecommendIds must not change`);
+      assert.deepEqual(item.ngIds, prev.ng, `Pants ${item.id} ngIds must not change`);
+    } else {
+      // シャツの場合、P16 以外の既存要素が完全に維持されていること
+      const officeWithoutP16 = item.officeRecommendIds.filter((id) => id !== 'P16');
+      const remoteWithoutP16 = item.remoteRecommendIds.filter((id) => id !== 'P16');
+      const ngWithoutP16 = item.ngIds.filter((id) => id !== 'P16');
+
+      assert.deepEqual(officeWithoutP16, prev.office, `Shirt ${item.id} existing office links must be intact`);
+      assert.deepEqual(remoteWithoutP16, prev.remote, `Shirt ${item.id} existing remote links must be intact`);
+      assert.deepEqual(ngWithoutP16, prev.ng, `Shirt ${item.id} existing ng links must be intact`);
+
+      // 3b. 双方向リンクの自動反映の正確性検証
+      if (validP16.officeRecommendIds.includes(item.id)) {
+        assert.ok(item.officeRecommendIds.includes('P16'), `Shirt ${item.id} must have P16 in officeRecommendIds`);
+      } else {
+        assert.equal(item.officeRecommendIds.includes('P16'), false, `Shirt ${item.id} must NOT have P16 in officeRecommendIds`);
+      }
+
+      if (validP16.remoteRecommendIds.includes(item.id)) {
+        assert.ok(item.remoteRecommendIds.includes('P16'), `Shirt ${item.id} must have P16 in remoteRecommendIds`);
+      } else {
+        assert.equal(item.remoteRecommendIds.includes('P16'), false, `Shirt ${item.id} must NOT have P16 in remoteRecommendIds`);
+      }
+
+      if (validP16.ngIds.includes(item.id)) {
+        assert.ok(item.ngIds.includes('P16'), `Shirt ${item.id} must have P16 in ngIds`);
+      } else {
+        assert.equal(item.ngIds.includes('P16'), false, `Shirt ${item.id} must NOT have P16 in ngIds`);
+      }
+    }
+  }
+
+  // 3c. マージ後データが既存の全体バリデーション (validateClosetDataSchema) を通過すること
+  const schemaValidation = validateClosetDataSchema(mergedCloset);
+  assert.equal(schemaValidation.valid, true, 'Merged closet data must pass validateClosetDataSchema without errors');
+
+  // 3d. 同一IDでの上書き更新検証（再マージ時）
+  const updatedP16 = {
+    ...validP16,
+    name: '黒テーパードスラックス（更新版）',
+    officeRecommendIds: ['S1'], // S2, S3 を外し S1 のみに変更
+    ngIds: ['S4'],              // S8 を外し S4 を NG に変更
+  };
+  const reMerged = mergeSingleItemIntoClosetData(mergedCloset, updatedP16);
+  assert.equal(reMerged.items.length, mergedCloset.items.length, 'Re-merging same ID must not increase item count');
+  const foundP16 = reMerged.items.find((i) => i.id === 'P16');
+  assert.equal(foundP16.name, '黒テーパードスラックス（更新版）');
+
+  const s2Item = reMerged.items.find((i) => i.id === 'S2');
+  const s4Item = reMerged.items.find((i) => i.id === 'S4');
+  const s8Item = reMerged.items.find((i) => i.id === 'S8');
+  assert.equal(s2Item.officeRecommendIds.includes('P16'), false, 'P16 should be removed from S2 officeRecommendIds after update');
+  assert.ok(s4Item.ngIds.includes('P16'), 'P16 should be added to S4 ngIds after update');
+  assert.equal(s8Item.ngIds.includes('P16'), false, 'P16 should be removed from S8 ngIds after update');
+
+  // 4. analyzeWardrobeStats の分析ロジック検証
+  const itemMap = new Map();
+  rawCloset.items.forEach((item) => itemMap.set(item.id, item));
+  const shirts = rawCloset.items.filter((item) => item.category === 'shirt');
+  const pants = rawCloset.items.filter((item) => item.category === 'pants');
+
+  const stats = analyzeWardrobeStats(shirts, pants, itemMap, []);
+  assert.equal(stats.shirtStats.length, shirts.length);
+  assert.equal(stats.pantsStats.length, pants.length);
+
+  // S1 (濃インディゴ) は出社相手が少ないためボトルネックとして検出されること
+  const s1Stat = stats.bottleneckShirts.find((s) => s.item.id === 'S1');
+  assert.ok(s1Stat, 'S1 must be detected as a bottleneck shirt');
+  assert.ok(s1Stat.bottleneckReason && s1Stat.bottleneckReason.length > 0);
+
+  // 出社エースパンツのリストに P8 や P3 が含まれること
+  assert.ok(stats.officeAcePants.some((p) => p.id === 'P8'));
+  assert.ok(stats.officeAcePants.some((p) => p.id === 'P3'));
+
+  console.log('  ✅ Single-item merge, sequential ID, validation & wardrobe analysis tests verified');
 }
 
 console.log('🎉 All GAS backend & sync logic tests passed successfully!');
