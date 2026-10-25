@@ -46,6 +46,47 @@ const PANTS_SLEEVE_PRESETS = [
   '秋冬',
 ];
 
+/**
+ * 貼り付けられた JSON テキストから単一アイテムオブジェクトを安全に抽出・パースするヘルパー
+ */
+function parseSingleItemJson(rawText: string): {
+  success: boolean;
+  item?: Partial<ClosetItem>;
+  error?: string;
+} {
+  const trimmed = rawText.trim();
+  if (!trimmed) {
+    return { success: false, error: 'JSONテキストを貼り付けてください。' };
+  }
+
+  let clean = trimmed;
+  if (clean.startsWith('```json')) {
+    clean = clean.replace(/^```json\s*/, '').replace(/\s*```$/, '');
+  } else if (clean.startsWith('```')) {
+    clean = clean.replace(/^```\s*/, '').replace(/\s*```$/, '');
+  }
+
+  try {
+    const parsed = JSON.parse(clean);
+    if (
+      parsed &&
+      typeof parsed === 'object' &&
+      !Array.isArray(parsed) &&
+      typeof parsed.id === 'string' &&
+      (parsed.category === 'shirt' || parsed.category === 'pants')
+    ) {
+      return { success: true, item: parsed };
+    }
+    return {
+      success: false,
+      error: '単一アイテムの形式（id と category: "shirt" | "pants"）を満たしていません。',
+    };
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : '構文エラー';
+    return { success: false, error: `JSON構文が不正または不完全です: ${msg}` };
+  }
+}
+
 export const AiSyncView: React.FC = () => {
   const {
     mergedClosetData,
@@ -149,41 +190,15 @@ export const AiSyncView: React.FC = () => {
     }
   };
 
-  // リアルタイムに JSON テキストを監視し、単一アイテム形式なら draftEditItem に反映
+  // リアルタイムに JSON テキストを監視し、有効な単一アイテムなら最新オブジェクトで同期。
+  // 不正・不完全または空入力になった場合は直ちに null にクリアして古いオブジェクトの残存・誤適用を防止（レビュー指摘対応）
   useEffect(() => {
-    const raw = jsonInput.trim();
-    if (!raw) {
+    const parseRes = parseSingleItemJson(jsonInput);
+    if (parseRes.success && parseRes.item) {
+      setDraftEditItem(parseRes.item);
+    } else {
       setDraftEditItem(null);
       setIsCategorySwitched(false);
-      return;
-    }
-
-    let clean = raw;
-    if (clean.startsWith('```json')) {
-      clean = clean.replace(/^```json\s*/, '').replace(/\s*```$/, '');
-    } else if (clean.startsWith('```')) {
-      clean = clean.replace(/^```\s*/, '').replace(/\s*```$/, '');
-    }
-
-    try {
-      const parsed = JSON.parse(clean);
-      if (
-        parsed &&
-        typeof parsed === 'object' &&
-        !Array.isArray(parsed) &&
-        typeof parsed.id === 'string' &&
-        (parsed.category === 'shirt' || parsed.category === 'pants')
-      ) {
-        setDraftEditItem((prev) => {
-          // 既に同一ID・同一カテゴリで編集中の場合は微修正内容を維持
-          if (prev && prev.id === parsed.id && prev.category === parsed.category) {
-            return prev;
-          }
-          return parsed;
-        });
-      }
-    } catch {
-      // 構文不完全時は無視（編集中）
     }
   }, [jsonInput]);
 
@@ -285,13 +300,15 @@ ${wifeNgSummary}
 7. **排他制約**: officeRecommendIds / remoteRecommendIds と ngIds に同一のIDを重複して含めないでください。相手カテゴリの現存IDのみを指定してください。
 
 ### 出力スキーマ厳密制約（新規1着分の単一JSONオブジェクトのみを出力すること）
-\`\`\`json
+${
+  manualCategory === 'shirt'
+    ? `\`\`\`json
 {
-  "id": "${manualCategory === 'pants' ? nextPantsId : nextShirtId}",
-  "category": "${manualCategory === 'pants' ? 'pants' : 'shirt'}",
-  "name": "写真から判定した名称",
-  "imageUrl": "/images/${manualCategory === 'pants' ? nextPantsId : nextShirtId}.jpg",
-  "seasonSleeve": "写真から判定した季節袖丈",
+  "id": "${nextShirtId}",
+  "category": "shirt",
+  "name": "${manualItemName.trim() || '写真から判定した名称'}",
+  "imageUrl": "/images/${nextShirtId}.jpg",
+  "seasonSleeve": "${manualSleeve || '写真から判定した季節袖丈'}",
   "dressScore": 4.0,
   "comfortScore": 4.0,
   "officeRecommendIds": [],
@@ -300,7 +317,46 @@ ${wifeNgSummary}
   "ngReason": "なし（またはNG理由）",
   "notes": "写真から読み取った素材感・シルエット・役割の簡潔なメモ"
 }
+\`\`\``
+    : manualCategory === 'pants'
+    ? `\`\`\`json
+{
+  "id": "${nextPantsId}",
+  "category": "pants",
+  "name": "${manualItemName.trim() || '写真から判定した名称'}",
+  "imageUrl": "/images/${nextPantsId}.jpg",
+  "seasonSleeve": "${manualSleeve || '写真から判定した季節袖丈'}",
+  "dressScore": 4.0,
+  "comfortScore": 4.0,
+  "officeRecommendIds": [],
+  "remoteRecommendIds": [],
+  "ngIds": [],
+  "ngReason": "なし（またはNG理由）",
+  "notes": "写真から読み取った素材感・シルエット・役割の簡潔なメモ"
+}
+\`\`\``
+    : `\`\`\`json
+{
+  "id": "写真からシャツと判定した場合は \\"${nextShirtId}\\"、パンツと判定した場合は \\"${nextPantsId}\\"",
+  "category": "写真から判定した種別（\\"shirt\\" または \\"pants\\"）",
+  "name": "写真の視覚的特徴（色・柄・素材感）から命名した適切な日本語名称",
+  "imageUrl": "写真からシャツと判定した場合は \\"/images/${nextShirtId}.jpg\\"、パンツと判定した場合は \\"/images/${nextPantsId}.jpg\\"",
+  "seasonSleeve": "写真から判定した季節・袖丈（シャツ: 長袖・通年 / 春夏秋・七分袖 / 春夏・半袖 / 秋冬・長袖、パンツ: 通年 / 春夏秋 / 春夏 / 秋冬）",
+  "dressScore": 4.0,
+  "comfortScore": 4.0,
+  "officeRecommendIds": ["相手カテゴリの現存ID"],
+  "remoteRecommendIds": ["相手カテゴリの現存ID"],
+  "ngIds": ["相手カテゴリの現存ID"],
+  "ngReason": "なし（またはNG理由）",
+  "notes": "写真から読み取った素材感・シルエット・役割の簡潔なメモ"
+}
 \`\`\`
+
+※重要制約（アプリの自動検証必須条件）:
+- シャツ（shirt）と判定した場合は、必ず id: "${nextShirtId}"、imageUrl: "/images/${nextShirtId}.jpg" としてください。
+- パンツ（pants）と判定した場合は、必ず id: "${nextPantsId}"、imageUrl: "/images/${nextPantsId}.jpg" としてください。
+- category と id の接頭辞（S / P）の不一致は、アプリのデータ保護検証によって自動で拒否されます。`
+}
 
 出力形式: 説明文や前置きは一切含めず、上記スキーマを満たす単一の有効なJSONコードブロック（\`\`\`json ... \`\`\`）のみを出力してください。`;
 
@@ -312,35 +368,17 @@ ${wifeNgSummary}
   // Step 3: JSON適用・自動マージ・写真の本保存・下書き消去・GASアップロード連動
   const handleApplyJson = async () => {
     setImportStatus(null);
-    let targetObj: Partial<ClosetItem> | null = draftEditItem;
-
-    if (!targetObj) {
-      let raw = jsonInput.trim();
-      if (!raw) {
-        setImportStatus({
-          type: 'error',
-          message: 'JSONテキストを貼り付けるか、確認パネルでアイテムを設定してください。',
-        });
-        return;
-      }
-      if (raw.startsWith('```json')) {
-        raw = raw.replace(/^```json\s*/, '').replace(/\s*```$/, '');
-      } else if (raw.startsWith('```')) {
-        raw = raw.replace(/^```\s*/, '').replace(/\s*```$/, '');
-      }
-      try {
-        targetObj = JSON.parse(raw);
-      } catch (e: unknown) {
-        const errMsg = e instanceof Error ? e.message : '形式不正';
-        setImportStatus({
-          type: 'error',
-          message: `JSONのパースに失敗しました: ${errMsg}`,
-        });
-        return;
-      }
+    // 最新の入力テキストをパースし、不完全・構文エラーの場合は適用をブロック（古い draftEditItem の誤適用防止）
+    const parseRes = parseSingleItemJson(jsonInput);
+    if (!parseRes.success || !parseRes.item) {
+      setImportStatus({
+        type: 'error',
+        message: parseRes.error || '有効な単一アイテムのJSONテキストを貼り付けてください。',
+      });
+      return;
     }
 
-    const jsonString = JSON.stringify(targetObj);
+    const jsonString = JSON.stringify(parseRes.item);
     const res = importCustomData(jsonString);
 
     if (res.success) {
