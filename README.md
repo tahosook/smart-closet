@@ -121,10 +121,13 @@ Pixel 9a と Mac mini の間で着用履歴・奥様NGを完全自動同期し�
    - **アクセスできるユーザー:** 全員 (`ANYONE_ANONYMOUS`)
 4. 発行された **「ウェブアプリ URL」** をコピーします。
 
-### ステップ 6: アプリへの登録
-1. Smart Closet アプリのヘッダーにある **雲アイコン（クラウド同期）** をタップします。
-2. コピーしたウェブアプリ URL を貼り付け、シークレット合言葉がステップ 4 と一致していることを確認して「設定を保存」します。
-3. 以後、Pixel 9a や Mac mini で操作するたびにバックグラウンドで自動同期されます（オフライン時もローカル保存され、接続復帰時やアプリ画面復帰時に自動同期）。
+### ステップ 6: アプリへの登録（自動ブートストラップまたは手動登録）
+- **Cloudflare Pages 本番環境（推奨）:**
+  Cloudflare Access でログイン後、アプリを開くだけで `/api/bootstrap-config` から自動的に GAS URL と合言葉がブートストラップされ、初回自動同期で `meta_config` の画像フォルダ ID も取得されます（手入力不要）。
+- **ローカル開発環境 (`npm run dev`) または手動設定時:**
+  1. Smart Closet アプリのヘッダーにある **雲アイコン（クラウド同期）** をタップします。
+  2. コピーしたウェブアプリ URL を貼り付け、シークレット合言葉がステップ 4 と一致していることを確認して「設定を保存」します。
+  3. 以後、Pixel 9a や Mac mini で操作するたびにバックグラウンドで自動同期されます（オフライン時もローカル保存され、接続復帰時やアプリ画面復帰時に自動同期）。
 
 ### ステップ 7: 写真同期用 Google ドライブフォルダの設定（任意・写真同期利用時）
 1. Google ドライブで服の写真を格納する非公開フォルダ（例: `SmartCloset_Photos`）を作成します。
@@ -150,37 +153,29 @@ Pixel 9a と Mac mini の間で着用履歴・奥様NGを完全自動同期し�
 
 ---
 
-## 4. GitHub Pages デプロイ（一時的プレビュー・スマホ確認用）
+## 4. Cloudflare Pages 本番運用 & 自動ブートストラップ
 
-手元のスマホ（Google Pixel 9a 等）で即座に実機動作を確認するための構成です。
+Smart Closet は **Cloudflare Pages**（`https://smart-closet-djw.pages.dev`）へ移行し、**Cloudflare Access（Google ログイン認証・セッション期間1か月）** の背後で安全に稼働しています（旧 GitHub Pages は公開停止・Unpublish 済み）。
 
-1. **GitHub リポジトリ設定 (初回のみ):**
-   - GitHubリポジトリ（`tahosook/smart-closet`）の **Settings** > **Pages** を開く。
-   - **Build and deployment** > **Source** を **「GitHub Actions」** に設定する。
-2. **自動デプロイ:**
-   - `main` ブランチにプッシュすると、`.github/workflows/deploy.yml` が自動起動し、完全検証（データチェック＋型チェック）を経て GitHub Pages にデプロイされます。
-   - デプロイ先URL: `https://tahosook.github.io/smart-closet/`
-3. **スマホ実機での確認方法:**
-   - スマホの Chrome（または Safari）で上記URLを開く。
-   - メニューから **「ホーム画面に追加」** を選択すると、独立したPWAアプリ（スタンドアロン起動）として快適に使用できます。
+### 自動ブートストラップの仕組み
+Cloudflare Access で認証されたユーザーに対して、同一オリジンの Pages Function（`/api/bootstrap-config`）が以下の安全策のもとで同期設定を自動配布します：
+1. **成果物へのシークレット非混入:** `GAS_WEB_APP_URL` と `GAS_SECRET_TOKEN` は Cloudflare Pages の Production Secret（暗号化変数）としてのみ保持され、ビルド成果物（`dist/`）や公開 Git には一切含まれません。
+2. **多層防御:** `Cf-Access-Authenticated-User-Email` ヘッダーと `ALLOWED_EMAILS`（`tahosook@gmail.com` 等）の照合を必須検証（Fail-Closed）。未登録の Preview 環境では 404 を返し、静かに手入力へフォールバックします。
+3. **サーバー正本整合:** 写真フォルダ ID（`imageFolderId`）はスプレッドシートの `meta_config` シートを唯一の正本とし、ブートストラップ直後の初回同期（Pull）で自動セットされます。
 
-※ 将来本格運用（Cloudflare Pages 等）に移行する際は、環境変数 `VITE_BASE_PATH=/` を指定するか `vite.config.ts` を戻すだけでルート配信に切り替え可能です。
+### シークレット合言葉 (`secretToken`) のローテーション手順
+合言葉を変更（ローテーション）する場合は、保管場所である **以下の2か所を同じ新しい値に更新** します：
+1. **スプレッドシート `meta_config`:** `secretToken` 行の値を新しい合言葉に書き換える。
+2. **Cloudflare Pages Production Secret:** Cloudflare Dashboard > Workers & Pages > `smart-closet` > Settings > Variables and Secrets で Production の `GAS_SECRET_TOKEN` を更新し、**Deployments から再デプロイ（Retry deployment）** を実行する。
+3. **端末への反映:** アプリの雲アイコンを開き、「クラウドから設定を自動取得」ボタンをタップする。
 
----
-
-## 4. 本格運用向けインフラ構成（将来検討）
-
-### Cloudflare Pages
-* **Framework preset:** `Vite`
-* **Build command:** `npm run build`
-* **Build output directory:** `dist`
-* **Node.js version:** `20` (またはそれ以降)
-* **セキュリティ:** 個人利用のため、Cloudflare Zero Trust (Access) を設定し、本人の Google アカウントのみアクセス許可することを推奨。
+*※ インフラの詳細構成、Google Cloud OAuth 設定、および将来の家族追加手順は [docs/OPERATIONS.md](./docs/OPERATIONS.md) を参照してください。*
 
 ---
 
 ## 5. ドキュメント一覧
 
 - **[AGENTS.md](./AGENTS.md):** AIコーディングエージェント（Antigravity等）向けの開発憲法・禁止事項・DoD。
+- **[docs/OPERATIONS.md](./docs/OPERATIONS.md):** インフラ構成・接続関係・Cloudflare Zero Trust / OAuth 設定実績・運用ランブック。
 - **[docs/SPECIFICATION.md](./docs/SPECIFICATION.md):** 画面仕様・レスポンシブ要件・データモデル・推薦ロジック詳細定義書。
 - **[docs/STYLING_RULES.md](./docs/STYLING_RULES.md):** 40代男性の鉄壁3原則（配色・柄・TPO）・初期24着偏り分析・買い足し指針。

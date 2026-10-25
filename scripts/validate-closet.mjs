@@ -120,11 +120,13 @@ for (const item of data.items) {
   }
 }
 
-// 3. Check for escape hatches in src/
+// 3. Check for escape hatches in src/ and functions/
 const srcDir = path.join(projectRoot, 'src');
+const functionsDir = path.join(projectRoot, 'functions');
 const escapeHatchRegex = /@ts-ignore|@ts-nocheck|eslint-disable/;
 
 function scanDirForEscapeHatches(dir) {
+  if (!fs.existsSync(dir)) return;
   const entries = fs.readdirSync(dir, { withFileTypes: true });
   for (const entry of entries) {
     const fullPath = path.join(dir, entry.name);
@@ -146,6 +148,50 @@ function scanDirForEscapeHatches(dir) {
 if (fs.existsSync(srcDir)) {
   scanDirForEscapeHatches(srcDir);
 }
+if (fs.existsSync(functionsDir)) {
+  scanDirForEscapeHatches(functionsDir);
+}
+
+// 4. Secret Guard: Check that no actual secrets are committed in source code or docs
+// Allowed placeholders: __SMART_CLOSET_SECRET_TOKEN__, https://script.google.com/macros/s/.../exec
+const realGasUrlRegex = /https:\/\/script\.google\.com\/macros\/s\/[A-Za-z0-9_-]{20,}\/exec/;
+const realSecretTokenRegex = /sc_[0-9a-f]{32}/;
+const realGoogleOAuthClientSecretRegex = /GOCSPX-[A-Za-z0-9_-]{20,}/;
+
+function scanFilesForSecrets(targetPaths) {
+  for (const targetPath of targetPaths) {
+    if (!fs.existsSync(targetPath)) continue;
+    const stat = fs.statSync(targetPath);
+    if (stat.isDirectory()) {
+      const entries = fs.readdirSync(targetPath, { withFileTypes: true });
+      for (const entry of entries) {
+        if (entry.name === 'node_modules' || entry.name === 'dist' || entry.name === '.git') continue;
+        scanFilesForSecrets([path.join(targetPath, entry.name)]);
+      }
+    } else if (/\.(ts|tsx|js|jsx|mjs|json|md|html|yml|yaml)$/.test(targetPath)) {
+      const content = fs.readFileSync(targetPath, 'utf-8');
+      const relPath = path.relative(projectRoot, targetPath);
+
+      if (realGasUrlRegex.test(content)) {
+        errors.push(`[Secret Guard] Forbidden hardcoded real GAS URL found in ${relPath}. Secrets must be stored in Cloudflare Pages Secret or meta_config, not committed to repository.`);
+      }
+      if (realSecretTokenRegex.test(content)) {
+        errors.push(`[Secret Guard] Forbidden real secret token (sc_...) found in ${relPath}. Tokens must be stored in Cloudflare Pages Secret or meta_config, not committed to repository.`);
+      }
+      if (realGoogleOAuthClientSecretRegex.test(content)) {
+        errors.push(`[Secret Guard] Forbidden Google OAuth Client Secret (GOCSPX-...) found in ${relPath}. OAuth credentials must never be committed to repository.`);
+      }
+    }
+  }
+}
+
+scanFilesForSecrets([
+  path.join(projectRoot, 'src'),
+  path.join(projectRoot, 'functions'),
+  path.join(projectRoot, 'docs'),
+  path.join(projectRoot, 'README.md'),
+  path.join(projectRoot, 'AGENTS.md'),
+]);
 
 if (warnings.length > 0) {
   console.log(`⚠️  ${warnings.length} warning(s):`);

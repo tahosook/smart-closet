@@ -11,6 +11,7 @@ import {
   GasSyncPayload,
   GasSyncResponse,
   SyncTombstones,
+  BootstrapConfigResponse,
 } from '../types/closet';
 import defaultClosetData from '../data/closet.json';
 import {
@@ -80,6 +81,7 @@ export interface ClosetStoreContextType {
   updateGasConfig: (newConfig: Partial<GasSyncConfig>) => void;
   pullFromGas: () => Promise<boolean>;
   pushToGas: () => Promise<boolean>;
+  fetchBootstrapConfig: (options?: { onlyFillMissing?: boolean }) => Promise<boolean>;
 }
 
 const ClosetContext = createContext<ClosetStoreContextType | null>(null);
@@ -134,7 +136,8 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         if (parsed && typeof parsed === 'object') {
           return {
             ...parsed,
-            secretToken: parsed.secretToken || generateSecretToken(),
+            webAppUrl: typeof parsed.webAppUrl === 'string' ? parsed.webAppUrl : '',
+            secretToken: typeof parsed.secretToken === 'string' ? parsed.secretToken : '',
           };
         }
       }
@@ -143,7 +146,7 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }
     return {
       webAppUrl: '',
-      secretToken: generateSecretToken(),
+      secretToken: '',
       autoSync: true,
       lastSyncedAt: undefined,
     };
@@ -730,6 +733,63 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }
   }, [pushToGas]);
 
+  const fetchBootstrapConfig = useCallback(
+    async (options?: { onlyFillMissing?: boolean }): Promise<boolean> => {
+      const onlyFillMissing = options?.onlyFillMissing ?? false;
+      try {
+        const res = await fetch('/api/bootstrap-config', {
+          method: 'GET',
+          credentials: 'same-origin',
+          headers: {
+            Accept: 'application/json',
+          },
+          cache: 'no-store',
+        });
+        const contentType = res.headers.get('content-type') || '';
+        if (!res.ok || !contentType.includes('application/json')) {
+          return false;
+        }
+        const data: BootstrapConfigResponse = await res.json();
+        if (!data.ok || !data.webAppUrl || !data.secretToken) {
+          return false;
+        }
+
+        setGasConfig((prev) => {
+          // URLと合言葉は対（ペア）として機能するため、片方でも欠けている場合、または手動再取得時は両方をクラウド値で置き換える
+          // （旧バージョン等で空URL＋ローカル自動生成トークンが残っていた場合に不一致で認証エラーになるのを防止）
+          const isPairIncomplete = !prev.webAppUrl.trim() || !prev.secretToken?.trim();
+          const shouldReplace = !onlyFillMissing || isPairIncomplete;
+          const nextUrl = shouldReplace ? data.webAppUrl! : prev.webAppUrl;
+          const nextToken = shouldReplace ? data.secretToken! : (prev.secretToken ?? '');
+
+          const updated: GasSyncConfig = {
+            ...prev,
+            webAppUrl: nextUrl,
+            secretToken: nextToken,
+          };
+          localStorage.setItem(STORAGE_KEYS.GAS_CONFIG, JSON.stringify(updated));
+          stateRef.current.gasConfig = updated;
+          return updated;
+        });
+
+        setSyncStatus('idle');
+        return true;
+      } catch (err) {
+        // 静かにフォールバック（手動入力を妨げない）
+        return false;
+      }
+    },
+    []
+  );
+
+  // 初回マウント時: webAppUrl または secretToken のどちらかが空の場合に自動ブートストラップ実行
+  useEffect(() => {
+    const currentCfg = stateRef.current.gasConfig;
+    if (!currentCfg.webAppUrl.trim() || !currentCfg.secretToken?.trim()) {
+      fetchBootstrapConfig({ onlyFillMissing: true });
+    }
+  }, [fetchBootstrapConfig]);
+
   // Initial sync on app start, reconnect listener, and visibilitychange listener (with 30s throttle)
   useEffect(() => {
     if (!gasConfig.webAppUrl) {
@@ -1004,6 +1064,7 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     updateGasConfig,
     pullFromGas,
     pushToGas,
+    fetchBootstrapConfig,
   };
 
   return <ClosetContext.Provider value={contextValue}>{children}</ClosetContext.Provider>;
