@@ -2,6 +2,10 @@
 
 毎朝1秒で奥様からのダメ出しを完全回避し、その日の服が決まる自分専用スマートクローゼットPWA。
 
+- 🌐 **本番URL:** [https://smart-closet-djw.pages.dev](https://smart-closet-djw.pages.dev)
+- 🔒 **セキュリティ:** Cloudflare Access（Google ログイン認証 / セッション1か月）で保護
+- 📱 **対応環境:** Google Pixel 9a（PWAインストール対応）/ Mac mini（デスクトップ2ペイン）
+
 ---
 
 ## 1. 開発・検証・ビルド手順
@@ -13,8 +17,11 @@ npm install
 # ローカル開発サーバー起動 (Mac mini での確認用)
 npm run dev
 
-# データ整合性 + 型チェック + 本番ビルドの一括完全検証（DoD基準）
+# データ整合性 + GAS同期テスト + 型チェック + 本番ビルドの一括完全検証（DoD基準）
 npm run check
+
+# GAS バックエンド・同期ロジック・ドメイン単体テスト単体実行
+npm run test-sync
 
 # 本番ビルド (dist/ 出力)
 npm run build
@@ -29,19 +36,22 @@ npm run validate-data
 
 服の写真は **Google ドライブの非公開フォルダ（例: `SmartCloset_Photos`）** で管理します（パブリックな Git リポジトリには服の写真を一切コミットしません）。
 
-### パターンA: Google AI Pro（Gemini）手動連携フロー
-1. 新しい服の写真を撮影し、次の連番ID（シャツなら `S10.jpg`、パンツなら `P16.jpg`）にリネームして、Google ドライブの非公開フォルダ（`SmartCloset_Photos`）にアップロードする。
-2. アプリの **「服追加・AI」タブ** を開き、新アイテムのカテゴリ・名前・特徴メモを入力して **［📋 Gemini相談用プロンプト＆データをコピー］** を押す（奥様NGマージ済みの最新データと `docs/STYLING_RULES.md` 準拠の指示文がコピーされます）。
+### パターンA: アプリ画面（AIおまかせ登録）＋ Gemini 連携フロー
+1. アプリの **「服追加・AI」タブ** を開き、新しい服の写真を選択または撮影する。
+   - 写真は自動で圧縮・リサイズされ、専用下書き枠（`smart_closet_draft_db`）に保存されます（Gemini アプリ往復等でブラウザが再読み込みされても自動復元）。
+2. 任意の1行補足メモ（素材感、ストレッチ等）を入力し、**［📋 Gemini相談用プロンプトをコピー］** を押す（奥様NGマージ済みの最新データと `docs/STYLING_RULES.md` 準拠の指示文がコピーされます）。
 3. Google AI Pro（Gemini）を開き、コピーしたプロンプトと写真を送信する。
-4. Geminiから出力されたJSONをコピーし、アプリの「JSONを貼り付けて適用」で動作確認する。
-5. 画面上の **［JSON保存］** を押してダウンロードした `closet.json` を `src/data/closet.json` に上書き保存する。
-6. `npm run check` を実行してエラー0件を確認し、Gitコミット＆プッシュする。
-7. アプリの雲アイコン（クラウド同期）から **［写真を今すぐ同期］** をタップして、端末の IndexedDB に新しい服の写真を取り込む。
+4. Gemini から返ってきた1着分の JSON をアプリの入力欄に貼り付け、インライン確認パネルで内容を確認する。
+5. **［💾 JSONを適用して自動マージ・保存］** をタップする。
+   - 服データがローカルに保存されると同時に、写真も確定ID（`S10` や `P16`）で IndexedDB に本保存され、GAS 連携済みの場合は Google ドライブへ `{ID}.jpg` として自動アップロードされます。
+6. Git の正本（`src/data/closet.json`）にも永続化する場合は、「📦 バックアップ・復旧」アコーディオンから **［JSON保存］** でダウンロードし、リポジトリの `src/data/closet.json` に上書きしてコミット＆プッシュする。
+
+*※ 写真を手動で Google ドライブフォルダにアップロードした場合は、アプリの雲アイコンから［写真を今すぐ同期］をタップして取り込むことも可能です。*
 
 ### パターンB: Antigravity AI エージェントによる追加
 1. 新しい服の写真を Google ドライブの非公開フォルダに保存（またはチャットに添付）する。
 2. Antigravity チャットで「P16（黒スラックス）を追加して」と指示する。
-3. エージェントが `closet.json` の相性ルール計算・更新、`npm run check` の検証を実行します。
+3. エージェントが [.agents/skills/manage-wardrobe/SKILL.md](.agents/skills/manage-wardrobe/SKILL.md) および `docs/STYLING_RULES.md` に従い `src/data/closet.json` の相性ルール計算・更新、`npm run check` の検証を実行します。
 4. アプリ側でクラウド同期（写真同期）を実行して端末に取り込みます。
 
 ---
@@ -163,19 +173,14 @@ Cloudflare Access で認証されたユーザーに対して、同一オリジ�
 2. **多層防御:** `Cf-Access-Authenticated-User-Email` ヘッダーと `ALLOWED_EMAILS`（`tahosook@gmail.com` 等）の照合を必須検証（Fail-Closed）。未登録の Preview 環境では 404 を返し、静かに手入力へフォールバックします。
 3. **サーバー正本整合:** 写真フォルダ ID（`imageFolderId`）はスプレッドシートの `meta_config` シートを唯一の正本とし、ブートストラップ直後の初回同期（Pull）で自動セットされます。
 
-### シークレット合言葉 (`secretToken`) のローテーション手順
-合言葉を変更（ローテーション）する場合は、保管場所である **以下の2か所を同じ新しい値に更新** します：
-1. **スプレッドシート `meta_config`:** `secretToken` 行の値を新しい合言葉に書き換える。
-2. **Cloudflare Pages Production Secret:** Cloudflare Dashboard > Workers & Pages > `smart-closet` > Settings > Variables and Secrets で Production の `GAS_SECRET_TOKEN` を更新し、**Deployments から再デプロイ（Retry deployment）** を実行する。
-3. **端末への反映:** アプリの雲アイコンを開き、「クラウドから設定を自動取得」ボタンをタップする。
-
-*※ インフラの詳細構成、Google Cloud OAuth 設定、および将来の家族追加手順は [docs/OPERATIONS.md](./docs/OPERATIONS.md) を参照してください。*
+### シークレット合言葉 (`secretToken`) のローテーション・家族追加
+合言葉ローテーションや家族追加などの運用手順は、正本である [docs/OPERATIONS.md](docs/OPERATIONS.md)（4.1 および 4.2）を参照してください。
 
 ---
 
 ## 5. ドキュメント一覧
 
-- **[AGENTS.md](./AGENTS.md):** AIコーディングエージェント（Antigravity等）向けの開発憲法・禁止事項・DoD。
-- **[docs/OPERATIONS.md](./docs/OPERATIONS.md):** インフラ構成・接続関係・Cloudflare Zero Trust / OAuth 設定実績・運用ランブック。
-- **[docs/SPECIFICATION.md](./docs/SPECIFICATION.md):** 画面仕様・レスポンシブ要件・データモデル・推薦ロジック詳細定義書。
-- **[docs/STYLING_RULES.md](./docs/STYLING_RULES.md):** 40代男性の鉄壁3原則（配色・柄・TPO）・初期24着偏り分析・買い足し指針。
+- **[AGENTS.md](AGENTS.md):** AIコーディングエージェント（Antigravity等）向けの開発憲法・禁止事項・DoD。
+- **[docs/OPERATIONS.md](docs/OPERATIONS.md):** インフラ構成・接続関係・Cloudflare Zero Trust / OAuth 設定実績・運用ランブック。
+- **[docs/SPECIFICATION.md](docs/SPECIFICATION.md):** 画面仕様・レスポンシブ要件・データモデル・推薦ロジック詳細定義書。
+- **[docs/STYLING_RULES.md](docs/STYLING_RULES.md):** 40代男性の鉄壁3原則（配色・柄・TPO）・初期24着偏り分析・買い足し指針。
