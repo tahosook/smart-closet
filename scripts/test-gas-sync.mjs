@@ -236,6 +236,12 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
     },
     Utilities: {
       base64Encode: (bytes) => Buffer.from(bytes || '').toString('base64'),
+      base64Decode: (str) => Buffer.from(str || '', 'base64'),
+      newBlob: (bytes, contentType, name) => ({
+        getBytes: () => bytes,
+        getContentType: () => contentType,
+        getName: () => name,
+      }),
     },
     ScriptApp: {
       getOAuthToken: () => 'mock-oauth-token',
@@ -246,11 +252,21 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
       },
     },
     DriveApp: {
-      getFolderById: () => ({
-        getName: () => 'MockFolder',
+      getFolderById: (folderId) => ({
+        getName: () => 'MockFolder_' + folderId,
+        getId: () => folderId,
         getFiles: () => ({
           hasNext: () => false,
           next: () => null,
+        }),
+        getFilesByName: (fileName) => ({
+          hasNext: () => false,
+          next: () => null,
+        }),
+        createFile: (blob) => ({
+          getId: () => 'created_file_id',
+          getName: () => blob.getName(),
+          getLastUpdated: () => new Date(),
         }),
       }),
       getFileById: () => ({
@@ -2082,6 +2098,169 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
   assert.ok(stats.officeAcePants.some((p) => p.id === 'P3'));
 
   console.log('  ✅ Single-item merge, sequential ID, validation & wardrobe analysis tests verified');
+}
+
+// -------------------------------------------------------------
+// Test Case 19: uploadImage の Fail-Closed 認証・正本フォルダ強制・ファイル更新テスト (Phase 2 恒常テスト)
+// -------------------------------------------------------------
+{
+  const correctToken = 'upload-secret-token-777';
+  const { ss, context } = createGasEnvironment(correctToken);
+  vm.runInContext('setupSpreadsheet()', context);
+
+  // 1. 【条件1検証】Fail-Closed 認証: トークンなし、または誤ったトークンは拒否されること
+  const unauthUploadReq = {
+    postData: {
+      contents: JSON.stringify({
+        action: 'uploadImage',
+        itemId: 'P16',
+        base64Data: Buffer.from('fake-image-bytes').toString('base64'),
+      }),
+    },
+  };
+  context.mockUnauthUpload = unauthUploadReq;
+  const unauthRes = JSON.parse(vm.runInContext('doPost(mockUnauthUpload).getContent()', context));
+  assert.equal(unauthRes.ok, false, 'Unauthenticated uploadImage request must be rejected');
+  assert.match(unauthRes.error, /認証エラー/, 'Must return authentication error');
+
+  const wrongTokenReq = {
+    postData: {
+      contents: JSON.stringify({
+        action: 'uploadImage',
+        token: 'wrong-token',
+        itemId: 'P16',
+        base64Data: Buffer.from('fake-image-bytes').toString('base64'),
+      }),
+    },
+  };
+  context.mockWrongToken = wrongTokenReq;
+  const wrongRes = JSON.parse(vm.runInContext('doPost(mockWrongToken).getContent()', context));
+  assert.equal(wrongRes.ok, false, 'Wrong token must be rejected');
+
+  // 2. 【条件2検証】保存先フォルダは meta_config の正本のみを使用:
+  // (a) meta_config に未設定の場合、リクエストに imageFolderId を含めても拒否されること
+  const noConfigFolderReq = {
+    postData: {
+      contents: JSON.stringify({
+        action: 'uploadImage',
+        token: correctToken,
+        imageFolderId: 'attacker-folder-id', // リクエストの指定
+        itemId: 'P16',
+        base64Data: Buffer.from('fake-image-bytes').toString('base64'),
+      }),
+    },
+  };
+  context.mockNoConfigFolder = noConfigFolderReq;
+  const noConfigFolderRes = JSON.parse(vm.runInContext('doPost(mockNoConfigFolder).getContent()', context));
+  assert.equal(noConfigFolderRes.ok, false, 'Must fail when meta_config does not have imageFolderId');
+  assert.ok(noConfigFolderRes.error.includes('画像フォルダ ID が未設定'), 'Error message must state missing config');
+
+  // (b) meta_config に正本を設定した場合、リクエストに別フォルダを指定しても無視され、正本フォルダにのみ保存されること
+  const serverFolderSSOT = 'folder-ssot-strictly-used';
+  const metaSheet = ss.getSheetByName('meta_config');
+  metaSheet.appendRow(['imageFolderId', serverFolderSSOT, new Date().toISOString()]);
+
+  let requestedFolderId = '';
+  let createdFileName = '';
+  let trashedFilesCount = 0;
+  const createdFilesMap = new Map();
+
+  context.DriveApp = {
+    getFolderById: (folderId) => {
+      requestedFolderId = folderId;
+      return {
+        getName: () => 'SSOT_Folder',
+        getFilesByName: (fileName) => {
+          const files = createdFilesMap.get(fileName) || [];
+          let idx = 0;
+          return {
+            hasNext: () => idx < files.length,
+            next: () => {
+              const f = files[idx++];
+              return {
+                setTrashed: (val) => {
+                  if (val) trashedFilesCount++;
+                },
+              };
+            },
+          };
+        },
+        createFile: (blob) => {
+          createdFileName = blob.getName();
+          const fileObj = {
+            id: 'file_' + blob.getName(),
+            name: blob.getName(),
+            modifiedTime: Date.now(),
+          };
+          const existing = createdFilesMap.get(blob.getName()) || [];
+          createdFilesMap.set(blob.getName(), [...existing, fileObj]);
+          return {
+            getId: () => fileObj.id,
+            getLastUpdated: () => new Date(fileObj.modifiedTime),
+          };
+        },
+      };
+    },
+  };
+
+  const uploadReqWithAttackerFolder = {
+    postData: {
+      contents: JSON.stringify({
+        action: 'uploadImage',
+        token: correctToken,
+        imageFolderId: 'malicious-folder-specified-by-client', // 送信されても無視されるべき
+        itemId: 'p16', // 小文字 -> 大文字 P16 に正規化されるべき
+        mimeType: 'image/jpeg',
+        base64Data: Buffer.from('valid-small-jpeg-data').toString('base64'),
+      }),
+    },
+  };
+  context.mockUploadClientReq = uploadReqWithAttackerFolder;
+  const uploadSuccessRes = JSON.parse(vm.runInContext('doPost(mockUploadClientReq).getContent()', context));
+  assert.equal(uploadSuccessRes.ok, true, 'Upload should succeed');
+  assert.equal(uploadSuccessRes.itemId, 'P16', 'Item ID should be normalized to uppercase');
+  assert.equal(
+    requestedFolderId,
+    serverFolderSSOT,
+    'Upload MUST strictly use server meta_config imageFolderId, completely ignoring client-provided folder ID'
+  );
+  assert.equal(createdFileName, 'P16.jpg', 'Created file must be named {ITEM_ID}.jpg');
+
+  // 3. 同名ファイル再アップロード時のゴミ箱移動（重複防止）検証
+  const secondUploadReq = {
+    postData: {
+      contents: JSON.stringify({
+        action: 'uploadImage',
+        token: correctToken,
+        itemId: 'P16',
+        mimeType: 'image/jpeg',
+        base64Data: Buffer.from('updated-jpeg-data').toString('base64'),
+      }),
+    },
+  };
+  context.mockSecondUpload = secondUploadReq;
+  const secondRes = JSON.parse(vm.runInContext('doPost(mockSecondUpload).getContent()', context));
+  assert.equal(secondRes.ok, true);
+  assert.equal(trashedFilesCount, 1, 'Previous file with same name must be moved to trash');
+
+  // 4. 2MB 超過時の拒否検証
+  const hugeData = Buffer.alloc(3 * 1024 * 1024, 'a').toString('base64');
+  const hugeUploadReq = {
+    postData: {
+      contents: JSON.stringify({
+        action: 'uploadImage',
+        token: correctToken,
+        itemId: 'P16',
+        base64Data: hugeData,
+      }),
+    },
+  };
+  context.mockHugeUpload = hugeUploadReq;
+  const hugeRes = JSON.parse(vm.runInContext('doPost(mockHugeUpload).getContent()', context));
+  assert.equal(hugeRes.ok, false, 'Over-sized image must be rejected');
+  assert.ok(hugeRes.error.includes('2MB'), 'Error message must specify 2MB limit');
+
+  console.log('  ✅ uploadImage Fail-Closed auth, server SSOT folder & overwrite tests verified');
 }
 
 console.log('🎉 All GAS backend & sync logic tests passed successfully!');
