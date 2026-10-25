@@ -162,6 +162,9 @@ function doPost(e) {
     if (payload.action === 'fetchImages') {
       return handleFetchImages(ss, payload);
     }
+    if (payload.action === 'uploadImage') {
+      return handleUploadImage(ss, payload);
+    }
 
     const itemNamesMap = payload.itemNamesMap || {};
 
@@ -949,6 +952,79 @@ function handleFetchImages(ss, payload) {
     });
   } catch (err) {
     return createJsonResponse({ ok: false, error: '画像バッチ取得エラー: ' + err.toString() });
+  }
+}
+
+/**
+ * アプリから直接送信された服の写真をドライブ正本フォルダへ保存 (action: 'uploadImage')
+ * - 条件1: validateToken による認証通過後のみ実行
+ * - 条件2: payload のフォルダ指定は無視し、meta_config の正本フォルダのみを使用
+ */
+function handleUploadImage(ss, payload) {
+  // 条件2遵守: サーバー側の meta_config のみを唯一の正本とする
+  const folderId = readConfigValue(ss, 'imageFolderId');
+  if (!folderId) {
+    return createJsonResponse({
+      ok: false,
+      error: 'Google ドライブの画像フォルダ ID が未設定です。スプレッドシートの meta_config に登録してください。'
+    });
+  }
+
+  const rawId = payload && payload.itemId;
+  if (!rawId || typeof rawId !== 'string' || !/^[A-Za-z0-9_-]+$/.test(rawId)) {
+    return createJsonResponse({ ok: false, error: 'アイテムIDの形式が不正です' });
+  }
+  const itemId = rawId.toUpperCase();
+
+  const base64Str = (payload && payload.base64Data) || '';
+  if (!base64Str) {
+    return createJsonResponse({ ok: false, error: '画像データが空です' });
+  }
+
+  try {
+    const bytes = Utilities.base64Decode(base64Str);
+    if (bytes.length > 2 * 1024 * 1024) {
+      return createJsonResponse({
+        ok: false,
+        error: `画像サイズが上限(2MB)を超えています (実測: ${(bytes.length / 1024 / 1024).toFixed(1)}MB)`
+      });
+    }
+
+    const mimeType = (payload && payload.mimeType) || 'image/jpeg';
+    const fileName = itemId + '.jpg';
+    const blob = Utilities.newBlob(bytes, mimeType, fileName);
+
+    if (typeof DriveApp === 'undefined') {
+      return createJsonResponse({ ok: false, error: 'DriveApp が利用できません' });
+    }
+
+    const folder = DriveApp.getFolderById(folderId);
+
+    // 同名の既存ファイルがあれば重複防止のため古いファイルをゴミ箱へ移動
+    const existingFiles = folder.getFilesByName(fileName);
+    while (existingFiles.hasNext()) {
+      const oldFile = existingFiles.next();
+      try {
+        oldFile.setTrashed(true);
+      } catch (e) {
+        return createJsonResponse({
+          ok: false,
+          error: '既存ファイル(' + fileName + ')のゴミ箱退避に失敗しました: ' + e.toString()
+        });
+      }
+    }
+
+    const newFile = folder.createFile(blob);
+    const modifiedTime = newFile.getLastUpdated().getTime();
+
+    return createJsonResponse({
+      ok: true,
+      itemId: itemId,
+      fileId: newFile.getId(),
+      modifiedTime: modifiedTime
+    });
+  } catch (err) {
+    return createJsonResponse({ ok: false, error: '画像アップロード保存エラー: ' + err.toString() });
   }
 }
 
