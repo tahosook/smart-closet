@@ -15,8 +15,9 @@ This skill guides the AI agent to reliably add, update, and validate clothes in 
 When a new garment photo is provided:
 1. Photos can be directly uploaded from the app's **AiSyncView (Tab 2)**:
    - Selecting a photo in the app automatically resizes/compresses it (JPEG max 1200px, quality 0.85) via HTML5 Canvas.
-   - It is saved to browser `IndexedDB` with 0ms latency for immediate display.
-   - If GAS cloud sync is connected, it is automatically uploaded to the user's private Google Drive folder as `{ID}.jpg` (e.g. `P16.jpg` or `S10.jpg`).
+   - It is immediately saved into a dedicated draft storage slot (`smart_closet_draft_db`) so switching to the Gemini app and back preserves the photo even if the browser tab reloads.
+   - The draft slot is strictly isolated from permanent image stores (`STORE_IMAGES` / `STORE_META`) and is immune to `pruneImages` deletion.
+   - Upon successful JSON import, the draft photo is permanently committed to IndexedDB under the finalized ID (e.g. `P16`) and automatically uploaded to Google Drive as `{ID}.jpg`. The draft slot is then cleared.
    - If uploading manually, place `{ID}.jpg` directly into the private Google Drive folder and run photo sync.
 2. **Never commit wardrobe photos to Git or `public/images/`** to preserve complete privacy.
 
