@@ -3,7 +3,7 @@ import react from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
 
 export default defineConfig(({ mode }) => ({
-  base: process.env.VITE_BASE_PATH ?? (mode === 'production' ? '/smart-closet/' : '/'),
+  base: process.env.VITE_BASE_PATH ?? '/',
   plugins: [
     react(),
     VitePWA({
@@ -28,6 +28,7 @@ export default defineConfig(({ mode }) => ({
       },
       workbox: {
         globPatterns: ['**/*.{js,css,html,ico,png,svg,jpg,jpeg,json}'],
+        navigateFallbackDenylist: [/^\/api\//],
         runtimeCaching: [
           {
             urlPattern: /^https:\/\/api\.open-meteo\.com\/.*/i,

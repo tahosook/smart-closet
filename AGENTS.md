@@ -22,8 +22,12 @@ smart-closet/
 │   ├── Code.gs                  # Google Apps Script Web App (Single Source of Truth; imported via ?raw into GasSyncModal)
 │   └── appsscript.json          # Google Apps Script manifest (V8, Asia/Tokyo, webapp)
 ├── docs/
+│   ├── OPERATIONS.md            # Infrastructure, Cloudflare Access & operations runbook
 │   ├── SPECIFICATION.md         # UI, data model & scoring specifications
 │   └── STYLING_RULES.md         # 40s male styling principles & bias analysis
+├── functions/
+│   └── api/
+│       └── bootstrap-config.ts  # Cloudflare Pages Function (runtime secret bootstrapping)
 ├── .agents/skills/              # Antigravity project skills
 │   └── manage-wardrobe/SKILL.md # Runbook for wardrobe additions/edits
 ├── scripts/

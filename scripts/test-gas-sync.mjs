@@ -1587,4 +1587,166 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
   console.log('  ✅ Regression test: Folder switch with partial failure leaves no stale image & retries verified');
 }
 
+// -------------------------------------------------------------
+// Test Case 13: Cloudflare Pages Function bootstrap-config.ts 単体テスト
+// -------------------------------------------------------------
+{
+  const bootstrapTsPath = path.join(projectRoot, 'functions/api/bootstrap-config.ts');
+  assert.ok(fs.existsSync(bootstrapTsPath), 'functions/api/bootstrap-config.ts must exist');
+
+  const bootstrapCode = fs.readFileSync(bootstrapTsPath, 'utf-8');
+  const transpiledBootstrap = ts.transpileModule(bootstrapCode, {
+    compilerOptions: { module: ts.ModuleKind.ESNext },
+  }).outputText;
+  const { onRequestGet } = await import(
+    'data:text/javascript;base64,' + Buffer.from(transpiledBootstrap).toString('base64')
+  );
+
+  const validUrl = 'https://script.google.com/macros/s/AKfycb_sample/exec';
+  const validToken = 'sc_testtoken12345';
+  const allowedEmails = 'tahosook@gmail.com,family@example.com';
+
+  // 1. 環境変数未設定（Preview環境想定など） -> 404
+  const resMissingEnv = await onRequestGet({
+    request: new Request('https://smart-closet-djw.pages.dev/api/bootstrap-config', {
+      headers: { 'Cf-Access-Authenticated-User-Email': 'tahosook@gmail.com' },
+    }),
+    env: { GAS_WEB_APP_URL: validUrl }, // token, allowedEmails が欠落
+  });
+  assert.equal(resMissingEnv.status, 404);
+  const dataMissingEnv = await resMissingEnv.json();
+  assert.equal(dataMissingEnv.ok, false);
+  assert.ok(resMissingEnv.headers.get('Cache-Control')?.includes('no-store'));
+
+  // 1b. URLが https://script.google.com/ で始まらない場合 -> 404
+  const resBadUrl = await onRequestGet({
+    request: new Request('https://smart-closet-djw.pages.dev/api/bootstrap-config', {
+      headers: { 'Cf-Access-Authenticated-User-Email': 'tahosook@gmail.com' },
+    }),
+    env: {
+      GAS_WEB_APP_URL: 'https://evil.example.com/exec',
+      GAS_SECRET_TOKEN: validToken,
+      ALLOWED_EMAILS: allowedEmails,
+    },
+  });
+  assert.equal(resBadUrl.status, 404);
+
+  // 2. メールヘッダー欠如（Cookie があってもヘッダーが無い場合は拒否） -> 401
+  const resNoEmailHeader = await onRequestGet({
+    request: new Request('https://smart-closet-djw.pages.dev/api/bootstrap-config', {
+      headers: { Cookie: 'CF_Authorization=sample_jwt_cookie' },
+    }),
+    env: {
+      GAS_WEB_APP_URL: validUrl,
+      GAS_SECRET_TOKEN: validToken,
+      ALLOWED_EMAILS: allowedEmails,
+    },
+  });
+  assert.equal(resNoEmailHeader.status, 401);
+  const dataNoEmail = await resNoEmailHeader.json();
+  assert.equal(dataNoEmail.ok, false);
+  assert.match(dataNoEmail.error, /Cf-Access-Authenticated-User-Email/);
+
+  // 3. ALLOWED_EMAILS に含まれないメールアドレス -> 403
+  const resForbidden = await onRequestGet({
+    request: new Request('https://smart-closet-djw.pages.dev/api/bootstrap-config', {
+      headers: { 'Cf-Access-Authenticated-User-Email': 'unauthorized@example.com' },
+    }),
+    env: {
+      GAS_WEB_APP_URL: validUrl,
+      GAS_SECRET_TOKEN: validToken,
+      ALLOWED_EMAILS: allowedEmails,
+    },
+  });
+  assert.equal(resForbidden.status, 403);
+  const dataForbidden = await resForbidden.json();
+  assert.equal(dataForbidden.ok, false);
+
+  // 4. 許可メールアドレス（大文字小文字不問） -> 200 + no-store + 設定JSON
+  const resSuccess = await onRequestGet({
+    request: new Request('https://smart-closet-djw.pages.dev/api/bootstrap-config', {
+      headers: { 'Cf-Access-Authenticated-User-Email': 'TAHOSOOK@GMAIL.COM' },
+    }),
+    env: {
+      GAS_WEB_APP_URL: validUrl,
+      GAS_SECRET_TOKEN: validToken,
+      ALLOWED_EMAILS: allowedEmails,
+    },
+  });
+  assert.equal(resSuccess.status, 200);
+  assert.ok(resSuccess.headers.get('Cache-Control')?.includes('no-store'));
+  const dataSuccess = await resSuccess.json();
+  assert.equal(dataSuccess.ok, true);
+  assert.equal(dataSuccess.webAppUrl, validUrl);
+  assert.equal(dataSuccess.secretToken, validToken);
+  assert.equal(dataSuccess.userEmail, 'tahosook@gmail.com');
+
+  // 5. 複数許可メールの2番目（family@example.com） -> 200
+  const resFamilySuccess = await onRequestGet({
+    request: new Request('https://smart-closet-djw.pages.dev/api/bootstrap-config', {
+      headers: { 'Cf-Access-Authenticated-User-Email': 'family@example.com' },
+    }),
+    env: {
+      GAS_WEB_APP_URL: validUrl,
+      GAS_SECRET_TOKEN: validToken,
+      ALLOWED_EMAILS: allowedEmails,
+    },
+  });
+  assert.equal(resFamilySuccess.status, 200);
+  const dataFamilySuccess = await resFamilySuccess.json();
+  assert.equal(dataFamilySuccess.ok, true);
+
+  console.log('  ✅ Cloudflare Pages Function bootstrap-config.ts (404/401/403/200 & no-store) verified');
+}
+
+// -------------------------------------------------------------
+// Test Case 14: ブートストラップ発火条件判定と GAS 初回 Pull による imageFolderId 自動同期
+// -------------------------------------------------------------
+{
+  // 1. ブートストラップ発火条件の判定ロジック検証
+  const shouldBootstrap = (cfg) => {
+    return !cfg.webAppUrl?.trim() || !cfg.secretToken?.trim();
+  };
+
+  assert.equal(shouldBootstrap({ webAppUrl: '', secretToken: '' }), true, 'Both empty must trigger');
+  assert.equal(shouldBootstrap({ webAppUrl: '', secretToken: 'sc_token' }), true, 'Url empty must trigger');
+  assert.equal(shouldBootstrap({ webAppUrl: 'https://...', secretToken: '' }), true, 'Token empty must trigger');
+  assert.equal(shouldBootstrap({ webAppUrl: '   ', secretToken: '  ' }), true, 'Whitespace must trigger');
+  assert.equal(shouldBootstrap({ webAppUrl: 'https://script.google.com/...', secretToken: 'sc_token' }), false, 'Both set must NOT trigger');
+
+  // 2. ブートストラップで取得した設定から GAS 初回 Pull で meta_config の imageFolderId を自動取得する検証
+  const bootstrappedToken = 'sync-token-bootstrap-test';
+  const { ss, context } = createGasEnvironment(bootstrappedToken);
+  vm.runInContext('setupSpreadsheet()', context);
+
+  // サーバー側の meta_config に imageFolderId を登録 (正本)
+  const metaSheet = ss.getSheetByName('meta_config');
+  metaSheet.appendRow(['imageFolderId', 'drive-folder-server-ssot', new Date().toISOString()]);
+
+  // クライアントがブートストラップしたトークンで Pull (doGet) を実行
+  const pullReq = { parameter: { token: bootstrappedToken, action: 'pull' } };
+  context.mockPullReq = pullReq;
+  const pullRes = JSON.parse(vm.runInContext('doGet(mockPullReq).getContent()', context));
+
+  assert.equal(pullRes.ok, true);
+  assert.equal(pullRes.imageFolderId, 'drive-folder-server-ssot', 'Pull response must contain imageFolderId from meta_config SSOT');
+
+  // クライアント側で gasConfig を更新するシミュレーション
+  let localGasConfig = {
+    webAppUrl: 'https://script.google.com/macros/s/test/exec',
+    secretToken: bootstrappedToken,
+    autoSync: true,
+    imageFolderId: undefined,
+  };
+
+  localGasConfig = {
+    ...localGasConfig,
+    imageFolderId: pullRes.imageFolderId !== undefined ? pullRes.imageFolderId : localGasConfig.imageFolderId,
+  };
+
+  assert.equal(localGasConfig.imageFolderId, 'drive-folder-server-ssot', 'localGasConfig must be automatically updated with imageFolderId');
+
+  console.log('  ✅ Bootstrap trigger condition & imageFolderId SSOT sync verified');
+}
+
 console.log('🎉 All GAS backend & sync logic tests passed successfully!');

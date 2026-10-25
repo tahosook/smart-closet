@@ -48,16 +48,21 @@ export const GasSyncModal: React.FC<GasSyncModalProps> = ({ isOpen, onClose }) =
     updateGasConfig,
     pullFromGas,
     pushToGas,
+    fetchBootstrapConfig,
   } = useClosetStore();
 
   const [urlInput, setUrlInput] = useState(gasConfig.webAppUrl);
-  const [tokenInput, setTokenInput] = useState(() => gasConfig.secretToken || generateSecretToken());
+  const [tokenInput, setTokenInput] = useState(() => gasConfig.secretToken || '');
   const [autoSyncInput, setAutoSyncInput] = useState(gasConfig.autoSync);
   const [imageFolderIdInput, setImageFolderIdInput] = useState(gasConfig.imageFolderId || '');
   const [copiedScript, setCopiedScript] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [isGuideOpen, setIsGuideOpen] = useState(!gasConfig.webAppUrl);
   const [manualSyncMsg, setManualSyncMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  // クラウドからの自動ブートストラップ状態
+  const [isBootstrapping, setIsBootstrapping] = useState(false);
+  const [bootstrapMsg, setBootstrapMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   // 画像同期用の状態 (Phase 2)
   const [isImageSyncing, setIsImageSyncing] = useState(false);
@@ -68,14 +73,33 @@ export const GasSyncModal: React.FC<GasSyncModalProps> = ({ isOpen, onClose }) =
     details?: string[];
   } | null>(null);
 
-  // モーダルオープン時または外部Pull時に最新設定値を反映
+  // モーダルオープン時または外部同期完了時に最新設定値をフォーム入力欄へ反映
   React.useEffect(() => {
     if (isOpen) {
+      setUrlInput(gasConfig.webAppUrl || '');
+      setTokenInput(gasConfig.secretToken || '');
       setImageFolderIdInput(gasConfig.imageFolderId || '');
+      setAutoSyncInput(gasConfig.autoSync);
     }
-  }, [isOpen, gasConfig.imageFolderId]);
+  }, [isOpen, gasConfig.webAppUrl, gasConfig.secretToken, gasConfig.imageFolderId, gasConfig.autoSync]);
 
   if (!isOpen) return null;
+
+  const handleAutoBootstrap = async () => {
+    setIsBootstrapping(true);
+    setBootstrapMsg(null);
+    const success = await fetchBootstrapConfig({ onlyFillMissing: false });
+    if (success) {
+      setBootstrapMsg({ type: 'success', text: 'クラウドから最新の設定を取得しました！' });
+    } else {
+      setBootstrapMsg({
+        type: 'error',
+        text: '自動設定が見つかりませんでした。下のフォームから手動で設定してください。',
+      });
+    }
+    setIsBootstrapping(false);
+    setTimeout(() => setBootstrapMsg(null), 4000);
+  };
 
   const handleRegenerateToken = () => {
     const newToken = generateSecretToken();
@@ -424,6 +448,47 @@ export const GasSyncModal: React.FC<GasSyncModalProps> = ({ isOpen, onClose }) =
         <div className="flex-1 overflow-y-auto space-y-4 pr-1 no-scrollbar">
           {/* Settings Form */}
           <form onSubmit={handleSaveConfig} className="space-y-3 bg-slate-800/40 p-3.5 rounded-2xl border border-slate-800">
+            <div className="flex items-center justify-between pb-2 border-b border-slate-800">
+              <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                接続設定
+              </span>
+              <button
+                type="button"
+                onClick={handleAutoBootstrap}
+                disabled={isBootstrapping}
+                className="py-1 px-2.5 bg-blue-600/30 hover:bg-blue-600 text-blue-200 hover:text-white disabled:opacity-40 rounded-lg text-[10px] font-bold transition-all flex items-center gap-1 border border-blue-500/40"
+              >
+                {isBootstrapping ? (
+                  <>
+                    <RefreshCw className="w-3 h-3 animate-spin" />
+                    <span>取得中...</span>
+                  </>
+                ) : (
+                  <>
+                    <Cloud className="w-3 h-3" />
+                    <span>クラウドから設定を自動取得</span>
+                  </>
+                )}
+              </button>
+            </div>
+
+            {bootstrapMsg && (
+              <div
+                className={`p-2 rounded-xl text-[11px] font-medium flex items-center gap-1.5 ${
+                  bootstrapMsg.type === 'success'
+                    ? 'bg-emerald-950/60 border border-emerald-600/60 text-emerald-200'
+                    : 'bg-amber-950/60 border border-amber-600/60 text-amber-200'
+                }`}
+              >
+                {bootstrapMsg.type === 'success' ? (
+                  <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0 text-emerald-400" />
+                ) : (
+                  <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 text-amber-400" />
+                )}
+                <span>{bootstrapMsg.text}</span>
+              </div>
+            )}
+
             <div>
               <label className="block text-xs font-bold text-slate-300 mb-1">
                 GAS ウェブアプリ URL

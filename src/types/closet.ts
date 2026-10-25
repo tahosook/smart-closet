@@ -130,5 +130,18 @@ export interface FetchImagesResponse {
   warnings?: string[];               // 非対応形式やサイズ超過等の警告
 }
 
+// ----------------------------------------------------
+// Cloudflare Pages Functions ブートストラップ関連の型定義
+// ----------------------------------------------------
+
+export interface BootstrapConfigResponse {
+  ok: boolean;
+  webAppUrl?: string;
+  secretToken?: string;
+  userEmail?: string;
+  error?: string;
+}
+
+
 
 
