@@ -20,10 +20,10 @@ This file serves as the operational contract for AI agents (Antigravity, Codex, 
 - `scripts/`: Verification & test suite (`validate-closet.mjs`, `test-gas-sync.mjs`, `sync-images.sh`).
 
 ### Task-Specific Knowledge Routers (Single Sources of Truth)
-- **UI & Logic Specs:** Consult [docs/SPECIFICATION.md](file:///Users/tahosook/Documents/codex/smart-closet/docs/SPECIFICATION.md) for view behaviors and scoring algorithms.
-- **Wardrobe & Styling Rules:** Consult [docs/STYLING_RULES.md](file:///Users/tahosook/Documents/codex/smart-closet/docs/STYLING_RULES.md) for 40s male color/pattern criteria and bias analysis.
-- **Wardrobe Addition Skill:** Follow [.agents/skills/manage-wardrobe/SKILL.md](file:///Users/tahosook/Documents/codex/smart-closet/.agents/skills/manage-wardrobe/SKILL.md) when adding/editing clothes.
-- **Infrastructure & Operations:** Consult [docs/OPERATIONS.md](file:///Users/tahosook/Documents/codex/smart-closet/docs/OPERATIONS.md) for Cloudflare Access, OAuth, and secret rotation.
+- **UI & Logic Specs:** Consult [docs/SPECIFICATION.md](docs/SPECIFICATION.md) for view behaviors and scoring algorithms.
+- **Wardrobe & Styling Rules:** Consult [docs/STYLING_RULES.md](docs/STYLING_RULES.md) for 40s male color/pattern criteria and bias analysis.
+- **Wardrobe Addition Skill:** Follow [.agents/skills/manage-wardrobe/SKILL.md](.agents/skills/manage-wardrobe/SKILL.md) when adding/editing clothes.
+- **Infrastructure & Operations:** Consult [docs/OPERATIONS.md](docs/OPERATIONS.md) for Cloudflare Access, OAuth, and secret rotation.
 
 ## 3. Architecture Invariants & Absolute Constraints
 1. **Serverless Frontend & Human-in-the-Loop AI:**
@@ -51,7 +51,7 @@ This file serves as the operational contract for AI agents (Antigravity, Codex, 
 2. **Office Dress Code Invariant:** For office mode (`scene === 'office'`), pants with `dressScore < 3.0` (sweatpants/joggers) must be excluded from office candidates.
 3. **Cooling Period Invariant:** Pants worn yesterday (`wearHistory`) are demoted to the bottom with a `⚠️ 昨日着用（冷却中）` badge.
 4. **Wife NG Invariant:** Runtime flags (`smart_closet_wife_ng`) immediately exclude pairs from recommendation and take precedence.
-5. **Styling Criteria Authority:** All color/pattern/tonal pairing rules and bias insights belong strictly to [docs/STYLING_RULES.md](file:///Users/tahosook/Documents/codex/smart-closet/docs/STYLING_RULES.md). Do not duplicate or invent ad-hoc fashion rules in code or constitution.
+5. **Styling Criteria Authority:** All color/pattern/tonal pairing rules and bias insights belong strictly to [docs/STYLING_RULES.md](docs/STYLING_RULES.md). Do not duplicate or invent ad-hoc fashion rules in code or constitution.
 
 ## 6. Definition of Done (DoD) & Guardrails
 1. **No-Actionable Finding, Stop:** If research shows no problem or speculative changes are unwarranted, do not manufacture unnecessary code changes. Complete the task with an investigation report.

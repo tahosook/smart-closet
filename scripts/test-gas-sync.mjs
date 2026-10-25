@@ -2566,4 +2566,58 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
   console.log('  ✅ Zero-memorization Cloud Sync & AiSyncView backup collapsible UI verified');
 }
 
+// -------------------------------------------------------------
+// Test Case 20: Broken Path Guard 回帰テスト（Markdown 相対・ルート直下・禁止絶対リンク）
+// -------------------------------------------------------------
+{
+  const { validateDocLinksAndPaths } = await import('./validate-closet.mjs');
+
+  const dummyDocRoot = path.join(projectRoot, 'AGENTS.md');
+  const dummyDocSub = path.join(projectRoot, 'docs/SPECIFICATION.md');
+
+  // 1. 正常系: ルート直下リンク、相対リンク、アンカー、Webリンク
+  const validContentRoot = `
+# Sample
+- [Self](./AGENTS.md)
+- [Readme](README.md)
+- [Doc](docs/SPECIFICATION.md)
+- [Data](src/data/closet.json)
+- [Anchor](README.md#step-1)
+- [External](https://smart-closet-djw.pages.dev)
+- [Mail](mailto:test@example.com)
+- \`src/utils/closetDomain.ts\`
+`;
+  const errorsRoot = validateDocLinksAndPaths(dummyDocRoot, validContentRoot, projectRoot);
+  assert.equal(errorsRoot.length, 0, `Valid root links must produce 0 errors, got: ${JSON.stringify(errorsRoot)}`);
+
+  const validContentSub = `
+# Sub
+- [Parent Link](../AGENTS.md)
+- [Sibling Link](./OPERATIONS.md)
+- [Types](../src/types/closet.ts)
+`;
+  const errorsSub = validateDocLinksAndPaths(dummyDocSub, validContentSub, projectRoot);
+  assert.equal(errorsSub.length, 0, `Valid sub links must produce 0 errors, got: ${JSON.stringify(errorsSub)}`);
+
+  // 2. 異常系: 壊れたルート直下ファイルリンク
+  const brokenRootContent = `[Broken](./NON_EXISTENT_ROOT_FILE.md)`;
+  const errorsBrokenRoot = validateDocLinksAndPaths(dummyDocRoot, brokenRootContent, projectRoot);
+  assert.equal(errorsBrokenRoot.length, 1, 'Broken root file link must produce 1 error');
+  assert.ok(errorsBrokenRoot[0].includes('NON_EXISTENT_ROOT_FILE.md'), 'Error must mention broken root path');
+
+  // 3. 異常系: 壊れたサブディレクトリファイルリンク
+  const brokenSubContent = `[Broken](docs/NON_EXISTENT_SUB_FILE.md)`;
+  const errorsBrokenSub = validateDocLinksAndPaths(dummyDocRoot, brokenSubContent, projectRoot);
+  assert.equal(errorsBrokenSub.length, 1, 'Broken sub file link must produce 1 error');
+  assert.ok(errorsBrokenSub[0].includes('NON_EXISTENT_SUB_FILE.md'), 'Error must mention broken sub path');
+
+  // 4. 異常系: 禁止された file:/// ローカル絶対パス
+  const forbiddenFileUrlContent = `[Forbidden](file:///Users/tahosook/Documents/codex/smart-closet/docs/SPECIFICATION.md)`;
+  const errorsFileUrl = validateDocLinksAndPaths(dummyDocRoot, forbiddenFileUrlContent, projectRoot);
+  assert.equal(errorsFileUrl.length, 1, 'file:/// local absolute link must produce 1 error');
+  assert.ok(errorsFileUrl[0].includes('Forbidden local absolute link'), 'Error must state forbidden local absolute link');
+
+  console.log('  ✅ Broken Path Guard Markdown relative & root link regression test verified');
+}
+
 console.log('🎉 All GAS backend & sync logic tests passed successfully!');
