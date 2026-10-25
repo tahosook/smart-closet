@@ -18,6 +18,12 @@ import {
   hasRemainingTombstones,
   reconcileSyncResponse,
 } from '../utils/syncReconcile';
+import {
+  validateClosetDataSchema,
+  mergeClosetDataWithWifeNg,
+  checkIsNgPair,
+  calculateRecommendationsForShirt,
+} from '../utils/closetDomain';
 
 const STORAGE_KEYS = {
   CUSTOM_DATA: 'smart_closet_custom_data',
@@ -93,7 +99,11 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       const saved = localStorage.getItem(STORAGE_KEYS.CUSTOM_DATA);
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (parsed && Array.isArray(parsed.items)) return parsed;
+        const validation = validateClosetDataSchema(parsed);
+        if (validation.valid && validation.data) {
+          return validation.data;
+        }
+        console.warn('Invalid custom closet data found in localStorage, falling back to default:', validation.error);
       }
     } catch (e) {
       console.error('Failed to parse custom closet data:', e);
@@ -215,41 +225,7 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   // Merged ClosetData incorporating wifeNgPairs
   const mergedClosetData = useMemo<ClosetData>(() => {
-    if (wifeNgPairs.length === 0) return closetData;
-    return {
-      items: closetData.items.map((item) => {
-        const relatedNgs = wifeNgPairs.filter((pair) =>
-          item.category === 'shirt' ? pair.shirtId === item.id : pair.pantsId === item.id
-        );
-        if (relatedNgs.length === 0) return item;
-
-        const additionalIds = relatedNgs.map((pair) =>
-          item.category === 'shirt' ? pair.pantsId : pair.shirtId
-        );
-        const additionalSet = new Set(additionalIds);
-        const mergedNgIds = Array.from(new Set([...item.ngIds, ...additionalIds]));
-        const filteredOfficeRecommendIds = item.officeRecommendIds.filter(
-          (id) => !additionalSet.has(id)
-        );
-        const filteredRemoteRecommendIds = item.remoteRecommendIds.filter(
-          (id) => !additionalSet.has(id)
-        );
-        const hasNoNgText = item.ngReason.startsWith('なし');
-        const mergedReason = hasNoNgText
-          ? `奥様NG指定（${additionalIds.join(', ')}）`
-          : item.ngReason.includes('奥様NG')
-          ? item.ngReason
-          : `${item.ngReason} / 奥様NG指定（${additionalIds.join(', ')}）`;
-
-        return {
-          ...item,
-          officeRecommendIds: filteredOfficeRecommendIds,
-          remoteRecommendIds: filteredRemoteRecommendIds,
-          ngIds: mergedNgIds,
-          ngReason: mergedReason,
-        };
-      }),
-    };
+    return mergeClosetDataWithWifeNg(closetData, wifeNgPairs);
   }, [closetData, wifeNgPairs]);
 
   const shirts = useMemo(
@@ -302,141 +278,23 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const isNgPair = useCallback(
     (shirtId: string, pantsId: string): { isNg: boolean; reason: string; isWifeNg: boolean } => {
-      const wifeNg = wifeNgPairs.find(
-        (p) => p.shirtId === shirtId && p.pantsId === pantsId
-      );
-      if (wifeNg) {
-        return { isNg: true, reason: wifeNg.reason || '奥様NG指定', isWifeNg: true };
-      }
-
-      const shirt = itemMap.get(shirtId);
-      if (shirt && shirt.ngIds.includes(pantsId)) {
-        return { isNg: true, reason: shirt.ngReason || '相性NG', isWifeNg: false };
-      }
-
-      const p = itemMap.get(pantsId);
-      if (p && p.ngIds.includes(shirtId)) {
-        return { isNg: true, reason: p.ngReason || '相性NG', isWifeNg: false };
-      }
-
-      return { isNg: false, reason: '', isWifeNg: false };
+      return checkIsNgPair(shirtId, pantsId, itemMap, wifeNgPairs);
     },
     [itemMap, wifeNgPairs]
   );
 
-  const getAffinityReason = useCallback(
-    (shirt: ClosetItem, pantsItem: ClosetItem, scene: SceneMode): string => {
-      if (scene === 'office') {
-        if (shirt.id === 'S2' || shirt.id === 'S4' || shirt.id === 'S7') {
-          return `${pantsItem.name} の質感を清潔な白シャツが最大限に引き立てる王道オフィススタイル。`;
-        }
-        if (pantsItem.id === 'P8') {
-          return `濃紺スラックスの端正なシルエットが、${shirt.name} を上品に引き締めます。`;
-        }
-        if (pantsItem.id === 'P9') {
-          return `ミディアムグレーの万能性が発揮され、誠実さとこなれ感を両立する組み合わせ。`;
-        }
-        if (pantsItem.id === 'P3') {
-          return `グレージュの柔らかなトーンが寒色シャツと美しく調和し、好印象を与えます。`;
-        }
-        return `ドレス度 ${((shirt.dressScore + pantsItem.dressScore) / 2).toFixed(1)}。出社・対面業務に最適な清潔感ある配色です。`;
-      } else {
-        if (pantsItem.comfortScore >= 4.5) {
-          return `快適度 ${pantsItem.comfortScore.toFixed(1)}。長時間のデスクワークやリモートでもストレスフリーです。`;
-        }
-        return `リラックス感と画面越しの清潔感を両立できるスマートカジュアル。`;
-      }
-    },
-    []
-  );
-
   const getRecommendationsForShirt = useCallback(
     (shirtId: string, scene: SceneMode) => {
-      const shirt = itemMap.get(shirtId);
-      if (!shirt) {
-        return { recommended: [], otherOk: [], ngList: [] };
-      }
-
-      const recommended: RecommendationResult[] = [];
-      const otherOk: RecommendationResult[] = [];
-      const ngList: { pants: ClosetItem; reason: string; isWifeNg: boolean }[] = [];
-
-      pants.forEach((p) => {
-        const ngCheck = isNgPair(shirt.id, p.id);
-        if (ngCheck.isNg) {
-          ngList.push({
-            pants: p,
-            reason: ngCheck.reason,
-            isWifeNg: ngCheck.isWifeNg,
-          });
-          return;
-        }
-
-        if (scene === 'office' && p.dressScore < 3.0) {
-          ngList.push({
-            pants: p,
-            reason: `オフィス出社不適合（ドレス度 ${p.dressScore}：スウェット・ジョガー系）`,
-            isWifeNg: false,
-          });
-          return;
-        }
-
-        const isYesterdayWorn = yesterdayWornPantsIds.has(p.id);
-        const isOfficeRec = shirt.officeRecommendIds.includes(p.id);
-        const isRemoteRec = shirt.remoteRecommendIds.includes(p.id);
-        const isPrimaryRec = scene === 'office' ? isOfficeRec : isRemoteRec;
-        const isSecondaryRec =
-          scene === 'office'
-            ? p.officeRecommendIds.includes(shirt.id)
-            : p.remoteRecommendIds.includes(shirt.id);
-
-        const score =
-          scene === 'office'
-            ? (p.dressScore * 1.5 + p.comfortScore) * (isPrimaryRec ? 1.5 : isSecondaryRec ? 1.2 : 1.0)
-            : (p.comfortScore * 1.5 + p.dressScore) * (isPrimaryRec ? 1.5 : isSecondaryRec ? 1.2 : 1.0);
-
-        const reason = getAffinityReason(shirt, p, scene);
-
-        const result: RecommendationResult = {
-          pants: p,
-          rank: 0,
-          isYesterdayWorn,
-          score,
-          affinityReason: reason,
-          dressScore: p.dressScore,
-          comfortScore: p.comfortScore,
-          isOfficeRecommend: isOfficeRec,
-          isRemoteRecommend: isRemoteRec,
-        };
-
-        if (isPrimaryRec || isSecondaryRec) {
-          recommended.push(result);
-        } else {
-          otherOk.push(result);
-        }
-      });
-
-      const sortFn = (a: RecommendationResult, b: RecommendationResult) => {
-        if (a.isYesterdayWorn !== b.isYesterdayWorn) {
-          return a.isYesterdayWorn ? 1 : -1;
-        }
-        return b.score - a.score;
-      };
-
-      recommended.sort(sortFn);
-      otherOk.sort(sortFn);
-
-      recommended.forEach((rec, idx) => {
-        rec.rank = idx + 1;
-      });
-
-      return {
-        recommended,
-        otherOk,
-        ngList,
-      };
+      return calculateRecommendationsForShirt(
+        shirtId,
+        scene,
+        itemMap,
+        pants,
+        wifeNgPairs,
+        yesterdayWornPantsIds
+      );
     },
-    [itemMap, pants, isNgPair, yesterdayWornPantsIds, getAffinityReason]
+    [itemMap, pants, wifeNgPairs, yesterdayWornPantsIds]
   );
 
   // -------------------------------------------------------------
@@ -783,7 +641,10 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   );
 
   // 初回マウント時: webAppUrl または secretToken のどちらかが空の場合に自動ブートストラップ実行
+  // ※ ローカル開発環境 (import.meta.env.DEV) では Pages Functions (/api/...) が存在しないため
+  // 不要な 404 コンソールエラーを防ぐため自動実行をスキップ（手動モーダル実行時は試行可能）
   useEffect(() => {
+    if (import.meta.env.DEV) return;
     const currentCfg = stateRef.current.gasConfig;
     if (!currentCfg.webAppUrl.trim() || !currentCfg.secretToken?.trim()) {
       fetchBootstrapConfig({ onlyFillMissing: true });
@@ -976,8 +837,9 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     (jsonString: string): { success: boolean; error?: string } => {
       try {
         const parsed = JSON.parse(jsonString);
-        if (!parsed || !Array.isArray(parsed.items) || parsed.items.length === 0) {
-          return { success: false, error: 'JSONには有効な "items" 配列が必要です。' };
+        const validation = validateClosetDataSchema(parsed);
+        if (!validation.valid || !validation.data) {
+          return { success: false, error: validation.error || 'JSONデータの検証に失敗しました。' };
         }
         mutationSeqRef.current++;
         customDataSeqRef.current++;
@@ -987,7 +849,7 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           (stateRef.current.tombstones.customClosetDataClearedAt || 0) + 1
         );
         const dataWithTimestamp: ClosetData = {
-          ...parsed,
+          ...validation.data,
           updatedAt: now,
         };
         localStorage.setItem(STORAGE_KEYS.CUSTOM_DATA, JSON.stringify(dataWithTimestamp));
@@ -1038,34 +900,64 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     });
   }, []);
 
-  const contextValue: ClosetStoreContextType = {
-    closetData,
-    mergedClosetData,
-    shirts,
-    pants,
-    itemMap,
-    wearHistory,
-    todayRecord,
-    yesterdayWornPantsIds,
-    wifeNgPairs,
-    syncStatus,
-    gasConfig,
-    lastSyncError,
-    isNgPair,
-    getRecommendationsForShirt,
-    recordWear,
-    simulateYesterdayWear,
-    removeWearRecord,
-    clearAllWearHistory,
-    registerWifeNg,
-    removeWifeNg,
-    importCustomData,
-    resetToDefaultData,
-    updateGasConfig,
-    pullFromGas,
-    pushToGas,
-    fetchBootstrapConfig,
-  };
+  const contextValue: ClosetStoreContextType = useMemo(
+    () => ({
+      closetData,
+      mergedClosetData,
+      shirts,
+      pants,
+      itemMap,
+      wearHistory,
+      todayRecord,
+      yesterdayWornPantsIds,
+      wifeNgPairs,
+      syncStatus,
+      gasConfig,
+      lastSyncError,
+      isNgPair,
+      getRecommendationsForShirt,
+      recordWear,
+      simulateYesterdayWear,
+      removeWearRecord,
+      clearAllWearHistory,
+      registerWifeNg,
+      removeWifeNg,
+      importCustomData,
+      resetToDefaultData,
+      updateGasConfig,
+      pullFromGas,
+      pushToGas,
+      fetchBootstrapConfig,
+    }),
+    [
+      closetData,
+      mergedClosetData,
+      shirts,
+      pants,
+      itemMap,
+      wearHistory,
+      todayRecord,
+      yesterdayWornPantsIds,
+      wifeNgPairs,
+      syncStatus,
+      gasConfig,
+      lastSyncError,
+      isNgPair,
+      getRecommendationsForShirt,
+      recordWear,
+      simulateYesterdayWear,
+      removeWearRecord,
+      clearAllWearHistory,
+      registerWifeNg,
+      removeWifeNg,
+      importCustomData,
+      resetToDefaultData,
+      updateGasConfig,
+      pullFromGas,
+      pushToGas,
+      fetchBootstrapConfig,
+    ]
+  );
 
   return <ClosetContext.Provider value={contextValue}>{children}</ClosetContext.Provider>;
 };

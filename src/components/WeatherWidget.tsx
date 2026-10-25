@@ -28,6 +28,7 @@ export const WeatherWidget: React.FC<WeatherWidgetProps> = ({
   const [loading, setLoading] = useState(true);
   const [useCurrentLocation, setUseCurrentLocation] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const lastCurrentCoordsRef = React.useRef<{ lat: number; lon: number } | null>(null);
 
   const fetchWeather = async (lat: number, lon: number, cityName: string) => {
     setLoading(true);
@@ -97,6 +98,10 @@ export const WeatherWidget: React.FC<WeatherWidgetProps> = ({
       if ('geolocation' in navigator) {
         navigator.geolocation.getCurrentPosition(
           (pos) => {
+            lastCurrentCoordsRef.current = {
+              lat: pos.coords.latitude,
+              lon: pos.coords.longitude,
+            };
             setUseCurrentLocation(true);
             fetchWeather(pos.coords.latitude, pos.coords.longitude, '現在地');
           },
@@ -109,6 +114,42 @@ export const WeatherWidget: React.FC<WeatherWidgetProps> = ({
       }
     } else {
       setUseCurrentLocation(false);
+      fetchWeather(ABIKO_COORDS.lat, ABIKO_COORDS.lon, ABIKO_COORDS.name);
+    }
+  };
+
+  const handleRefreshWeather = () => {
+    if (useCurrentLocation) {
+      if ('geolocation' in navigator) {
+        navigator.geolocation.getCurrentPosition(
+          (pos) => {
+            lastCurrentCoordsRef.current = {
+              lat: pos.coords.latitude,
+              lon: pos.coords.longitude,
+            };
+            fetchWeather(pos.coords.latitude, pos.coords.longitude, '現在地');
+          },
+          () => {
+            // 位置情報が再取得できない場合は前回の現在地座標を試行
+            if (lastCurrentCoordsRef.current) {
+              fetchWeather(
+                lastCurrentCoordsRef.current.lat,
+                lastCurrentCoordsRef.current.lon,
+                '現在地'
+              );
+            } else {
+              fetchWeather(ABIKO_COORDS.lat, ABIKO_COORDS.lon, ABIKO_COORDS.name);
+            }
+          }
+        );
+      } else if (lastCurrentCoordsRef.current) {
+        fetchWeather(
+          lastCurrentCoordsRef.current.lat,
+          lastCurrentCoordsRef.current.lon,
+          '現在地'
+        );
+      }
+    } else {
       fetchWeather(ABIKO_COORDS.lat, ABIKO_COORDS.lon, ABIKO_COORDS.name);
     }
   };
@@ -149,15 +190,11 @@ export const WeatherWidget: React.FC<WeatherWidgetProps> = ({
         </button>
 
         <button
-          onClick={() =>
-            useCurrentLocation
-              ? handleToggleLocation()
-              : fetchWeather(ABIKO_COORDS.lat, ABIKO_COORDS.lon, ABIKO_COORDS.name)
-          }
-          className="p-1 hover:text-white transition-colors"
+          onClick={handleRefreshWeather}
+          className="p-1.5 hover:text-white rounded-lg hover:bg-slate-700/50 transition-colors"
           title="天気を再取得"
         >
-          <RefreshCw className={`w-3 h-3 ${loading ? 'animate-spin text-blue-400' : ''}`} />
+          <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin text-blue-400' : ''}`} />
         </button>
       </div>
 
