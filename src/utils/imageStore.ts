@@ -276,9 +276,115 @@ export function clearSyncedFolderId(): void {
 }
 
 /**
+ * 単一アイテムの画像 Blob とメタデータを本保存ストアから削除
+ */
+export async function deleteImageBlob(id: string): Promise<void> {
+  const normId = id.toUpperCase();
+  const db = await getDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction([STORE_IMAGES, STORE_META], 'readwrite');
+    tx.objectStore(STORE_IMAGES).delete(normId);
+    tx.objectStore(STORE_META).delete(normId);
+
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+/**
  * Base64 Data URL を Blob に変換するヘルパー (仕様5)
  */
 export async function dataUrlToBlob(dataUrl: string): Promise<Blob> {
   const res = await fetch(dataUrl);
   return await res.blob();
+}
+
+// ----------------------------------------------------
+// 専用「下書き枠」画像ストア (条件1: 1枠のみ・リロード耐性・pruneImages非干渉)
+// ----------------------------------------------------
+
+const DRAFT_DB_NAME = 'smart_closet_draft_db';
+const DRAFT_DB_VERSION = 1;
+const STORE_DRAFT = 'draft';
+const DRAFT_KEY = 'CURRENT_DRAFT';
+
+let draftDbPromise: Promise<IDBDatabase> | null = null;
+
+function getDraftDB(): Promise<IDBDatabase> {
+  if (typeof window === 'undefined' || !window.indexedDB) {
+    return Promise.reject(new Error('IndexedDB is not supported in this environment'));
+  }
+
+  if (!draftDbPromise) {
+    draftDbPromise = new Promise((resolve, reject) => {
+      const request = window.indexedDB.open(DRAFT_DB_NAME, DRAFT_DB_VERSION);
+
+      request.onupgradeneeded = (event) => {
+        const db = (event.target as IDBOpenDBRequest).result;
+        if (!db.objectStoreNames.contains(STORE_DRAFT)) {
+          db.createObjectStore(STORE_DRAFT);
+        }
+      };
+
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => {
+        draftDbPromise = null;
+        reject(request.error);
+      };
+    });
+  }
+
+  return draftDbPromise;
+}
+
+export interface DraftImageData {
+  blob: Blob;
+  dataUrl: string;
+  updatedAt: number;
+}
+
+/**
+ * 服追加の下書き写真を保存 (条件1: 常に1枠のみを上書き)
+ */
+export async function saveDraftImage(blob: Blob, dataUrl: string): Promise<void> {
+  const db = await getDraftDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_DRAFT, 'readwrite');
+    const store = tx.objectStore(STORE_DRAFT);
+    const data: DraftImageData = { blob, dataUrl, updatedAt: Date.now() };
+    store.put(data, DRAFT_KEY);
+
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+/**
+ * 服追加の下書き写真を取得 (条件1: 画面再入場・リロード時の自動復元用)
+ */
+export async function getDraftImage(): Promise<DraftImageData | null> {
+  const db = await getDraftDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_DRAFT, 'readonly');
+    const store = tx.objectStore(STORE_DRAFT);
+    const request = store.get(DRAFT_KEY);
+
+    request.onsuccess = () => resolve((request.result as DraftImageData) || null);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+/**
+ * 服追加の下書き写真を消去 (条件1: 取り込み成功時または明示的な破棄時に呼び出し)
+ */
+export async function clearDraftImage(): Promise<void> {
+  const db = await getDraftDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_DRAFT, 'readwrite');
+    const store = tx.objectStore(STORE_DRAFT);
+    store.delete(DRAFT_KEY);
+
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
 }

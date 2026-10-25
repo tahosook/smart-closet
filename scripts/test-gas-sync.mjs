@@ -37,6 +37,7 @@ const {
   validateSingleClosetItem,
   mergeSingleItemIntoClosetData,
   analyzeWardrobeStats,
+  switchDraftItemCategory,
 } = closetDomain;
 
 console.log('🧪 Running GAS backend and sync logic tests...');
@@ -2303,6 +2304,132 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
   assert.ok(hugeRes.error.includes('2MB'), 'Error message must specify 2MB limit');
 
   console.log('  ✅ uploadImage Fail-Closed auth, server SSOT folder & overwrite tests verified');
+}
+
+// -------------------------------------------------------------
+// Test Case 20: ID接頭辞・カテゴリ一致検証、種別切替相性クリアヘルパー、下書きストア非干渉検証 (Phase 1 恒常テスト)
+// -------------------------------------------------------------
+{
+  const rawCloset = JSON.parse(fs.readFileSync(path.join(projectRoot, 'src/data/closet.json'), 'utf-8'));
+
+  // 1. ID接頭辞とカテゴリの一致検証 (validateSingleClosetItem)
+  const baseItem = {
+    name: 'テストアイテム',
+    imageUrl: '/images/S10.jpg',
+    seasonSleeve: '長袖・通年',
+    dressScore: 4.0,
+    comfortScore: 4.0,
+    officeRecommendIds: [],
+    remoteRecommendIds: [],
+    ngIds: [],
+    ngReason: 'なし',
+    notes: 'テスト',
+  };
+
+  // 1a. シャツなのに P16 は拒否
+  const wrongPrefixShirt = validateSingleClosetItem(
+    { ...baseItem, id: 'P16', category: 'shirt' },
+    rawCloset
+  );
+  assert.equal(wrongPrefixShirt.valid, false, 'Shirt with P16 must be rejected');
+  assert.ok(wrongPrefixShirt.error.includes('形式が一致しません'), 'Error must specify prefix mismatch');
+
+  // 1b. パンツなのに S10 は拒否
+  const wrongPrefixPants = validateSingleClosetItem(
+    { ...baseItem, id: 'S10', category: 'pants', imageUrl: '/images/P16.jpg' },
+    rawCloset
+  );
+  assert.equal(wrongPrefixPants.valid, false, 'Pants with S10 must be rejected');
+  assert.ok(wrongPrefixPants.error.includes('形式が一致しません'), 'Error must specify prefix mismatch');
+
+  // 1c. S0 や Sabc 等の不正フォーマットは拒否
+  assert.equal(validateSingleClosetItem({ ...baseItem, id: 'S0', category: 'shirt' }, rawCloset).valid, false);
+  assert.equal(validateSingleClosetItem({ ...baseItem, id: 'Sabc', category: 'shirt' }, rawCloset).valid, false);
+  assert.equal(validateSingleClosetItem({ ...baseItem, id: 'P_1', category: 'pants' }, rawCloset).valid, false);
+
+  // 1d. 正しい接頭辞 (S10, P16) は通過。小文字 (s10, p16) も大文字正規化されて通過
+  const validShirt = validateSingleClosetItem({ ...baseItem, id: 'S10', category: 'shirt' }, rawCloset);
+  assert.equal(validShirt.valid, true, 'Valid S10 shirt must pass');
+  assert.equal(validShirt.item?.id, 'S10');
+
+  const validShirtLower = validateSingleClosetItem({ ...baseItem, id: 's10', category: 'shirt' }, rawCloset);
+  assert.equal(validShirtLower.valid, true, 'Lowercase s10 must be normalized and pass');
+  assert.equal(validShirtLower.item?.id, 'S10', 'Normalized id must be uppercase S10');
+
+  const validPants = validateSingleClosetItem(
+    { ...baseItem, id: 'P16', category: 'pants', imageUrl: '/images/P16.jpg' },
+    rawCloset
+  );
+  assert.equal(validPants.valid, true, 'Valid P16 pants must pass');
+  assert.equal(validPants.item?.id, 'P16');
+
+  const validPantsLower = validateSingleClosetItem(
+    { ...baseItem, id: 'p16', category: 'pants', imageUrl: '/images/p16.jpg' },
+    rawCloset
+  );
+  assert.equal(validPantsLower.valid, true, 'Lowercase p16 must be normalized and pass');
+  assert.equal(validPantsLower.item?.id, 'P16', 'Normalized id must be uppercase P16');
+
+  // 2. 【条件2検証】種別切替ヘルパー (switchDraftItemCategory)
+  // Gemini が最初シャツとして判定した相性リスト（相手: パンツID）を持つドラフト
+  const shirtDraft = {
+    id: 'S10',
+    category: 'shirt',
+    name: 'ネイビーシャツ',
+    imageUrl: '/images/S10.jpg',
+    seasonSleeve: '長袖・通年',
+    dressScore: 3.5,
+    comfortScore: 4.0,
+    officeRecommendIds: ['P3', 'P8'],
+    remoteRecommendIds: ['P1'],
+    ngIds: ['P5'],
+    ngReason: '同系色濃紺による作業着見え',
+    notes: 'テストシャツ',
+  };
+
+  // パンツへ種別切替を実行
+  const switchedToPants = switchDraftItemCategory(shirtDraft, 'pants', rawCloset.items);
+  assert.equal(switchedToPants.category, 'pants', 'Category must be switched to pants');
+  assert.equal(switchedToPants.id, 'P16', 'ID must be updated to next sequential pants ID (P16)');
+  assert.equal(switchedToPants.imageUrl, '/images/P16.jpg', 'imageUrl must be updated to /images/P16.jpg');
+  assert.deepEqual(switchedToPants.officeRecommendIds, [], 'officeRecommendIds must be cleared to []');
+  assert.deepEqual(switchedToPants.remoteRecommendIds, [], 'remoteRecommendIds must be cleared to []');
+  assert.deepEqual(switchedToPants.ngIds, [], 'ngIds must be cleared to []');
+  assert.equal(switchedToPants.ngReason, 'なし', 'ngReason must be reset to なし');
+
+  // 切替後のアイテムが validateSingleClosetItem を正常に通過することを確認
+  const switchedValidation = validateSingleClosetItem(switchedToPants, rawCloset);
+  assert.equal(switchedValidation.valid, true, 'Switched pants must pass validateSingleClosetItem');
+
+  // 3. 【条件1検証】下書き画像ストアと本保存ストアの分離・pruneImages 非干渉
+  const imageStoreCode = fs.readFileSync(path.join(projectRoot, 'src/utils/imageStore.ts'), 'utf-8');
+  assert.ok(
+    imageStoreCode.includes('smart_closet_draft_db'),
+    'imageStore.ts must declare separate database smart_closet_draft_db for drafts'
+  );
+  assert.ok(
+    imageStoreCode.includes('saveDraftImage') &&
+      imageStoreCode.includes('getDraftImage') &&
+      imageStoreCode.includes('clearDraftImage'),
+    'imageStore.ts must export saveDraftImage, getDraftImage, clearDraftImage'
+  );
+  assert.ok(
+    imageStoreCode.includes('deleteImageBlob'),
+    'imageStore.ts must export deleteImageBlob'
+  );
+
+  // pruneImages が STORE_IMAGES のみを対象とし、draft DB に触れないことをコード整合性で担保
+  const pruneImagesStart = imageStoreCode.indexOf('export async function pruneImages');
+  const pruneImagesEnd = imageStoreCode.indexOf('export async function clearAllImages', pruneImagesStart);
+  const pruneImagesFnStr = imageStoreCode.slice(pruneImagesStart, pruneImagesEnd);
+  assert.ok(pruneImagesFnStr.includes('getAllImageKeys()'), 'pruneImages must query getAllImageKeys');
+  assert.equal(
+    pruneImagesFnStr.includes('DRAFT_DB_NAME') || pruneImagesFnStr.includes('STORE_DRAFT'),
+    false,
+    'pruneImages must NOT touch draft database or store'
+  );
+
+  console.log('  ✅ ID prefix validation, switchDraftItemCategory, and draft store isolation verified');
 }
 
 console.log('🎉 All GAS backend & sync logic tests passed successfully!');

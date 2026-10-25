@@ -397,7 +397,7 @@ export function validateSingleClosetItem(
     return { valid: false, error: 'アイテムがオブジェクト形式ではありません。' };
   }
 
-  const candidate = item as Partial<ClosetItem>;
+  let candidate = item as Partial<ClosetItem>;
 
   if (!candidate.id || typeof candidate.id !== 'string' || !/^[A-Za-z0-9_-]+$/.test(candidate.id)) {
     return {
@@ -405,6 +405,10 @@ export function validateSingleClosetItem(
       error: `アイテムID "${candidate.id}" が不正です（英数字、ハイフン、アンダースコアのみ）。`,
     };
   }
+
+  // 大文字に正規化 (例: s10 -> S10, p16 -> P16)
+  const normalizedId = candidate.id.trim().toUpperCase();
+  candidate = { ...candidate, id: normalizedId };
 
   if (candidate.category !== 'shirt' && candidate.category !== 'pants') {
     return {
@@ -414,11 +418,21 @@ export function validateSingleClosetItem(
   }
 
   // 同一IDの既存アイテムが存在する場合、カテゴリの一致を必須とする（異カテゴリ上書きによるデータ破壊防止）
-  const existingSameId = existingData.items.find((i) => i.id === candidate.id);
+  const existingSameId = existingData.items.find((i) => i.id === normalizedId);
   if (existingSameId && existingSameId.category !== candidate.category) {
     return {
       valid: false,
-      error: `ID "${candidate.id}" は既にカテゴリ "${existingSameId.category}" として存在するため、カテゴリ "${candidate.category}" での上書きはできません。`,
+      error: `ID "${normalizedId}" は既にカテゴリ "${existingSameId.category}" として存在するため、カテゴリ "${candidate.category}" での上書きはできません。`,
+    };
+  }
+
+  // カテゴリとID接頭辞の一致チェック (shirt なら S + 正の整数、pants なら P + 正の整数)
+  const expectedPrefix = candidate.category === 'shirt' ? 'S' : 'P';
+  const idPattern = new RegExp(`^${expectedPrefix}[1-9]\\d*$`);
+  if (!idPattern.test(normalizedId)) {
+    return {
+      valid: false,
+      error: `カテゴリ "${candidate.category}" に対してアイテムID "${normalizedId}" の形式が一致しません（"${expectedPrefix}" + 正の整数、例: ${expectedPrefix}10 である必要があります）。`,
     };
   }
 
@@ -728,5 +742,31 @@ export function analyzeWardrobeStats(
     bottleneckShirts,
     bottleneckPants,
     officeAcePants,
+  };
+}
+
+/**
+ * 下書きアイテムの種別 (shirt ↔ pants) を切り替える純粋関数 (条件2)
+ * - category を targetCategory に更新
+ * - id を targetCategory の次連番 (getNextSequentialId) に更新
+ * - imageUrl を `/images/${newId}.jpg` に更新
+ * - 3つの相性リスト (officeRecommendIds, remoteRecommendIds, ngIds) を [] に自動クリア
+ * - ngReason を 'なし' に初期化
+ */
+export function switchDraftItemCategory(
+  draftItem: Partial<ClosetItem>,
+  targetCategory: Category,
+  existingItems: ClosetItem[]
+): Partial<ClosetItem> {
+  const newId = getNextSequentialId(existingItems, targetCategory);
+  return {
+    ...draftItem,
+    category: targetCategory,
+    id: newId,
+    imageUrl: `/images/${newId}.jpg`,
+    officeRecommendIds: [],
+    remoteRecommendIds: [],
+    ngIds: [],
+    ngReason: 'なし',
   };
 }
