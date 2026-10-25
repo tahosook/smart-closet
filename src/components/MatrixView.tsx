@@ -146,55 +146,103 @@ export const MatrixView: React.FC = () => {
         </h3>
 
         {/* Bias Insights Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <div className="p-4 bg-slate-800/80 border border-slate-700/70 rounded-2xl space-y-2">
-            <div className="text-xs font-bold text-amber-300 flex items-center gap-1.5">
-              <Lightbulb className="w-4 h-4 text-amber-400" />
-              <span>出社エース（P3・P8・P9）への依存度過多</span>
-            </div>
-            <p className="text-xs text-slate-300 leading-relaxed">
-              出社推奨パンツ15本中、安心感のある出社スラックスは <strong>P8（濃紺）</strong>、<strong>P9（ミディアムグレー）</strong>、<strong>P3（グレージュ）</strong> の実質3本に偏っています。週3回以上の出社が続くと冷却期間（連続着用回避）がタイトになる傾向があります。
-            </p>
-          </div>
+        {(() => {
+          const officeAcePants = pants.filter((p) => p.dressScore >= 3.5);
+          const s1Item = shirts.find((s) => s.id === 'S1');
+          const s1CompatibleOfficePants = s1Item
+            ? officeAcePants.filter((p) => !isNgPair('S1', p.id).isNg)
+            : [];
+          const blackOfficeSlacks = pants.find((p) => p.name.includes('黒') && p.dressScore >= 3.5);
+          const nextPantsId = `P${pants.length + 1}`;
 
-          <div className="p-4 bg-slate-800/80 border border-slate-700/70 rounded-2xl space-y-2">
-            <div className="text-xs font-bold text-sky-300 flex items-center gap-1.5">
-              <AlertTriangle className="w-4 h-4 text-sky-400" />
-              <span>S1（濃インディゴ）の出社相手不足</span>
-            </div>
-            <p className="text-xs text-slate-300 leading-relaxed">
-              S1は濃いネイビーのため、ネイビー系パンツ（P1, P5, P6, P8, P11）と合わせると「作業着見え」で奥様NGになります。実質的にP3・P9・P12（オリーブ）の3本しか合わせられず、着回しが制限されています。
-            </p>
-          </div>
-        </div>
+          return (
+            <div className="space-y-3">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div className="p-4 bg-slate-800/80 border border-slate-700/70 rounded-2xl space-y-2">
+                  <div className="text-xs font-bold text-amber-300 flex items-center gap-1.5">
+                    <Lightbulb className="w-4 h-4 text-amber-400" />
+                    <span>出社エース（ドレス度3.5以上）: 現在 {officeAcePants.length} 本</span>
+                  </div>
+                  <p className="text-xs text-slate-300 leading-relaxed">
+                    パンツ全{pants.length}本中、安心感のある出社スラックスは{' '}
+                    <strong>{officeAcePants.map((p) => `${p.id}（${p.name.slice(0, 7)}）`).join('、')}</strong> の計{officeAcePants.length}本です。
+                    {officeAcePants.length <= 4
+                      ? ' 週3回以上の出社が続くと冷却期間（連続着用回避）がタイトになりやすいため、着回しハブの強化が推奨されます。'
+                      : ' 出社スラックス層がバランスよく揃っており、冷却期間を保ちながらローテーション可能です。'}
+                  </p>
+                </div>
 
-        {/* Recommended Buy Items */}
-        <div className="p-4 bg-gradient-to-r from-slate-900 to-blue-950/80 border border-blue-600/50 rounded-2xl shadow-xl space-y-3">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-blue-300 uppercase tracking-wider flex items-center gap-1.5">
-              <ShoppingBag className="w-4 h-4 text-blue-400" />
-              <span>【最優先】買い足すべき救世主アイテム</span>
-            </span>
-            <span className="text-[10px] bg-blue-600 text-white font-bold px-2 py-0.5 rounded-full">
-              投資対効果 ★★★★★
-            </span>
-          </div>
+                <div className="p-4 bg-slate-800/80 border border-slate-700/70 rounded-2xl space-y-2">
+                  <div className="text-xs font-bold text-sky-300 flex items-center gap-1.5">
+                    <AlertTriangle className="w-4 h-4 text-sky-400" />
+                    <span>S1（濃インディゴ）の出社パートナー: {s1CompatibleOfficePants.length} 本</span>
+                  </div>
+                  <p className="text-xs text-slate-300 leading-relaxed">
+                    S1は濃いネイビーのため、ネイビー系パンツと合わせると「作業着見え」で奥様NGになります。
+                    現在出社で合わせられるパンツは{' '}
+                    <strong>
+                      {s1CompatibleOfficePants.length > 0
+                        ? s1CompatibleOfficePants.map((p) => p.id).join('、')
+                        : 'なし'}
+                    </strong>{' '}
+                    （計{s1CompatibleOfficePants.length}本）です。黒スラックスなどの導入でさらに着回しが広がります。
+                  </p>
+                </div>
+              </div>
 
-          <div className="p-3 bg-slate-900/90 rounded-xl border border-slate-700/60 space-y-2">
-            <div className="flex items-center justify-between">
-              <h4 className="text-sm font-bold text-white">
-                黒テーパードスラックス（通年・ドレス度4.5）
-              </h4>
-              <span className="text-xs text-slate-400 font-mono">P16候補</span>
+              {/* Recommended Buy Items or Congratulatory Card */}
+              {blackOfficeSlacks ? (
+                <div className="p-4 bg-gradient-to-r from-emerald-950/70 via-slate-900 to-teal-950/70 border border-emerald-600/50 rounded-2xl shadow-xl space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-emerald-300 uppercase tracking-wider flex items-center gap-1.5">
+                      <ShoppingBag className="w-4 h-4 text-emerald-400" />
+                      <span>【導入完了】万能出社ハブ（黒スラックス）稼働中</span>
+                    </span>
+                    <span className="text-[10px] bg-emerald-600 text-white font-bold px-2 py-0.5 rounded-full">
+                      ワードローブ強化済み ★★★★★
+                    </span>
+                  </div>
+                  <div className="p-3 bg-slate-900/90 rounded-xl border border-slate-700/60 space-y-1.5">
+                    <h4 className="text-sm font-bold text-white flex items-center gap-2">
+                      <span>{blackOfficeSlacks.name}</span>
+                      <span className="text-xs text-emerald-400 font-mono">({blackOfficeSlacks.id})</span>
+                    </h4>
+                    <p className="text-xs text-slate-300 leading-relaxed">
+                      手持ちに黒スラックスが登録されており、S1（濃インディゴ）をはじめ、白シャツ・サックス・生成りまで全シャツの出社コーデが万能ハブとして解禁されています。
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <div className="p-4 bg-gradient-to-r from-slate-900 to-blue-950/80 border border-blue-600/50 rounded-2xl shadow-xl space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-blue-300 uppercase tracking-wider flex items-center gap-1.5">
+                      <ShoppingBag className="w-4 h-4 text-blue-400" />
+                      <span>【最優先】買い足すべき救世主アイテム</span>
+                    </span>
+                    <span className="text-[10px] bg-blue-600 text-white font-bold px-2 py-0.5 rounded-full">
+                      投資対効果 ★★★★★
+                    </span>
+                  </div>
+
+                  <div className="p-3 bg-slate-900/90 rounded-xl border border-slate-700/60 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <h4 className="text-sm font-bold text-white">
+                        黒テーパードスラックス（通年・ドレス度4.5）
+                      </h4>
+                      <span className="text-xs text-slate-400 font-mono">{nextPantsId}候補</span>
+                    </div>
+                    <p className="text-xs text-slate-300 leading-relaxed">
+                      現在出社できる黒スラックスが未導入です。「出社できる黒スラックス」を1本導入するだけで、S1（濃インディゴ）をはじめ、白シャツ全種、サックス、生成りまで <strong>全シャツの出社コーデが即座に解禁</strong> されます。
+                    </p>
+                    <div className="text-[11px] text-blue-400 font-medium pt-1">
+                      おすすめ仕様: ノータック〜ワンタック、ポリエステル混紡でシワになりにくく自宅洗濯可能なもの。
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
-            <p className="text-xs text-slate-300 leading-relaxed">
-              現在手持ちの黒パンツは <strong>P2（黒スウェット）</strong> のみで出社不可です。「出社できる黒スラックス」を1本導入するだけで、S1（濃インディゴ）をはじめ、白シャツ全種、サックス、生成りまで <strong>全9シャツの出社コーデが即座に解禁</strong> されます。
-            </p>
-            <div className="text-[11px] text-blue-400 font-medium pt-1">
-              おすすめ仕様: ノータック〜ワンタック、ポリエステル混紡でシワになりにくく自宅洗濯可能なもの。
-            </div>
-          </div>
-        </div>
+          );
+        })()}
       </section>
 
       {/* Selected Pair Preview Modal */}

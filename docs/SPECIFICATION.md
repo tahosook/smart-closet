@@ -141,6 +141,7 @@ export interface ClosetItem {
 
 export interface ClosetData {
   items: ClosetItem[];
+  updatedAt?: number;            // カスタム服データの作成・インポート時刻
 }
 
 export interface WearRecord {
@@ -178,6 +179,53 @@ export interface GasSyncConfig {
   secretToken?: string;
   autoSync: boolean;
   lastSyncedAt?: string;
+  imageFolderId?: string;
+  imagesLastUpdatedAt?: number;
+}
+
+export interface SyncTombstones {
+  deletedWearMap: Record<string, number>;   // { [id]: deletedAtTimestamp }
+  wearHistoryClearedAt?: number;
+  deletedWifeNgMap: Record<string, number>; // { [shirtId_pantsId]: deletedAtTimestamp }
+  clearCustomClosetData?: boolean;
+  customClosetDataClearedAt?: number;       // カスタムデータリセット実行時刻タイムスタンプ
+}
+
+export interface GasSyncPayload {
+  action: 'push' | 'pull';
+  token?: string;
+  wearHistory?: WearRecord[];
+  wifeNgPairs?: WifeNgPair[];
+  customClosetData?: ClosetData;
+  customClosetDataUpdatedAt?: number;
+  clearCustomClosetData?: boolean;
+  customClosetDataClearedAt?: number;
+  deletedWearMap?: Record<string, number>;
+  wearHistoryClearedAt?: number;
+  deletedWifeNgMap?: Record<string, number>;
+  itemNamesMap?: Record<string, string>;
+  imageFolderId?: string;
+}
+
+export interface GasSyncResponse {
+  ok: boolean;
+  error?: string;
+  wearHistory?: WearRecord[];
+  wifeNgPairs?: WifeNgPair[];
+  customClosetData?: ClosetData | null;
+  customClosetDataClearedAt?: number;
+  tombstones?: SyncTombstones;
+  imageFolderId?: string;
+  imagesLastUpdatedAt?: number;
+  syncedAt?: string;
+}
+
+export interface BootstrapConfigResponse {
+  ok: boolean;
+  webAppUrl?: string;
+  secretToken?: string;
+  userEmail?: string;
+  error?: string;
 }
 ```
 

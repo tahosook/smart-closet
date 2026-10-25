@@ -52,12 +52,12 @@ export const AiSyncView: React.FC = () => {
 - アイテム名: ${newItemName}
 - 季節・袖丈: ${newItemSleeve}
 - 特徴・素材・シルエット: ${newItemNotes || '特になし'}
-- 画像配置パス: /images/${targetId}.jpg`
+- 写真の保管: Google ドライブの非公開フォルダに「${targetId}.jpg」として保存（※JSONスキーマの imageUrl には互換性のため "/images/${targetId}.jpg" を指定してください）`
       : `【新規追加する服の情報】
 - ID: ${targetId}
 - カテゴリ: ${newCategory === 'shirt' ? 'シャツ (shirt)' : 'パンツ (pants)'}
 - 特徴: 添付の写真を参照してアイテム名・特徴・スコアを判定してください。
-- 画像配置パス: /images/${targetId}.jpg`;
+- 写真の保管: Google ドライブの非公開フォルダに「${targetId}.jpg」として保存（※JSONスキーマの imageUrl には互換性のため "/images/${targetId}.jpg" を指定してください）`;
 
     const promptText = `あなたは40代後半男性（オフィス出社・リモートワーク併用）専属のプロスタイリストAIです。
 以下の「新規追加する服の情報」を、現在の「スマートクローゼットのマスターJSONデータ」に追加し、既存の服との相性・NG判定を更新した【完全な更新後JSON】を出力してください。
@@ -75,12 +75,27 @@ ${itemInfoText}
 6. **買い足しハブ（黒スラックス等）の優遇**: もし黒の綺麗めテーパードスラックスが追加された場合は、S1濃紺、S3サックス、S5小紋柄、S8生成りなど、出社相手に困っていた全シャツの出社第1〜第2候補ハブとして積極的に組み込んでください。
 7. **双方向整合性の保持**: 新規アイテムを追加した際は、関係する既存アイテムの officeRecommendIds / remoteRecommendIds / ngIds も相互に更新し、RecommendとngIdsが重複しないようにしてください。
 
+### 出力スキーマ厳密制約（アプリのランタイムバリデーションを通過させること）
+各アイテムオブジェクトは以下の全フィールドを必ず持ち、型と制約を満たす必要があります（nullや欠落は不可）：
+- \`id\`: string (英数字・ハイフン・アンダースコアのみ。例: "${targetId}")
+- \`category\`: "shirt" または "pants"
+- \`name\`: string (日本語の名称)
+- \`imageUrl\`: string ("/images/{ID}.jpg" 形式固定)
+- \`seasonSleeve\`: string (例: "長袖・通年", "春夏・半袖", "通年")
+- \`dressScore\`: number (1.0 〜 5.0 の数値)
+- \`comfortScore\`: number (1.0 〜 5.0 の数値)
+- \`officeRecommendIds\`: string[] (文字列配列。対象がない場合は空配列 [])
+- \`remoteRecommendIds\`: string[] (文字列配列。対象がない場合は空配列 [])
+- \`ngIds\`: string[] (文字列配列。対象がない場合は空配列 [])
+- \`ngReason\`: string (NGがない場合は "なし" と記載)
+- \`notes\`: string (役割・特徴の簡潔なメモ)
+
 ### 現在のマスターJSONデータ（奥様NG反映済み）:
 \`\`\`json
 ${JSON.stringify(mergedClosetData, null, 2)}
 \`\`\`
 
-出力形式: 説明文や前置きは含めず、上記スキーマを満たす単一の有効なJSONコードブロック（\`\`\`json ... \`\`\`）のみを出力してください。`;
+出力形式: 説明文や前置きは一切含めず、上記スキーマを満たす単一の有効なJSONコードブロック（\`\`\`json ... \`\`\`）のみを出力してください。`;
 
     navigator.clipboard.writeText(promptText);
     setCopiedPrompt(true);

@@ -19,6 +19,22 @@ const syncReconcile = await import(
 );
 const { pruneCompletedTombstones, hasRemainingTombstones, reconcileSyncResponse } = syncReconcile;
 
+const closetDomainTsPath = path.join(projectRoot, 'src/utils/closetDomain.ts');
+const closetDomainCode = fs.readFileSync(closetDomainTsPath, 'utf-8');
+const transpiledDomainJs = ts.transpileModule(closetDomainCode, {
+  compilerOptions: { module: ts.ModuleKind.ESNext },
+}).outputText;
+const closetDomain = await import(
+  'data:text/javascript;base64,' + Buffer.from(transpiledDomainJs).toString('base64')
+);
+const {
+  validateClosetDataSchema,
+  mergeClosetDataWithWifeNg,
+  checkIsNgPair,
+  getAffinityReason,
+  calculateRecommendationsForShirt,
+} = closetDomain;
+
 console.log('🧪 Running GAS backend and sync logic tests...');
 
 // 1. gas/Code.gs Single Source of Truth および GasSyncModal ?raw import の検証
@@ -1773,6 +1789,100 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
   assert.equal(localGasConfig.imageFolderId, 'drive-folder-server-ssot', 'localGasConfig must be automatically updated with imageFolderId');
 
   console.log('  ✅ Bootstrap trigger condition & imageFolderId SSOT sync verified');
+}
+
+// -------------------------------------------------------------
+// 17. ドメインロジック & ランタイムバリデータの単体テスト
+// -------------------------------------------------------------
+{
+  const rawCloset = JSON.parse(fs.readFileSync(path.join(projectRoot, 'src/data/closet.json'), 'utf-8'));
+
+  // 1. 正常なマスターデータの検証
+  const validRes = validateClosetDataSchema(rawCloset);
+  assert.equal(validRes.valid, true, 'Original closet.json must pass validateClosetDataSchema');
+  assert.ok(validRes.data && validRes.data.items.length === 24, 'Validated items must match 24');
+
+  // 2. 欠落・型不正の拒否検証 (ChatGPT & Grok 2 指摘事項含む)
+  // 2a. items が配列でない / 空
+  assert.equal(validateClosetDataSchema({ items: 'not-array' }).valid, false);
+  assert.equal(validateClosetDataSchema({ items: [] }).valid, false);
+
+  // 2b. updatedAt が非数値
+  assert.equal(validateClosetDataSchema({ items: rawCloset.items, updatedAt: 'not-a-number' }).valid, false);
+
+  // 2c. imageUrl が欠落 / 非文字列
+  const missingImageUrl = JSON.parse(JSON.stringify(rawCloset));
+  delete missingImageUrl.items[0].imageUrl;
+  assert.equal(validateClosetDataSchema(missingImageUrl).valid, false);
+  missingImageUrl.items[0].imageUrl = {};
+  assert.equal(validateClosetDataSchema(missingImageUrl).valid, false);
+
+  // 2d. notes が欠落 / 非文字列
+  const missingNotes = JSON.parse(JSON.stringify(rawCloset));
+  delete missingNotes.items[0].notes;
+  assert.equal(validateClosetDataSchema(missingNotes).valid, false);
+  missingNotes.items[0].notes = null;
+  assert.equal(validateClosetDataSchema(missingNotes).valid, false);
+
+  // 2e. スコアが不正 (1.0 - 5.0 範囲外 / 文字列)
+  const invalidScore = JSON.parse(JSON.stringify(rawCloset));
+  invalidScore.items[0].dressScore = 6.0;
+  assert.equal(validateClosetDataSchema(invalidScore).valid, false);
+  invalidScore.items[0].dressScore = '4.5';
+  assert.equal(validateClosetDataSchema(invalidScore).valid, false);
+
+  // 2f. 配列要素が文字列でない
+  const invalidArrayEl = JSON.parse(JSON.stringify(rawCloset));
+  invalidArrayEl.items[0].ngIds = [123];
+  assert.equal(validateClosetDataSchema(invalidArrayEl).valid, false);
+
+  // 2g. 存在しない ID の参照
+  const nonExistentRef = JSON.parse(JSON.stringify(rawCloset));
+  nonExistentRef.items[0].officeRecommendIds.push('P999');
+  assert.equal(validateClosetDataSchema(nonExistentRef).valid, false);
+
+  // 2h. 推薦と NG の重複矛盾
+  const conflictItem = JSON.parse(JSON.stringify(rawCloset));
+  conflictItem.items[0].ngIds.push(conflictItem.items[0].officeRecommendIds[0]);
+  assert.equal(validateClosetDataSchema(conflictItem).valid, false);
+
+  // 3. 推薦・冷却スコアリングロジック (calculateRecommendationsForShirt)
+  const itemMap = new Map();
+  rawCloset.items.forEach((item) => itemMap.set(item.id, item));
+  const pants = rawCloset.items.filter((item) => item.category === 'pants');
+
+  // 3a. オフィス出社モードでのスウェット・ジョガー除外 (dressScore < 3.0)
+  const officeRecs = calculateRecommendationsForShirt('S2', 'office', itemMap, pants, [], new Set());
+  const sweatPantsIds = ['P2', 'P4', 'P13', 'P14', 'P15'];
+  for (const sweatId of sweatPantsIds) {
+    const isRecommended = officeRecs.recommended.some((r) => r.pants.id === sweatId);
+    const isOtherOk = officeRecs.otherOk.some((r) => r.pants.id === sweatId);
+    assert.equal(isRecommended, false, `Sweatpants ${sweatId} must NOT be in recommended for office`);
+    assert.equal(isOtherOk, false, `Sweatpants ${sweatId} must NOT be in otherOk for office`);
+    assert.ok(officeRecs.ngList.some((n) => n.pants.id === sweatId), `Sweatpants ${sweatId} must be in ngList for office`);
+  }
+
+  // 3b. 昨日着用パンツ（冷却中）の末尾降格
+  const yesterdayWorn = new Set(['P8']); // P8 は S2 のオフィス第1候補
+  const coolingRecs = calculateRecommendationsForShirt('S2', 'office', itemMap, pants, [], yesterdayWorn);
+  const p8Rec = coolingRecs.recommended.find((r) => r.pants.id === 'P8');
+  assert.ok(p8Rec, 'P8 must still be in recommended list');
+  assert.equal(p8Rec.isYesterdayWorn, true, 'P8 must be marked as isYesterdayWorn');
+  // 昨日着用でない推薦パンツが P8 より上位にあること
+  const topRec = coolingRecs.recommended[0];
+  assert.equal(topRec.isYesterdayWorn, false, 'Top recommendation must not be yesterday worn pants');
+  assert.ok(p8Rec.rank > topRec.rank, 'Yesterday worn pants must be demoted in rank');
+
+  // 3c. 奥様 NG ペアの即時除外
+  const wifeNgPairs = [{ shirtId: 'S2', pantsId: 'P8', reason: '🚨 奥様ダメ出し', createdAt: new Date().toISOString() }];
+  const wifeNgRecs = calculateRecommendationsForShirt('S2', 'office', itemMap, pants, wifeNgPairs, new Set());
+  assert.equal(wifeNgRecs.recommended.some((r) => r.pants.id === 'P8'), false, 'Wife NG pair must be completely removed from recommended');
+  assert.equal(wifeNgRecs.otherOk.some((r) => r.pants.id === 'P8'), false, 'Wife NG pair must be completely removed from otherOk');
+  const p8WifeNg = wifeNgRecs.ngList.find((n) => n.pants.id === 'P8');
+  assert.ok(p8WifeNg, 'P8 must be in ngList');
+  assert.equal(p8WifeNg.isWifeNg, true, 'isWifeNg flag must be true');
+
+  console.log('  ✅ Domain logic & runtime schema validator unit tests verified');
 }
 
 console.log('🎉 All GAS backend & sync logic tests passed successfully!');
