@@ -2351,10 +2351,20 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
   const validShirt = validateSingleClosetItem({ ...baseItem, id: 'S10', category: 'shirt' }, rawCloset);
   assert.equal(validShirt.valid, true, 'Valid S10 shirt must pass');
   assert.equal(validShirt.item?.id, 'S10');
+  assert.equal(validShirt.item?.imageUrl, '/images/S10.jpg', 'imageUrl must be normalized to /images/S10.jpg');
 
-  const validShirtLower = validateSingleClosetItem({ ...baseItem, id: 's10', category: 'shirt' }, rawCloset);
+  // 小文字 s10 かつ 不一致・小文字の imageUrl (/images/s10.png) を指定した場合でも /images/S10.jpg に正規化
+  const validShirtLower = validateSingleClosetItem(
+    { ...baseItem, id: 's10', category: 'shirt', imageUrl: '/images/s10.png' },
+    rawCloset
+  );
   assert.equal(validShirtLower.valid, true, 'Lowercase s10 must be normalized and pass');
   assert.equal(validShirtLower.item?.id, 'S10', 'Normalized id must be uppercase S10');
+  assert.equal(
+    validShirtLower.item?.imageUrl,
+    '/images/S10.jpg',
+    'imageUrl must be normalized to /images/S10.jpg from mismatched/lowercase input'
+  );
 
   const validPants = validateSingleClosetItem(
     { ...baseItem, id: 'P16', category: 'pants', imageUrl: '/images/P16.jpg' },
@@ -2362,13 +2372,32 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
   );
   assert.equal(validPants.valid, true, 'Valid P16 pants must pass');
   assert.equal(validPants.item?.id, 'P16');
+  assert.equal(validPants.item?.imageUrl, '/images/P16.jpg');
 
+  // 小文字 p16 かつ 小文字 imageUrl (/images/p16.jpg) を指定した場合でも /images/P16.jpg に正規化
   const validPantsLower = validateSingleClosetItem(
     { ...baseItem, id: 'p16', category: 'pants', imageUrl: '/images/p16.jpg' },
     rawCloset
   );
   assert.equal(validPantsLower.valid, true, 'Lowercase p16 must be normalized and pass');
   assert.equal(validPantsLower.item?.id, 'P16', 'Normalized id must be uppercase P16');
+  assert.equal(
+    validPantsLower.item?.imageUrl,
+    '/images/P16.jpg',
+    'imageUrl must be normalized to /images/P16.jpg even if input is lowercase /images/p16.jpg'
+  );
+
+  // 全く不一致な imageUrl (/images/old_item.jpg) が渡された場合でも確定IDで正規化
+  const validPantsMismatched = validateSingleClosetItem(
+    { ...baseItem, id: 'P16', category: 'pants', imageUrl: '/images/mismatched_photo.jpg' },
+    rawCloset
+  );
+  assert.equal(validPantsMismatched.valid, true);
+  assert.equal(
+    validPantsMismatched.item?.imageUrl,
+    '/images/P16.jpg',
+    'Mismatched imageUrl must be normalized to /images/P16.jpg based on finalized ID'
+  );
 
   // 2. 【条件2検証】種別切替ヘルパー (switchDraftItemCategory)
   // Gemini が最初シャツとして判定した相性リスト（相手: パンツID）を持つドラフト

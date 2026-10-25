@@ -444,6 +444,9 @@ export function validateSingleClosetItem(
     return { valid: false, error: `[${candidate.id}] の imageUrl は文字列である必要があります。` };
   }
 
+  // imageUrl を確定した ID（大文字正規化後の ID）に基づく標準パス (/images/${normalizedId}.jpg) へ正規化
+  candidate = { ...candidate, imageUrl: `/images/${normalizedId}.jpg` };
+
   if (typeof candidate.notes !== 'string') {
     return { valid: false, error: `[${candidate.id}] の notes は文字列である必要があります。` };
   }
