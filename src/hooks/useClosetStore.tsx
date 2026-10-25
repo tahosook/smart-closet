@@ -20,6 +20,8 @@ import {
 } from '../utils/syncReconcile';
 import {
   validateClosetDataSchema,
+  validateSingleClosetItem,
+  mergeSingleItemIntoClosetData,
   mergeClosetDataWithWifeNg,
   checkIsNgPair,
   calculateRecommendationsForShirt,
@@ -82,7 +84,13 @@ export interface ClosetStoreContextType {
   clearAllWearHistory: () => void;
   registerWifeNg: (shirtId: string, pantsId: string, customReason?: string) => void;
   removeWifeNg: (shirtId: string, pantsId: string) => void;
-  importCustomData: (jsonString: string) => { success: boolean; error?: string };
+  importCustomData: (jsonString: string) => {
+    success: boolean;
+    mode?: 'single' | 'full';
+    addedItem?: ClosetItem;
+    updatedPeersCount?: number;
+    error?: string;
+  };
   resetToDefaultData: () => void;
   updateGasConfig: (newConfig: Partial<GasSyncConfig>) => void;
   pullFromGas: () => Promise<boolean>;
@@ -834,13 +842,56 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   );
 
   const importCustomData = useCallback(
-    (jsonString: string): { success: boolean; error?: string } => {
+    (
+      jsonString: string
+    ): {
+      success: boolean;
+      mode?: 'single' | 'full';
+      addedItem?: ClosetItem;
+      updatedPeersCount?: number;
+      error?: string;
+    } => {
       try {
         const parsed = JSON.parse(jsonString);
-        const validation = validateClosetDataSchema(parsed);
-        if (!validation.valid || !validation.data) {
-          return { success: false, error: validation.error || 'JSONデータの検証に失敗しました。' };
+
+        let finalData: ClosetData;
+        let mode: 'single' | 'full' = 'full';
+        let addedItem: ClosetItem | undefined = undefined;
+        let updatedPeersCount = 0;
+
+        // 単一アイテム形式（items 配列ではなく単一の ClosetItem オブジェクト）かどうかの判別
+        if (
+          parsed &&
+          typeof parsed === 'object' &&
+          !Array.isArray((parsed as any).items) &&
+          typeof (parsed as any).id === 'string'
+        ) {
+          const singleRes = validateSingleClosetItem(parsed, stateRef.current.closetData);
+          if (!singleRes.valid || !singleRes.item) {
+            return {
+              success: false,
+              error: singleRes.error || '単一アイテムの検証に失敗しました。',
+            };
+          }
+          mode = 'single';
+          addedItem = singleRes.item;
+          updatedPeersCount =
+            singleRes.item.officeRecommendIds.length +
+            singleRes.item.remoteRecommendIds.length +
+            singleRes.item.ngIds.length;
+          finalData = mergeSingleItemIntoClosetData(stateRef.current.closetData, singleRes.item);
+        } else {
+          // 全体データ形式
+          const validation = validateClosetDataSchema(parsed);
+          if (!validation.valid || !validation.data) {
+            return {
+              success: false,
+              error: validation.error || 'JSONデータの検証に失敗しました。',
+            };
+          }
+          finalData = validation.data;
         }
+
         mutationSeqRef.current++;
         customDataSeqRef.current++;
         const now = Math.max(
@@ -849,7 +900,7 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           (stateRef.current.tombstones.customClosetDataClearedAt || 0) + 1
         );
         const dataWithTimestamp: ClosetData = {
-          ...validation.data,
+          ...finalData,
           updatedAt: now,
         };
         localStorage.setItem(STORAGE_KEYS.CUSTOM_DATA, JSON.stringify(dataWithTimestamp));
@@ -863,7 +914,7 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         setClosetData(dataWithTimestamp);
         setTombstones(updatedTombstones);
         triggerBackgroundPush();
-        return { success: true };
+        return { success: true, mode, addedItem, updatedPeersCount };
       } catch (e: any) {
         return { success: false, error: e.message || 'JSONの解析に失敗しました。' };
       }
