@@ -422,6 +422,16 @@ export function validateSingleClosetItem(
     };
   }
 
+  // カテゴリとID接頭辞の一致チェック (shirt なら S + 正の整数、pants なら P + 正の整数)
+  const expectedPrefix = candidate.category === 'shirt' ? 'S' : 'P';
+  const idPattern = new RegExp(`^${expectedPrefix}[1-9]\\d*$`);
+  if (!idPattern.test(candidate.id)) {
+    return {
+      valid: false,
+      error: `カテゴリ "${candidate.category}" に対してアイテムID "${candidate.id}" の形式が一致しません（"${expectedPrefix}" + 正の整数、例: ${expectedPrefix}10 である必要があります）。`,
+    };
+  }
+
   if (!candidate.name || typeof candidate.name !== 'string' || candidate.name.trim() === '') {
     return { valid: false, error: `[${candidate.id}] のアイテム名 (name) が未設定です。` };
   }
@@ -728,5 +738,31 @@ export function analyzeWardrobeStats(
     bottleneckShirts,
     bottleneckPants,
     officeAcePants,
+  };
+}
+
+/**
+ * 下書きアイテムの種別 (shirt ↔ pants) を切り替える純粋関数 (条件2)
+ * - category を targetCategory に更新
+ * - id を targetCategory の次連番 (getNextSequentialId) に更新
+ * - imageUrl を `/images/${newId}.jpg` に更新
+ * - 3つの相性リスト (officeRecommendIds, remoteRecommendIds, ngIds) を [] に自動クリア
+ * - ngReason を 'なし' に初期化
+ */
+export function switchDraftItemCategory(
+  draftItem: Partial<ClosetItem>,
+  targetCategory: Category,
+  existingItems: ClosetItem[]
+): Partial<ClosetItem> {
+  const newId = getNextSequentialId(existingItems, targetCategory);
+  return {
+    ...draftItem,
+    category: targetCategory,
+    id: newId,
+    imageUrl: `/images/${newId}.jpg`,
+    officeRecommendIds: [],
+    remoteRecommendIds: [],
+    ngIds: [],
+    ngReason: 'なし',
   };
 }
