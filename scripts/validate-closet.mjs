@@ -193,6 +193,43 @@ scanFilesForSecrets([
   path.join(projectRoot, 'AGENTS.md'),
 ]);
 
+// 5. Broken Path Guard: Verify that file/directory paths referenced in documentation actually exist
+const docFilesToVerify = [
+  path.join(projectRoot, 'AGENTS.md'),
+  path.join(projectRoot, 'README.md'),
+  path.join(projectRoot, 'docs/OPERATIONS.md'),
+  path.join(projectRoot, 'docs/SPECIFICATION.md'),
+  path.join(projectRoot, 'docs/STYLING_RULES.md'),
+  path.join(projectRoot, '.agents/skills/manage-wardrobe/SKILL.md'),
+];
+
+// Paths explicitly abolished or mentioned as forbidden in docs
+const allowedNonexistentPaths = new Set(['public/images/']);
+
+const docPathRegex = /(?:file:\/\/\/[^\s)]*?smart-closet\/|(?:\.\/|\.\.\/)?\b)((?:src|docs|gas|scripts|functions|public|\.agents)\/[A-Za-z0-9_./-]+)/g;
+
+for (const docPath of docFilesToVerify) {
+  if (!fs.existsSync(docPath)) continue;
+  const content = fs.readFileSync(docPath, 'utf-8');
+  let match;
+  while ((match = docPathRegex.exec(content)) !== null) {
+    let rawPath = match[1];
+    rawPath = rawPath.replace(/[,\.:)\]"'`]+$/, '');
+    if (rawPath.includes('<') || rawPath.includes('>') || rawPath.includes('{') || rawPath.includes('*')) continue;
+    if (allowedNonexistentPaths.has(rawPath)) continue;
+
+    let targetPath = path.resolve(path.dirname(docPath), rawPath);
+    if (!fs.existsSync(targetPath)) {
+      targetPath = path.resolve(projectRoot, rawPath);
+    }
+
+    if (!fs.existsSync(targetPath)) {
+      const relDoc = path.relative(projectRoot, docPath);
+      errors.push(`[Broken Path Guard] Non-existent path reference "${rawPath}" found in ${relDoc}.`);
+    }
+  }
+}
+
 if (warnings.length > 0) {
   console.log(`⚠️  ${warnings.length} warning(s):`);
   warnings.forEach(w => console.log('  ' + w));

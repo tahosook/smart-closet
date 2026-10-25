@@ -143,120 +143,26 @@
 
 ## 3. データモデル (TypeScript型定義)
 
-```typescript
-export type Category = 'shirt' | 'pants';
-export type SceneMode = 'office' | 'remote';
+データモデルの厳格な TypeScript 型定義は [`src/types/closet.ts`](../src/types/closet.ts) が唯一の正本（Single Source of Truth）である。主要な型と設計意図の概要は以下の通り：
 
-export interface ClosetItem {
-  id: string;                    // 例: "S1", "P15"
-  category: Category;            // "shirt" | "pants"
-  name: string;                  // 例: "白無地長袖シャツ（紺ボタン）"
-  imageUrl: string;              // 例: "/images/S2.jpg"
-  seasonSleeve: string;          // 例: "長袖・通年", "春夏・半袖", "春夏秋・七分袖"
-  dressScore: number;            // 1.0 〜 5.0
-  comfortScore: number;          // 1.0 〜 5.0
-  officeRecommendIds: string[];  // 出社時のおすすめ相手ID配列
-  remoteRecommendIds: string[];  // リモート時のおすすめ相手ID配列
-  ngIds: string[];               // 絶対NGの相手ID配列
-  ngReason: string;              // NG理由
-  notes: string;                 // 特徴・役割メモ
-}
-
-export interface ClosetData {
-  items: ClosetItem[];
-  updatedAt?: number;            // カスタム服データの作成・インポート時刻
-}
-
-export interface WearRecord {
-  id: string;                    // 一意ID
-  date: string;                  // "YYYY-MM-DD"
-  shirtId: string;
-  pantsId: string;
-  scene: SceneMode;
-  timestamp: number;
-}
-
-export interface WifeNgPair {
-  shirtId: string;
-  pantsId: string;
-  reason: string;
-  createdAt: string;
-}
-
-export interface RecommendationResult {
-  pants: ClosetItem;
-  rank: number;
-  isYesterdayWorn: boolean;
-  score: number;
-  affinityReason: string;
-  dressScore: number;
-  comfortScore: number;
-  isOfficeRecommend: boolean;
-  isRemoteRecommend: boolean;
-}
-
-export type SyncStatus = 'unconfigured' | 'idle' | 'syncing' | 'synced' | 'offline_pending' | 'error';
-
-export interface GasSyncConfig {
-  webAppUrl: string;
-  secretToken?: string;
-  autoSync: boolean;
-  lastSyncedAt?: string;
-  imageFolderId?: string;
-  imagesLastUpdatedAt?: number;
-}
-
-export interface SyncTombstones {
-  deletedWearMap: Record<string, number>;   // { [id]: deletedAtTimestamp }
-  wearHistoryClearedAt?: number;
-  deletedWifeNgMap: Record<string, number>; // { [shirtId_pantsId]: deletedAtTimestamp }
-  clearCustomClosetData?: boolean;
-  customClosetDataClearedAt?: number;       // カスタムデータリセット実行時刻タイムスタンプ
-}
-
-export interface GasSyncPayload {
-  action: 'push' | 'pull';
-  token?: string;
-  wearHistory?: WearRecord[];
-  wifeNgPairs?: WifeNgPair[];
-  customClosetData?: ClosetData;
-  customClosetDataUpdatedAt?: number;
-  clearCustomClosetData?: boolean;
-  customClosetDataClearedAt?: number;
-  deletedWearMap?: Record<string, number>;
-  wearHistoryClearedAt?: number;
-  deletedWifeNgMap?: Record<string, number>;
-  itemNamesMap?: Record<string, string>;
-  imageFolderId?: string;
-}
-
-export interface GasSyncResponse {
-  ok: boolean;
-  error?: string;
-  wearHistory?: WearRecord[];
-  wifeNgPairs?: WifeNgPair[];
-  customClosetData?: ClosetData | null;
-  customClosetDataClearedAt?: number;
-  tombstones?: SyncTombstones;
-  imageFolderId?: string;
-  imagesLastUpdatedAt?: number;
-  syncedAt?: string;
-}
-
-export interface BootstrapConfigResponse {
-  ok: boolean;
-  webAppUrl?: string;
-  secretToken?: string;
-  userEmail?: string;
-  error?: string;
-}
-```
+| 型名 | 用途・設計意図 |
+| :--- | :--- |
+| **`ClosetItem`** | 服1着の定義（ID、カテゴリ、名称、画像パス、季節・袖丈、ドレス度/快適度スコア、出社/リモートおすすめID配列、NG相手ID配列、NG理由、メモ）。 |
+| **`ClosetData`** | 服アイテムのコレクション配列（`items: ClosetItem[]`）およびカスタムインポート更新タイムスタンプ（`updatedAt`）。 |
+| **`WearRecord`** | 日常の着用履歴（一意ID、日付 `YYYY-MM-DD`、シャツID、パンツID、シーン、タイムスタンプ）。 |
+| **`WifeNgPair`** | 奥様NGペア記録（シャツID、パンツID、登録理由、登録日時）。アプリ内判定で最優先除外される。 |
+| **`RecommendationResult`** | 朝モード計算結果（パンツアイテム実体、順位、前日着用フラグ、総合スコア、相性理由、出社/リモートフラグ）。 |
+| **`GasSyncConfig` / `Payload` / `Response`** | Google Apps Script（GAS）との双方向同期通信ペイロード。LWW（Last-Write-Wins）および削除追跡（`SyncTombstones`）による端末間マージを実現。 |
+| **`GetImageSyncPlan*` / `FetchImages*`** | Google ドライブ画像同期（Phase 1〜2）の差分プラン策定・分割取得インターフェース。 |
+| **`UploadImageRequest` / `Response`** | 新規服追加時の端末下書き写真から Google ドライブへの直接自動アップロード用インターフェース。 |
+| **`ItemCompatibilityStats` / `WardrobeAnalysisResult`** | 全マトリクス画面（Tab 4）におけるワードローブ健全性サマリーおよびボトルネック判定データ構造。 |
+| **`BootstrapConfigResponse`** | Cloudflare Pages Functions (`/api/bootstrap-config`) からのゼロ入力設定配布インターフェース。 |
 
 ---
 
 ## 4. 推薦・冷却スコアリングロジック
 
-`useClosetStore.ts` における `getRecommendationsForShirt(shirtId, scene)` の算出ロジック：
+`src/hooks/useClosetStore.tsx`（および `src/utils/closetDomain.ts`）における `getRecommendationsForShirt(shirtId, scene)` の算出ロジック：
 
 1. **除外フィルター (NG判定):**
    - ① `wifeNgPairs`（奥様NG）に該当するペアはNGリストへ。
