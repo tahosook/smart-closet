@@ -2535,6 +2535,14 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
     gasSyncModalCode.includes('写真キャッシュ全消去'),
     'GasSyncModal must retain "写真キャッシュ全消去" in danger zone'
   );
+  assert.ok(
+    gasSyncModalCode.includes('closetItemIds.some') || gasSyncModalCode.includes('hasMissingItems'),
+    'GasSyncModal must check for missing closet items against local keys'
+  );
+  assert.ok(
+    gasSyncModalCode.includes('着分の写真を保存済み'),
+    'GasSyncModal must display verified fact "端末にN着分の写真を保存済み"'
+  );
 
   // AiSyncView: バックアップ折りたたみ & 「初期データに戻す」文言の検証
   assert.ok(

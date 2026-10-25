@@ -51,6 +51,7 @@ export const GasSyncModal: React.FC<GasSyncModalProps> = ({ isOpen, onClose }) =
     pullFromGas,
     pushToGas,
     fetchBootstrapConfig,
+    closetData,
   } = useClosetStore();
 
   const [urlInput, setUrlInput] = useState(gasConfig.webAppUrl);
@@ -115,16 +116,21 @@ export const GasSyncModal: React.FC<GasSyncModalProps> = ({ isOpen, onClose }) =
       const remoteTs = gasConfig.imagesLastUpdatedAt || 0;
       const isFolderDifferent = Boolean(syncedFolder && syncedFolder !== targetFolder);
 
+      // ワードローブ全アイテムとローカルキーの差分を確認（部分欠落の検出）
+      const closetItemIds = closetData.items.map((i) => i.id);
+      const hasMissingItems = closetItemIds.some((id) => !keys.includes(id));
+
       const needsUpdate =
         keys.length === 0 ||
         isFolderDifferent ||
+        hasMissingItems ||
         (remoteTs > 0 && remoteTs > maxLocalTs);
 
       setHasPhotoUpdate(needsUpdate);
     } catch (e) {
       console.warn('Failed to inspect photo status', e);
     }
-  }, [gasConfig.imageFolderId, gasConfig.imagesLastUpdatedAt]);
+  }, [gasConfig.imageFolderId, gasConfig.imagesLastUpdatedAt, closetData.items]);
 
   useEffect(() => {
     if (isOpen) {
@@ -595,7 +601,7 @@ export const GasSyncModal: React.FC<GasSyncModalProps> = ({ isOpen, onClose }) =
             </div>
           )}
 
-          {/* 3. 写真の状態表示（通常時は「写真は最新です」のみ、更新時や同期進捗を表示） */}
+          {/* 3. 写真の状態表示（確認できた事実のみを表示、更新時や同期進捗を表示） */}
           <div className="p-3 bg-slate-800/40 rounded-2xl border border-slate-800 space-y-2">
             <div className="flex items-center justify-between text-xs">
               <div className="flex items-center gap-2 text-slate-300">
@@ -608,7 +614,7 @@ export const GasSyncModal: React.FC<GasSyncModalProps> = ({ isOpen, onClose }) =
                   ) : hasPhotoUpdate ? (
                     <span className="text-sky-300 font-bold">写真の更新があります（「今すぐ同期」で反映）</span>
                   ) : (
-                    <span className="text-emerald-300">写真は最新です（全{localImageCount}着分を保存済）</span>
+                    <span className="text-emerald-300">端末に{localImageCount}着分の写真を保存済み</span>
                   )}
                 </span>
               </div>
