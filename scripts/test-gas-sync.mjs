@@ -2347,15 +2347,28 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
   assert.equal(validateSingleClosetItem({ ...baseItem, id: 'Sabc', category: 'shirt' }, rawCloset).valid, false);
   assert.equal(validateSingleClosetItem({ ...baseItem, id: 'P_1', category: 'pants' }, rawCloset).valid, false);
 
-  // 1d. 正しい接頭辞 (S10, P16) は通過
+  // 1d. 正しい接頭辞 (S10, P16) は通過。小文字 (s10, p16) も大文字正規化されて通過
   const validShirt = validateSingleClosetItem({ ...baseItem, id: 'S10', category: 'shirt' }, rawCloset);
   assert.equal(validShirt.valid, true, 'Valid S10 shirt must pass');
+  assert.equal(validShirt.item?.id, 'S10');
+
+  const validShirtLower = validateSingleClosetItem({ ...baseItem, id: 's10', category: 'shirt' }, rawCloset);
+  assert.equal(validShirtLower.valid, true, 'Lowercase s10 must be normalized and pass');
+  assert.equal(validShirtLower.item?.id, 'S10', 'Normalized id must be uppercase S10');
 
   const validPants = validateSingleClosetItem(
     { ...baseItem, id: 'P16', category: 'pants', imageUrl: '/images/P16.jpg' },
     rawCloset
   );
   assert.equal(validPants.valid, true, 'Valid P16 pants must pass');
+  assert.equal(validPants.item?.id, 'P16');
+
+  const validPantsLower = validateSingleClosetItem(
+    { ...baseItem, id: 'p16', category: 'pants', imageUrl: '/images/p16.jpg' },
+    rawCloset
+  );
+  assert.equal(validPantsLower.valid, true, 'Lowercase p16 must be normalized and pass');
+  assert.equal(validPantsLower.item?.id, 'P16', 'Normalized id must be uppercase P16');
 
   // 2. 【条件2検証】種別切替ヘルパー (switchDraftItemCategory)
   // Gemini が最初シャツとして判定した相性リスト（相手: パンツID）を持つドラフト
