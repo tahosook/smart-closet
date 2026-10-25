@@ -153,6 +153,11 @@ export const MatrixView: React.FC = () => {
             ? officeAcePants.filter((p) => !isNgPair('S1', p.id).isNg)
             : [];
           const blackOfficeSlacks = pants.find((p) => p.name.includes('黒') && p.dressScore >= 3.5);
+          const blackSlacksCompatibleShirts = blackOfficeSlacks
+            ? shirts.filter((s) => !isNgPair(s.id, blackOfficeSlacks.id).isNg)
+            : [];
+          const isUniversalHub =
+            Boolean(blackOfficeSlacks && blackSlacksCompatibleShirts.length === shirts.length);
           const nextPantsId = `P${pants.length + 1}`;
 
           return (
@@ -196,10 +201,16 @@ export const MatrixView: React.FC = () => {
                   <div className="flex items-center justify-between">
                     <span className="text-xs font-bold text-emerald-300 uppercase tracking-wider flex items-center gap-1.5">
                       <ShoppingBag className="w-4 h-4 text-emerald-400" />
-                      <span>【導入完了】万能出社ハブ（黒スラックス）稼働中</span>
+                      <span>
+                        {isUniversalHub
+                          ? '【導入完了】万能出社ハブ（黒スラックス）稼働中'
+                          : '【導入済み】出社対応黒スラックス登録済み'}
+                      </span>
                     </span>
                     <span className="text-[10px] bg-emerald-600 text-white font-bold px-2 py-0.5 rounded-full">
-                      ワードローブ強化済み ★★★★★
+                      {isUniversalHub
+                        ? '全シャツ出社対応 ★★★★★'
+                        : `出社対応: ${blackSlacksCompatibleShirts.length}/${shirts.length}`}
                     </span>
                   </div>
                   <div className="p-3 bg-slate-900/90 rounded-xl border border-slate-700/60 space-y-1.5">
@@ -208,7 +219,9 @@ export const MatrixView: React.FC = () => {
                       <span className="text-xs text-emerald-400 font-mono">({blackOfficeSlacks.id})</span>
                     </h4>
                     <p className="text-xs text-slate-300 leading-relaxed">
-                      手持ちに黒スラックスが登録されており、S1（濃インディゴ）をはじめ、白シャツ・サックス・生成りまで全シャツの出社コーデが万能ハブとして解禁されています。
+                      {isUniversalHub
+                        ? `手持ちに黒スラックスが登録されており、S1（濃インディゴ）をはじめ全${shirts.length}着のシャツと出社コーデが可能な万能ハブとして稼働しています。`
+                        : `手持ちに黒スラックスが登録されており、現在全${shirts.length}着中 ${blackSlacksCompatibleShirts.length}着（${blackSlacksCompatibleShirts.map((s) => s.id).join('、')}）と出社コーデが可能です。`}
                     </p>
                   </div>
                 </div>
