@@ -3655,6 +3655,41 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
   // 【最重要】元写真などの別画像が誤って P16 としてアップロードされていないこと
   assert.equal(uploadedPayloads.some((p) => p.itemId === 'P16'), false, 'Missing image item P16 must NEVER be uploaded to Drive');
 
+  // (5) 【再レビュー指摘実行テスト】getImageDataUrlFn の Promise が reject しても processDriveRetryUploads が例外終了せず、アイテム単位で失敗捕捉して後続を処理することの実行検証
+  const uploadedWithRejection = [];
+  const mockRejectingGetImage = async (id) => {
+    if (id === 'P17') {
+      throw new Error('Simulated IndexedDB / FileReader read rejection');
+    }
+    if (id === 'S11') {
+      return 'data:image/jpeg;base64,s11_valid_data';
+    }
+    return null;
+  };
+
+  const rejectionTestItems = [
+    { itemId: 'P17', label: '3:4正規化版' },
+    { itemId: 'S11', label: '3:4正規化版' },
+  ];
+
+  const rejectionResult = await processDriveRetryUploads(
+    rejectionTestItems,
+    mockRejectingGetImage,
+    async (payload) => {
+      uploadedWithRejection.push(payload);
+      return { ok: true };
+    }
+  );
+
+  assert.equal(rejectionResult.succeededItemIds.length, 1);
+  assert.equal(rejectionResult.succeededItemIds[0], 'S11');
+  assert.equal(rejectionResult.failedItemIds.length, 1);
+  assert.equal(rejectionResult.failedItemIds[0], 'P17');
+  assert.equal(rejectionResult.readErrorItemIds.length, 1);
+  assert.equal(rejectionResult.readErrorItemIds[0], 'P17');
+  assert.equal(uploadedWithRejection.length, 1);
+  assert.equal(uploadedWithRejection[0].itemId, 'S11');
+
   // AiSyncView が元写真へのフォールバック（targetDataUrl = previewDataUrl）を含まないことの静的保証
   assert.equal(
     aiSyncCode.includes('targetDataUrl = previewDataUrl'),
@@ -3664,6 +3699,10 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
   assert.ok(
     aiSyncCode.includes('processDriveRetryUploads'),
     'AiSyncView must delegate retry uploads to processDriveRetryUploads'
+  );
+  assert.ok(
+    aiSyncCode.includes('setIsRetryingDriveUploads(false);') && aiSyncCode.includes('finally'),
+    'AiSyncView handleRetryDriveUploads must reset isRetryingDriveUploads in finally block'
   );
 
   console.log('  ✅ Phase 2 UI registration mode, batch prompt, per-item panel, Drive retry & parse guard verified');

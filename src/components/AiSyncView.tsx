@@ -262,52 +262,68 @@ export const AiSyncView: React.FC = () => {
       text: `Google ドライブへ未完了画像（${failedDriveUploads.length}着）を再アップロード中...`,
     });
 
-    const result = await processDriveRetryUploads(
-      failedDriveUploads,
-      getImageDataUrl,
-      (payload) =>
-        uploadImageToGas({
-          webAppUrl: gasConfig.webAppUrl,
-          secretToken: gasConfig.secretToken,
-          itemId: payload.itemId,
-          dataUrl: payload.dataUrl,
-        })
-    );
+    try {
+      const result = await processDriveRetryUploads(
+        failedDriveUploads,
+        getImageDataUrl,
+        (payload) =>
+          uploadImageToGas({
+            webAppUrl: gasConfig.webAppUrl,
+            secretToken: gasConfig.secretToken,
+            itemId: payload.itemId,
+            dataUrl: payload.dataUrl,
+          })
+      );
 
-    const stillFailed = failedDriveUploads.filter((item) =>
-      result.failedItemIds.includes(item.itemId)
-    );
+      const stillFailed = failedDriveUploads.filter((item) =>
+        result.failedItemIds.includes(item.itemId)
+      );
 
-    setFailedDriveUploads(stillFailed);
-    if (typeof window !== 'undefined' && window.localStorage) {
-      saveFailedDriveUploadsToStorage(window.localStorage, stillFailed);
-    }
-    setIsRetryingDriveUploads(false);
-
-    if (stillFailed.length === 0) {
-      setImageUploadStatus({
-        type: 'success',
-        text: `Google ドライブへ未完了画像の再アップロードが全着完了しました！（${result.succeededItemIds.length}着成功）`,
-      });
-      // 未完了画像がなく、かつ未適用の下書きが残っていなければ下書き写真をクリア
-      if (!draftBatchGarments || draftBatchGarments.length === 0) {
-        await clearDraftImage();
-        setCurrentBlob(null);
-        setPreviewDataUrl(null);
-        setNormalizedPreviewUrl(null);
-        setBatchNormalizedPreviews([]);
-        setIsDraftRestored(false);
+      setFailedDriveUploads(stillFailed);
+      if (typeof window !== 'undefined' && window.localStorage) {
+        saveFailedDriveUploadsToStorage(window.localStorage, stillFailed);
       }
-      triggerBackgroundPush();
-    } else {
-      const missingMsg =
-        result.missingImageItemIds.length > 0
-          ? `（※${result.missingImageItemIds.join(', ')} は端末内に画像データがありません）`
-          : '（端末内 IndexedDB には保存済みです）';
+
+      if (stillFailed.length === 0) {
+        setImageUploadStatus({
+          type: 'success',
+          text: `Google ドライブへ未完了画像の再アップロードが全着完了しました！（${result.succeededItemIds.length}着成功）`,
+        });
+        // 未完了画像がなく、かつ未適用の下書きが残っていなければ下書き写真をクリア
+        if (!draftBatchGarments || draftBatchGarments.length === 0) {
+          await clearDraftImage();
+          setCurrentBlob(null);
+          setPreviewDataUrl(null);
+          setNormalizedPreviewUrl(null);
+          setBatchNormalizedPreviews([]);
+          setIsDraftRestored(false);
+        }
+        triggerBackgroundPush();
+      } else {
+        const errorNotes: string[] = [];
+        if (result.missingImageItemIds.length > 0) {
+          errorNotes.push(`※${result.missingImageItemIds.join(', ')} は端末内に画像データがありません`);
+        }
+        if (result.readErrorItemIds && result.readErrorItemIds.length > 0) {
+          errorNotes.push(`※${result.readErrorItemIds.join(', ')} は画像読み出しでエラーが発生しました`);
+        }
+        const detailMsg =
+          errorNotes.length > 0
+            ? `（${errorNotes.join(' / ')}）`
+            : '（端末内 IndexedDB には保存済みです）';
+        setImageUploadStatus({
+          type: 'error',
+          text: `ドライブ保存再試行: ${result.succeededItemIds.length}着成功 / ${stillFailed.length}着失敗${detailMsg}`,
+        });
+      }
+    } catch (e) {
+      console.error('Failed to retry drive uploads:', e);
       setImageUploadStatus({
         type: 'error',
-        text: `ドライブ保存再試行: ${result.succeededItemIds.length}着成功 / ${stillFailed.length}着失敗${missingMsg}`,
+        text: 'Google ドライブへの再アップロード中に予期せぬエラーが発生しました。',
       });
+    } finally {
+      setIsRetryingDriveUploads(false);
     }
   };
 

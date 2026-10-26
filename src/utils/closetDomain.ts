@@ -1768,6 +1768,7 @@ export interface RetryUploadResult {
   succeededItemIds: string[];
   failedItemIds: string[];
   missingImageItemIds: string[];
+  readErrorItemIds: string[];
 }
 
 /**
@@ -1775,6 +1776,8 @@ export interface RetryUploadResult {
  * - 各アイテムの画像は必ず IndexedDB（確定IDの個別3:4正規化画像）から取得する
  * - IndexedDB に個別画像が存在しない場合、複数着が写った元写真（previewDataUrl）へのフォールバックを
  *   厳格に禁止し、画像取り違え（他人の服や複数着写真の誤アップロード）を防止する
+ * - IndexedDB 読み出しや FileReader が reject した場合もアイテム単位で例外を捕捉し、
+ *   後続アイテムの処理や UI 状態復元を中断させない
  */
 export async function processDriveRetryUploads(
   items: FailedDriveUploadItem[],
@@ -1784,9 +1787,18 @@ export async function processDriveRetryUploads(
   const succeededItemIds: string[] = [];
   const failedItemIds: string[] = [];
   const missingImageItemIds: string[] = [];
+  const readErrorItemIds: string[] = [];
 
   for (const item of items) {
-    const targetDataUrl = await getImageDataUrlFn(item.itemId);
+    let targetDataUrl: string | null = null;
+    try {
+      targetDataUrl = await getImageDataUrlFn(item.itemId);
+    } catch {
+      readErrorItemIds.push(item.itemId);
+      failedItemIds.push(item.itemId);
+      continue;
+    }
+
     if (!targetDataUrl) {
       missingImageItemIds.push(item.itemId);
       failedItemIds.push(item.itemId);
@@ -1809,5 +1821,6 @@ export async function processDriveRetryUploads(
     succeededItemIds,
     failedItemIds,
     missingImageItemIds,
+    readErrorItemIds,
   };
 }
