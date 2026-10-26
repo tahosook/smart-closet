@@ -151,14 +151,8 @@ export async function cropAndNormalizeGarmentImage(
   quality = 0.85
 ): Promise<{ blob: Blob; dataUrl: string; width: number; height: number; isCropped: boolean }> {
   if (typeof document === 'undefined') {
-    // Node.js 等の非ブラウザ環境フォールバック
-    return {
-      blob: new Blob([], { type: 'image/jpeg' }),
-      dataUrl: sourceDataUrl,
-      width: STANDARD_IMAGE_WIDTH,
-      height: STANDARD_IMAGE_HEIGHT,
-      isCropped: !!cropBox,
-    };
+    // 非ブラウザ環境では明示的に失敗させる（空 Blob を成功扱いしない）
+    return Promise.reject(new Error('画像の正規化にはブラウザ環境（Canvas）が必要です'));
   }
 
   return new Promise((resolve, reject) => {

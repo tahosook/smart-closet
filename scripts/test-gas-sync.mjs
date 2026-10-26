@@ -59,6 +59,7 @@ const {
   STANDARD_IMAGE_HEIGHT,
   STANDARD_STUDIO_BG_COLOR,
   calculateCropAndPlacement,
+  cropAndNormalizeGarmentImage,
 } = imageProcessor;
 
 console.log('🧪 Running GAS backend and sync logic tests...');
@@ -2753,6 +2754,18 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
   assert.equal(fallbackPlacement.destH, 675);
   assert.equal(fallbackPlacement.destX, 0);
   assert.equal(fallbackPlacement.destY, Math.round((1200 - 675) / 2));
+
+  // 4b. 非ブラウザ環境での cropAndNormalizeGarmentImage の安全な拒否検証
+  await assert.rejects(
+    async () => {
+      await cropAndNormalizeGarmentImage('data:image/jpeg;base64,1234');
+    },
+    {
+      name: 'Error',
+      message: '画像の正規化にはブラウザ環境（Canvas）が必要です',
+    },
+    'Calling cropAndNormalizeGarmentImage in non-browser environment must reject rather than returning empty blob'
+  );
 
   // 5. validateSingleClosetItem の色・寸法・一時プロパティ除去検証
   const testP16Candidate = {
