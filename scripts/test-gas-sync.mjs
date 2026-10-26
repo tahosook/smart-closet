@@ -49,6 +49,12 @@ const {
   sanitizeDraftPeerReferences,
   assignSequentialIdsForBatch,
   validateAndMergeBatchGarments,
+  parseSyncInputJson,
+  FAILED_DRIVE_UPLOADS_STORAGE_KEY,
+  parseFailedDriveUploads,
+  saveFailedDriveUploadsToStorage,
+  loadFailedDriveUploadsFromStorage,
+  processDriveRetryUploads,
 } = closetDomain;
 
 const imageProcessorTsPath = path.join(projectRoot, 'src/utils/imageProcessor.ts');
@@ -3374,6 +3380,332 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
   assert.equal(twoItemsRes.appliedCount, 2);
 
   console.log('  ✅ Batch garment registration Phase 1 (deterministic IDs, non-blocking color, partial merge & bounds) verified');
+}
+
+// -------------------------------------------------------------
+// Test Case 26: 服の「まとめ撮り」一括登録 Phase 2（UI登録モード切替・バッチプロンプト生成・着別確認パネル・直列アップロード・部分適用リカバリ・ドキュメント整合性）
+// -------------------------------------------------------------
+{
+  const aiSyncCode = fs.readFileSync(path.join(projectRoot, 'src/components/AiSyncView.tsx'), 'utf8');
+
+  // 1. 登録モード切替（通常／まとめ撮り）と撮影ガイド・解像度制御
+  assert.ok(aiSyncCode.includes("registrationMode === 'batch' ? 2000 : 1200"), 'AiSyncView must use 2000px max dimension for batch mode');
+  assert.ok(aiSyncCode.includes('1着ずつ登録（通常）'), 'AiSyncView must render single mode switcher button');
+  assert.ok(aiSyncCode.includes('まとめ撮り一括登録（最大3着）'), 'AiSyncView must render batch mode switcher button');
+  assert.ok(aiSyncCode.includes('服同士を重ねず、少し間を空けて並べ'), 'AiSyncView must display batch photo guide');
+  assert.ok(aiSyncCode.includes('推奨2〜3着・最大3着'), 'AiSyncView must recommend 2-3 garments up to 3');
+
+  // 2. まとめ撮り専用プロンプト生成
+  assert.ok(aiSyncCode.includes('まとめ撮り一括登録用JSON'), 'Batch prompt must describe multi-garment batch JSON');
+  assert.ok(aiSyncCode.includes('"garments": ['), 'Batch prompt schema must output garments array');
+  assert.ok(
+    aiSyncCode.includes('バッチ内の服同士の相性は含めず、現存する相手カテゴリの服'),
+    'Batch prompt must enforce Rule B (no intra-batch peer relationships)'
+  );
+  assert.ok(aiSyncCode.includes('最大3着まで'), 'Batch prompt must instruct maximum 3 items');
+
+  // 3. Step 3 パースと着別確認パネル
+  assert.ok(aiSyncCode.includes("kind === 'batch_garments'"), 'parseSyncInputJson must recognize batch_garments');
+  assert.ok(aiSyncCode.includes('まとめ撮り確認パネル（全'), 'AiSyncView must render batch confirmation panel header');
+  assert.ok(aiSyncCode.includes('assignSequentialIdsForBatch'), 'AiSyncView must call assignSequentialIdsForBatch');
+  assert.ok(aiSyncCode.includes('この服を登録する（'), 'AiSyncView must render per-item inclusion checkbox');
+  assert.ok(aiSyncCode.includes('handleSwitchBatchItemCategory'), 'AiSyncView must support per-item category switching');
+  assert.ok(aiSyncCode.includes('handleUpdateBatchMeasurement'), 'AiSyncView must support per-item measurements editing');
+  assert.ok(aiSyncCode.includes('handleApplyBatchGarments'), 'AiSyncView must provide batch apply handler');
+
+  // 4. 非ブロッキング色検証表示（未確定バッジと1タップ一括適用）
+  assert.ok(aiSyncCode.includes('色：未確定'), 'AiSyncView must display unconfirmed color badge');
+  assert.ok(
+    !aiSyncCode.includes('色の必須検証\n    if (!candidateItem.color'),
+    'AiSyncView single item mode must not block on missing or out-of-palette color'
+  );
+
+  // 5. 直列Googleドライブ同期進捗表示 & 部分適用リカバリ
+  assert.ok(aiSyncCode.includes('着)...'), 'AiSyncView batch apply must report serial Drive upload progress');
+  assert.ok(
+    aiSyncCode.includes('result.remainingDrafts'),
+    'AiSyncView must retain failed items in remainingDrafts upon partial apply'
+  );
+
+  // 6. useClosetStore.tsx の importBatchGarments & importCustomData 連携
+  const useStoreCode = fs.readFileSync(path.join(projectRoot, 'src/hooks/useClosetStore.tsx'), 'utf8');
+  assert.ok(useStoreCode.includes('importBatchGarments'), 'useClosetStore must provide importBatchGarments');
+  assert.ok(useStoreCode.includes("'batch_garments'"), 'useClosetStore must support batch_garments mode');
+  assert.ok(useStoreCode.includes('validateAndMergeBatchGarments'), 'useClosetStore must call validateAndMergeBatchGarments');
+
+  // 7. ドキュメント（SPECIFICATION.md & SKILL.md）の整合性
+  const specCode = fs.readFileSync(path.join(projectRoot, 'docs/SPECIFICATION.md'), 'utf8');
+  assert.ok(specCode.includes('まとめ撮り一括登録（推奨2〜3着・最大3着）'), 'SPECIFICATION.md must document batch registration');
+  assert.ok(specCode.includes('長辺最大2000px'), 'SPECIFICATION.md must document 2000px downscaling in batch mode');
+  assert.ok(specCode.includes('appendUnconfirmedColorNote'), 'SPECIFICATION.md must document non-blocking color note handling');
+
+  const skillCode = fs.readFileSync(path.join(projectRoot, '.agents/skills/manage-wardrobe/SKILL.md'), 'utf8');
+  assert.ok(skillCode.includes('まとめ撮り一括登録'), 'SKILL.md must document batch registration workflow');
+  assert.ok(skillCode.includes('2000px'), 'SKILL.md must document 2000px batch resolution');
+  assert.ok(skillCode.includes('（色の目安：〇〇 ※12色パレット外のため未確定）'), 'SKILL.md must document unconfirmed color hint');
+
+  // 8. レビュー指摘対応の検証（Drive画像再試行・Sync Push遅延・解像度保護・既存ID重複防止入出力テスト）
+  // 8a. Driveアップロード失敗時の画像単体再試行導線 (修正1)
+  assert.ok(aiSyncCode.includes('handleRetryDriveUploads'), 'AiSyncView must implement handleRetryDriveUploads');
+  assert.ok(aiSyncCode.includes('failedDriveUploads'), 'AiSyncView must track failedDriveUploads');
+  assert.ok(aiSyncCode.includes('失敗した画像'), 'AiSyncView must display retry banner for failed drive uploads');
+
+  // 8b. 直列アップロード完了までの Sync Push 遅延 (修正2)
+  assert.ok(aiSyncCode.includes('skipPush: true'), 'AiSyncView must pass skipPush: true to importBatchGarments');
+  assert.ok(useStoreCode.includes('options?.skipPush'), 'useClosetStore must honor skipPush option');
+  assert.ok(useStoreCode.includes('triggerBackgroundPush'), 'useClosetStore must expose triggerBackgroundPush');
+
+  // 8c. モード切替時の解像度保証と下書きクリア (修正3)
+  assert.ok(aiSyncCode.includes('handleModeSwitch'), 'AiSyncView must implement handleModeSwitch');
+  assert.ok(aiSyncCode.includes("handleModeSwitch('single')"), 'AiSyncView must call handleModeSwitch for single mode');
+  assert.ok(aiSyncCode.includes("handleModeSwitch('batch')"), 'AiSyncView must call handleModeSwitch for batch mode');
+
+  // 8d. 【修正4挙動テスト】既存アイテム配列および重複IDの誤登録防止（入出力テスト）
+  const rawCloset = JSON.parse(fs.readFileSync(path.join(projectRoot, 'src/data/closet.json'), 'utf-8'));
+
+  // (1) id付き服配列（エクスポートデータ等）を貼った場合: batch_garments としてパースされず拒否されること
+  const rawArrayWithIds = JSON.stringify([
+    { id: 'S1', category: 'shirt', name: '既存シャツ' },
+    { id: 'S2', category: 'shirt', name: '既存シャツ2' },
+  ]);
+  const parsedRawWithIds = parseSyncInputJson(rawArrayWithIds, rawCloset.items);
+  assert.equal(parsedRawWithIds.kind, 'invalid', 'Raw array with IDs must NOT be parsed as batch_garments');
+  assert.ok(parsedRawWithIds.error.includes('ID付きの服配列はまとめ撮り一括登録できません'), 'Error must specify rejection of array with IDs');
+
+  // (2) id無しの服ドラフト配列を貼った場合: 正常に batch_garments としてパースされること
+  const rawArrayWithoutIds = JSON.stringify([
+    { category: 'shirt', name: '新規シャツ1' },
+    { category: 'pants', name: '新規パンツ1' },
+  ]);
+  const parsedRawWithoutIds = parseSyncInputJson(rawArrayWithoutIds, rawCloset.items);
+  assert.equal(parsedRawWithoutIds.kind, 'batch_garments', 'Raw array without IDs must be recognized as batch_garments');
+  assert.equal(parsedRawWithoutIds.batchGarments.length, 2);
+
+  // (3) { "garments": [...] } 内に既存アイテムと重複する id が含まれる場合: 警告して登録に進ませないこと
+  const batchWithExistingIdJson = JSON.stringify({
+    garments: [
+      { id: 'S1', category: 'shirt', name: 'S1重複シャツ' },
+    ],
+  });
+  const parsedExistingId = parseSyncInputJson(batchWithExistingIdJson, rawCloset.items);
+  assert.equal(parsedExistingId.kind, 'invalid', 'Garments with existing ID must be rejected by parseSyncInputJson');
+  assert.equal(parsedExistingId.existingIdConflict, 'S1', 'existingIdConflict must identify S1');
+  assert.ok(parsedExistingId.error.includes('既存アイテム（ID: S1）が含まれています'), 'Error message must specify duplicate ID');
+
+  // (4) 正系 { "garments": [...] }（id無し）: 正常に batch_garments として受け入れられること
+  const validBatchJson = JSON.stringify({
+    garments: [
+      { category: 'shirt', name: '新規シャツA', color: '白' },
+    ],
+  });
+  const parsedValidBatch = parseSyncInputJson(validBatchJson, rawCloset.items);
+  assert.equal(parsedValidBatch.kind, 'batch_garments');
+  assert.equal(parsedValidBatch.batchGarments.length, 1);
+
+  // (5) validateAndMergeBatchGarments で既存ID重複 candidate が渡された場合の安全拒否
+  const batchWithDupCandidate = [
+    {
+      id: 'S1',
+      category: 'shirt',
+      name: 'S1上書き試行',
+      color: '白',
+      seasonSleeve: '通年',
+      dressScore: 4.0,
+      comfortScore: 4.0,
+      officeRecommendIds: [],
+      remoteRecommendIds: [],
+      ngIds: [],
+      ngReason: '',
+      notes: '上書き試行',
+    },
+    {
+      category: 'pants',
+      name: '正常パンツ',
+      color: '黒',
+      seasonSleeve: '通年',
+      dressScore: 4.0,
+      comfortScore: 4.0,
+      officeRecommendIds: [],
+      remoteRecommendIds: [],
+      ngIds: [],
+      ngReason: '',
+      notes: '2着目は正常',
+    },
+  ];
+  const mergeDupRes = validateAndMergeBatchGarments(rawCloset, batchWithDupCandidate);
+  assert.equal(mergeDupRes.valid, true, 'Partial application: valid item succeeds');
+  assert.equal(mergeDupRes.appliedCount, 1);
+  assert.equal(mergeDupRes.failedCount, 1);
+  assert.equal(mergeDupRes.results[0].status, 'failed');
+  assert.ok(mergeDupRes.results[0].error.includes('既存アイテム（ID: S1）と重複しています'), 'Error must specify duplicate ID conflict');
+  // 既存データ（S1）が上書きされず、元データが保護されていること
+  const originalS1 = rawCloset.items.find((i) => i.id === 'S1');
+  const preservedS1 = mergeDupRes.data.items.find((i) => i.id === 'S1');
+  assert.equal(preservedS1.name, originalS1.name, 'Existing item must not be overwritten');
+
+  // 8e. 【再レビュー指摘対応】Drive画像アップロード未完了リストの永続化・復元・Blob再構成挙動テスト
+  // (1) parseFailedDriveUploads の耐障害性・大文字正規化・重複排除
+  assert.deepEqual(parseFailedDriveUploads(null), []);
+  assert.deepEqual(parseFailedDriveUploads('invalid json {'), []);
+  assert.deepEqual(parseFailedDriveUploads('{"not": "array"}'), []);
+  const normalizedParsed = parseFailedDriveUploads(JSON.stringify([
+    { itemId: '  s10  ', label: '3:4正規化版' },
+    { itemId: 'S10', label: '重複アイテム' },
+    { itemId: 'p16' }, // label 欠落フォールバック
+  ]));
+  assert.equal(normalizedParsed.length, 2, 'Duplicates must be removed by normalized ID');
+  assert.equal(normalizedParsed[0].itemId, 'S10');
+  assert.equal(normalizedParsed[0].label, '3:4正規化版');
+  assert.equal(normalizedParsed[1].itemId, 'P16');
+  assert.equal(normalizedParsed[1].label, '3:4正規化版', 'Missing label must default to 3:4正規化版');
+
+  // (2) saveFailedDriveUploadsToStorage と loadFailedDriveUploadsFromStorage の永続化・復元・データURL非二重化検証
+  const mockStorageMap = new Map();
+  const mockStorage = {
+    getItem: (k) => mockStorageMap.get(k) ?? null,
+    setItem: (k, v) => mockStorageMap.set(k, String(v)),
+    removeItem: (k) => mockStorageMap.delete(k),
+  };
+
+  // 失敗リストの永続化
+  const failedItemsToSave = [
+    { itemId: 'S10', label: '3:4正規化版', failedAt: 1700000000000 },
+    { itemId: 'P16', label: '元画像フォールバック', failedAt: 1700000000001 },
+  ];
+  saveFailedDriveUploadsToStorage(mockStorage, failedItemsToSave);
+  assert.ok(mockStorageMap.has(FAILED_DRIVE_UPLOADS_STORAGE_KEY), 'Storage must contain failed uploads key');
+  const rawSavedJson = mockStorageMap.get(FAILED_DRIVE_UPLOADS_STORAGE_KEY);
+  // 【重要要件】dataUrl は永続化せず二重保持しないこと（端末内 IndexedDB から再構成するため）
+  assert.equal(rawSavedJson.includes('dataUrl'), false, 'dataUrl must NOT be persisted in localStorage');
+  assert.ok(rawSavedJson.includes('S10') && rawSavedJson.includes('P16'));
+
+  // ページ再読み込みをシミュレートした復元
+  const reloadedFailed = loadFailedDriveUploadsFromStorage(mockStorage);
+  assert.equal(reloadedFailed.length, 2, 'All failed items must be restored upon page reload');
+  assert.equal(reloadedFailed[0].itemId, 'S10');
+  assert.equal(reloadedFailed[1].itemId, 'P16');
+
+  // S10 のみ再試行成功した場合（部分成功時のリスト更新）
+  saveFailedDriveUploadsToStorage(mockStorage, [reloadedFailed[1]]);
+  const partialRemaining = loadFailedDriveUploadsFromStorage(mockStorage);
+  assert.equal(partialRemaining.length, 1);
+  assert.equal(partialRemaining[0].itemId, 'P16');
+
+  // 全着再試行成功した場合（ストレージキー削除と初期化）
+  saveFailedDriveUploadsToStorage(mockStorage, []);
+  assert.equal(mockStorageMap.has(FAILED_DRIVE_UPLOADS_STORAGE_KEY), false, 'Storage key must be removed when all succeed');
+  assert.deepEqual(loadFailedDriveUploadsFromStorage(mockStorage), []);
+
+  // (3) AiSyncView & imageStore のコード整合性検証
+  assert.ok(
+    aiSyncCode.includes('loadFailedDriveUploadsFromStorage'),
+    'AiSyncView must call loadFailedDriveUploadsFromStorage on mount'
+  );
+  assert.ok(
+    aiSyncCode.includes('saveFailedDriveUploadsToStorage'),
+    'AiSyncView must call saveFailedDriveUploadsToStorage on failure and retry'
+  );
+  assert.ok(
+    aiSyncCode.includes('getImageDataUrl'),
+    'AiSyncView must reconstruct image dataUrl from IndexedDB via getImageDataUrl'
+  );
+  const imageStoreCode = fs.readFileSync(path.join(projectRoot, 'src/utils/imageStore.ts'), 'utf-8');
+  assert.ok(
+    imageStoreCode.includes('export async function getImageDataUrl'),
+    'imageStore.ts must export getImageDataUrl'
+  );
+
+  // (4) 【再レビュー指摘実行テスト】IndexedDB画像欠落時に誤った元写真（previewDataUrl）をアップロードしないことの実行検証
+  const uploadedPayloads = [];
+  const mockIndexedDBImages = {
+    S10: 'data:image/jpeg;base64,s10_cropped_normalized_3x4_data',
+    // P16 は IndexedDB 内に存在しない（null）
+  };
+
+  const mockGetImageDataUrl = async (id) => mockIndexedDBImages[id] ?? null;
+  const mockUploadFn = async (payload) => {
+    uploadedPayloads.push(payload);
+    return { ok: true };
+  };
+
+  const testRetryItems = [
+    { itemId: 'S10', label: '3:4正規化版' },
+    { itemId: 'P16', label: '3:4正規化版' },
+  ];
+
+  const retryProcessResult = await processDriveRetryUploads(
+    testRetryItems,
+    mockGetImageDataUrl,
+    mockUploadFn
+  );
+
+  // S10 は IndexedDB の個別正規化画像で正しくアップロードされたこと
+  assert.equal(retryProcessResult.succeededItemIds.length, 1);
+  assert.equal(retryProcessResult.succeededItemIds[0], 'S10');
+  assert.equal(uploadedPayloads.length, 1);
+  assert.equal(uploadedPayloads[0].itemId, 'S10');
+  assert.equal(uploadedPayloads[0].dataUrl, 'data:image/jpeg;base64,s10_cropped_normalized_3x4_data');
+
+  // P16 は画像欠落として検出され、アップロードがスキップされ failed に残ること
+  assert.equal(retryProcessResult.failedItemIds.length, 1);
+  assert.equal(retryProcessResult.failedItemIds[0], 'P16');
+  assert.equal(retryProcessResult.missingImageItemIds.length, 1);
+  assert.equal(retryProcessResult.missingImageItemIds[0], 'P16');
+
+  // 【最重要】元写真などの別画像が誤って P16 としてアップロードされていないこと
+  assert.equal(uploadedPayloads.some((p) => p.itemId === 'P16'), false, 'Missing image item P16 must NEVER be uploaded to Drive');
+
+  // (5) 【再レビュー指摘実行テスト】getImageDataUrlFn の Promise が reject しても processDriveRetryUploads が例外終了せず、アイテム単位で失敗捕捉して後続を処理することの実行検証
+  const uploadedWithRejection = [];
+  const mockRejectingGetImage = async (id) => {
+    if (id === 'P17') {
+      throw new Error('Simulated IndexedDB / FileReader read rejection');
+    }
+    if (id === 'S11') {
+      return 'data:image/jpeg;base64,s11_valid_data';
+    }
+    return null;
+  };
+
+  const rejectionTestItems = [
+    { itemId: 'P17', label: '3:4正規化版' },
+    { itemId: 'S11', label: '3:4正規化版' },
+  ];
+
+  const rejectionResult = await processDriveRetryUploads(
+    rejectionTestItems,
+    mockRejectingGetImage,
+    async (payload) => {
+      uploadedWithRejection.push(payload);
+      return { ok: true };
+    }
+  );
+
+  assert.equal(rejectionResult.succeededItemIds.length, 1);
+  assert.equal(rejectionResult.succeededItemIds[0], 'S11');
+  assert.equal(rejectionResult.failedItemIds.length, 1);
+  assert.equal(rejectionResult.failedItemIds[0], 'P17');
+  assert.equal(rejectionResult.readErrorItemIds.length, 1);
+  assert.equal(rejectionResult.readErrorItemIds[0], 'P17');
+  assert.equal(uploadedWithRejection.length, 1);
+  assert.equal(uploadedWithRejection[0].itemId, 'S11');
+
+  // AiSyncView が元写真へのフォールバック（targetDataUrl = previewDataUrl）を含まないことの静的保証
+  assert.equal(
+    aiSyncCode.includes('targetDataUrl = previewDataUrl'),
+    false,
+    'AiSyncView must NEVER fallback to raw batch previewDataUrl during retry'
+  );
+  assert.ok(
+    aiSyncCode.includes('processDriveRetryUploads'),
+    'AiSyncView must delegate retry uploads to processDriveRetryUploads'
+  );
+  assert.ok(
+    aiSyncCode.includes('setIsRetryingDriveUploads(false);') && aiSyncCode.includes('finally'),
+    'AiSyncView handleRetryDriveUploads must reset isRetryingDriveUploads in finally block'
+  );
+
+  console.log('  ✅ Phase 2 UI registration mode, batch prompt, per-item panel, Drive retry & parse guard verified');
 }
 
 console.log('🎉 All GAS backend & sync logic tests passed successfully!');

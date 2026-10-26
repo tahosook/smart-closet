@@ -1449,6 +1449,24 @@ export function validateAndMergeBatchGarments(
       continue;
     }
 
+    // 既存アイテムIDとの重複防止チェック（修正4）
+    if (typeof (draft as any).id === 'string' && (draft as any).id.trim() !== '') {
+      const explicitId = String((draft as any).id).trim().toUpperCase();
+      if (existingData.items.some((it) => it.id.trim().toUpperCase() === explicitId)) {
+        failedCount++;
+        remainingDrafts.push(draft);
+        results.push({
+          index: i,
+          status: 'failed',
+          name: draft.name,
+          category: draft.category,
+          cropBox: draft.cropBox,
+          error: `既存アイテム（ID: ${explicitId}）と重複しています。まとめ撮り一括登録は新規服の追加専用です。`,
+        });
+        continue;
+      }
+    }
+
     if (draft.category !== 'shirt' && draft.category !== 'pants') {
       failedCount++;
       remainingDrafts.push(draft);
@@ -1536,5 +1554,273 @@ export function validateAndMergeBatchGarments(
     skippedCount,
     remainingDrafts,
     ...(overallError ? { error: overallError } : {}),
+  };
+}
+
+export interface ParsedSyncInput {
+  kind: 'single' | 'batch_color' | 'batch_garments' | 'invalid';
+  item?: Partial<ClosetItem>;
+  cropBox?: GarmentCropBox | null;
+  batchColorUpdates?: ColorUpdateItem[];
+  batchGarments?: BatchGarmentDraftItem[];
+  error?: string;
+  existingIdConflict?: string;
+}
+
+/**
+ * 貼り付けられた JSON テキストから単一アイテム、一括色更新、またはまとめ撮り一括服オブジェクトを安全に解析するヘルパー
+ * - まとめ撮り配列（Array.isArray）判定では要素に id が無いことを必須とする（既存アイテム配列の誤登録を防止）
+ * - 要素に既存アイテムと重複する id が含まれる場合は警告して登録に進ませない
+ */
+export function parseSyncInputJson(
+  rawText: string,
+  existingItems?: ClosetItem[]
+): ParsedSyncInput {
+  const trimmed = rawText.trim();
+  if (!trimmed) {
+    return { kind: 'invalid', error: 'JSONテキストを貼り付けてください。' };
+  }
+
+  let clean = trimmed;
+  if (clean.startsWith('```json')) {
+    clean = clean.replace(/^```json\s*/, '').replace(/\s*```$/, '');
+  } else if (clean.startsWith('```')) {
+    clean = clean.replace(/^```\s*/, '').replace(/\s*```$/, '');
+  }
+
+  try {
+    const parsed = JSON.parse(clean);
+
+    // 1. 一括色更新形式: { "colorUpdates": [...] } または 配列
+    if (parsed && typeof parsed === 'object') {
+      const candidates = Array.isArray((parsed as any).colorUpdates)
+        ? (parsed as any).colorUpdates
+        : Array.isArray(parsed) &&
+          parsed.length > 0 &&
+          typeof (parsed[0] as any)?.id === 'string' &&
+          (parsed[0] as any)?.color !== undefined &&
+          (parsed[0] as any)?.category === undefined
+        ? parsed
+        : null;
+
+      if (candidates) {
+        const batchList: ColorUpdateItem[] = [];
+        for (const c of candidates) {
+          if (c && typeof c.id === 'string' && typeof c.color === 'string') {
+            batchList.push({ id: c.id.trim().toUpperCase(), color: c.color.trim() as any });
+          }
+        }
+        if (batchList.length > 0) {
+          return { kind: 'batch_color', batchColorUpdates: batchList };
+        }
+      }
+    }
+
+    // 2. まとめ撮り服形式: { "garments": [...] } または 服ドラフト配列
+    if (parsed && typeof parsed === 'object') {
+      const hasGarmentsProp = Array.isArray((parsed as any).garments);
+      const isRawArray = Array.isArray(parsed);
+
+      let batchCandidates: any[] | null = null;
+
+      if (hasGarmentsProp) {
+        // 正系フロー: { "garments": [...] }
+        batchCandidates = (parsed as any).garments;
+      } else if (isRawArray && parsed.length > 0) {
+        // 修正4: 服ドラフト配列ショートカットの場合、「要素に id が無いこと」を必須とする
+        const hasAnyId = parsed.some(
+          (item: any) => item && typeof item.id === 'string' && item.id.trim() !== ''
+        );
+        if (hasAnyId) {
+          return {
+            kind: 'invalid',
+            error:
+              'ID付きの服配列はまとめ撮り一括登録できません。まとめ撮りは新規服の追加用です。IDを含めない形式（{ "garments": [...] }）で入力してください。',
+          };
+        }
+
+        const isDraftArray =
+          (parsed[0] as any)?.category === 'shirt' ||
+          (parsed[0] as any)?.category === 'pants' ||
+          (parsed[0] as any)?.name !== undefined;
+
+        if (isDraftArray) {
+          batchCandidates = parsed;
+        }
+      }
+
+      if (batchCandidates && batchCandidates.length > 0) {
+        // 修正4: 要素の id が既存ワードローブに存在する場合は警告して登録に進ませない
+        if (existingItems && existingItems.length > 0) {
+          const existingIdSet = new Set(existingItems.map((it) => it.id.trim().toUpperCase()));
+          for (const item of batchCandidates) {
+            if (item && typeof item.id === 'string' && item.id.trim() !== '') {
+              const upperId = item.id.trim().toUpperCase();
+              if (existingIdSet.has(upperId)) {
+                return {
+                  kind: 'invalid',
+                  error: `既存アイテム（ID: ${upperId}）が含まれています。まとめ撮り一括登録は新規服の追加用です。既存アイテムの再登録・上書きはできません。`,
+                  existingIdConflict: upperId,
+                };
+              }
+            }
+          }
+        }
+
+        return {
+          kind: 'batch_garments',
+          batchGarments: batchCandidates as BatchGarmentDraftItem[],
+        };
+      }
+    }
+
+    // 3. 単一アイテム形式
+    if (
+      parsed &&
+      typeof parsed === 'object' &&
+      !Array.isArray(parsed) &&
+      typeof parsed.id === 'string' &&
+      (parsed.category === 'shirt' || parsed.category === 'pants')
+    ) {
+      const cropBox = normalizeCropBox(parsed.cropBox) ?? null;
+      return { kind: 'single', item: parsed, cropBox };
+    }
+
+    return {
+      kind: 'invalid',
+      error:
+        '単一アイテム形式（id と category）、まとめ撮り形式（garments 配列）、または一括色更新形式（colorUpdates）を満たしていません。',
+    };
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : '構文エラー';
+    return { kind: 'invalid', error: `JSON構文が不正または不完全です: ${msg}` };
+  }
+}
+
+export const FAILED_DRIVE_UPLOADS_STORAGE_KEY = 'smart_closet_failed_drive_uploads';
+
+export interface FailedDriveUploadItem {
+  itemId: string;
+  label: string;
+  failedAt?: number;
+}
+
+/**
+ * 失敗したドライブ画像アップロードリストを安全にパース・検証するヘルパー
+ */
+export function parseFailedDriveUploads(rawJson: string | null): FailedDriveUploadItem[] {
+  if (!rawJson) return [];
+  try {
+    const parsed = JSON.parse(rawJson);
+    if (!Array.isArray(parsed)) return [];
+    const validList: FailedDriveUploadItem[] = [];
+    const seenIds = new Set<string>();
+    for (const item of parsed) {
+      if (item && typeof item.itemId === 'string' && item.itemId.trim()) {
+        const normId = item.itemId.trim().toUpperCase();
+        if (!seenIds.has(normId)) {
+          seenIds.add(normId);
+          validList.push({
+            itemId: normId,
+            label: typeof item.label === 'string' && item.label.trim() ? item.label.trim() : '3:4正規化版',
+            ...(typeof item.failedAt === 'number' ? { failedAt: item.failedAt } : {}),
+          });
+        }
+      }
+    }
+    return validList;
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * localStorage または ストレージ互換オブジェクトへ失敗リストを永続化（空ならキーを削除）
+ */
+export function saveFailedDriveUploadsToStorage(
+  storage: { setItem: (k: string, v: string) => void; removeItem: (k: string) => void },
+  items: FailedDriveUploadItem[]
+): void {
+  if (!storage) return;
+  if (!items || items.length === 0) {
+    storage.removeItem(FAILED_DRIVE_UPLOADS_STORAGE_KEY);
+  } else {
+    storage.setItem(FAILED_DRIVE_UPLOADS_STORAGE_KEY, JSON.stringify(items));
+  }
+}
+
+/**
+ * localStorage または ストレージ互換オブジェクトから失敗リストを復元
+ */
+export function loadFailedDriveUploadsFromStorage(
+  storage: { getItem: (k: string) => string | null }
+): FailedDriveUploadItem[] {
+  if (!storage) return [];
+  try {
+    const raw = storage.getItem(FAILED_DRIVE_UPLOADS_STORAGE_KEY);
+    return parseFailedDriveUploads(raw);
+  } catch {
+    return [];
+  }
+}
+
+export interface RetryUploadResult {
+  succeededItemIds: string[];
+  failedItemIds: string[];
+  missingImageItemIds: string[];
+  readErrorItemIds: string[];
+}
+
+/**
+ * Google ドライブ画像アップロード再試行の直列処理
+ * - 各アイテムの画像は必ず IndexedDB（確定IDの個別3:4正規化画像）から取得する
+ * - IndexedDB に個別画像が存在しない場合、複数着が写った元写真（previewDataUrl）へのフォールバックを
+ *   厳格に禁止し、画像取り違え（他人の服や複数着写真の誤アップロード）を防止する
+ * - IndexedDB 読み出しや FileReader が reject した場合もアイテム単位で例外を捕捉し、
+ *   後続アイテムの処理や UI 状態復元を中断させない
+ */
+export async function processDriveRetryUploads(
+  items: FailedDriveUploadItem[],
+  getImageDataUrlFn: (id: string) => Promise<string | null>,
+  uploadFn: (payload: { itemId: string; dataUrl: string }) => Promise<{ ok: boolean; error?: string }>
+): Promise<RetryUploadResult> {
+  const succeededItemIds: string[] = [];
+  const failedItemIds: string[] = [];
+  const missingImageItemIds: string[] = [];
+  const readErrorItemIds: string[] = [];
+
+  for (const item of items) {
+    let targetDataUrl: string | null = null;
+    try {
+      targetDataUrl = await getImageDataUrlFn(item.itemId);
+    } catch {
+      readErrorItemIds.push(item.itemId);
+      failedItemIds.push(item.itemId);
+      continue;
+    }
+
+    if (!targetDataUrl) {
+      missingImageItemIds.push(item.itemId);
+      failedItemIds.push(item.itemId);
+      continue;
+    }
+
+    try {
+      const res = await uploadFn({ itemId: item.itemId, dataUrl: targetDataUrl });
+      if (res && res.ok) {
+        succeededItemIds.push(item.itemId);
+      } else {
+        failedItemIds.push(item.itemId);
+      }
+    } catch {
+      failedItemIds.push(item.itemId);
+    }
+  }
+
+  return {
+    succeededItemIds,
+    failedItemIds,
+    missingImageItemIds,
+    readErrorItemIds,
   };
 }
