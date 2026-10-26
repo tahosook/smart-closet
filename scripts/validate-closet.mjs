@@ -19,6 +19,21 @@ const realGoogleOAuthClientSecretRegex = /GOCSPX-[A-Za-z0-9_-]{20,}/;
 
 export const allowedNonexistentPaths = new Set(['public/images/', '/images/<ID>.jpg', '/images/{ID}.jpg']);
 
+export const validGarmentColors = new Set([
+  '白',
+  '生成り',
+  '黒',
+  'チャコール',
+  'ミディアムグレー',
+  'ライトグレー',
+  'グレージュ',
+  '濃紺',
+  'ブルー',
+  '淡青',
+  'オリーブ',
+  'ブラウン',
+]);
+
 export function scanDirForPrivatePhotos(dir, errors) {
   if (!fs.existsSync(dir)) return;
   const entries = fs.readdirSync(dir, { withFileTypes: true });
@@ -192,6 +207,24 @@ export function runValidation() {
 
     if (item.imageUrl && typeof item.imageUrl !== 'string') {
       errors.push(`[${item.id}] imageUrl must be a string path`);
+    }
+
+    if (!item.color) {
+      errors.push(`[${item.id}] Missing required color`);
+    } else if (!validGarmentColors.has(item.color)) {
+      errors.push(`[${item.id}] Invalid color "${item.color}". Must be one of: ${Array.from(validGarmentColors).join(', ')}`);
+    }
+
+    if (item.measurements !== undefined) {
+      if (typeof item.measurements !== 'object' || item.measurements === null) {
+        errors.push(`[${item.id}] measurements must be an object if present`);
+      } else {
+        for (const [key, val] of Object.entries(item.measurements)) {
+          if (typeof val !== 'number' || val < 10 || val > 200 || !Number.isFinite(val)) {
+            errors.push(`[${item.id}] measurements.${key} must be a number between 10 and 200 (got ${val})`);
+          }
+        }
+      }
     }
   }
 

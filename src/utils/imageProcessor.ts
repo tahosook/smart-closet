@@ -1,4 +1,221 @@
-import { UploadImageRequest, UploadImageResponse } from '../types/closet';
+import type { GarmentCropBox, UploadImageRequest, UploadImageResponse } from '../types/closet';
+
+function normalizeCropBoxInternal(val: unknown): GarmentCropBox | undefined {
+  if (!val || typeof val !== 'object') return undefined;
+  const box = val as Partial<GarmentCropBox>;
+  const { ymin, xmin, ymax, xmax } = box;
+
+  if (
+    typeof ymin !== 'number' ||
+    typeof xmin !== 'number' ||
+    typeof ymax !== 'number' ||
+    typeof xmax !== 'number' ||
+    !Number.isFinite(ymin) ||
+    !Number.isFinite(xmin) ||
+    !Number.isFinite(ymax) ||
+    !Number.isFinite(xmax)
+  ) {
+    return undefined;
+  }
+
+  const clampedYmin = Math.max(0, Math.min(1000, Math.round(ymin)));
+  const clampedXmin = Math.max(0, Math.min(1000, Math.round(xmin)));
+  const clampedYmax = Math.max(0, Math.min(1000, Math.round(ymax)));
+  const clampedXmax = Math.max(0, Math.min(1000, Math.round(xmax)));
+
+  const width = clampedXmax - clampedXmin;
+  const height = clampedYmax - clampedYmin;
+
+  if (width < 50 || height < 50 || width * height < 25000) {
+    return undefined;
+  }
+
+  return {
+    ymin: clampedYmin,
+    xmin: clampedXmin,
+    ymax: clampedYmax,
+    xmax: clampedXmax,
+  };
+}
+
+/**
+ * 登録写真の標準キャンバス仕様 (縦長 3:4、900×1200px)
+ */
+export const STANDARD_IMAGE_WIDTH = 900;
+export const STANDARD_IMAGE_HEIGHT = 1200;
+export const STANDARD_STUDIO_BG_COLOR = '#f8fafc';
+
+export interface CropPlacementResult {
+  srcX: number;
+  srcY: number;
+  srcW: number;
+  srcH: number;
+  destX: number;
+  destY: number;
+  destW: number;
+  destH: number;
+  canvasWidth: number;
+  canvasHeight: number;
+  isCropped: boolean;
+}
+
+/**
+ * 元画像寸法と正規化座標 (0〜1000) から、3:4キャンバスへの切り抜き描画座標を計算する純粋関数
+ * - cropBox が有効な場合: 指定矩形に marginRatio (デフォルト 6%) を加えた領域を切り抜き、中央配置
+ * - cropBox が無効/未指定の場合: 元画像全体をアスペクト比維持 (contain) で中央配置 (フォールバック)
+ */
+export function calculateCropAndPlacement(
+  imgWidth: number,
+  imgHeight: number,
+  cropBox?: GarmentCropBox | null,
+  marginRatio = 0.06,
+  canvasWidth = STANDARD_IMAGE_WIDTH,
+  canvasHeight = STANDARD_IMAGE_HEIGHT
+): CropPlacementResult {
+  const safeImgW = Math.max(1, imgWidth);
+  const safeImgH = Math.max(1, imgHeight);
+
+  const normalized = normalizeCropBoxInternal(cropBox);
+
+  if (normalized) {
+    const boxW = normalized.xmax - normalized.xmin;
+    const boxH = normalized.ymax - normalized.ymin;
+    const xPad = Math.round(boxW * marginRatio);
+    const yPad = Math.round(boxH * marginRatio);
+
+    const normYmin = Math.max(0, normalized.ymin - yPad);
+    const normXmin = Math.max(0, normalized.xmin - xPad);
+    const normYmax = Math.min(1000, normalized.ymax + yPad);
+    const normXmax = Math.min(1000, normalized.xmax + xPad);
+
+    let srcX = Math.round((normXmin / 1000) * safeImgW);
+    let srcY = Math.round((normYmin / 1000) * safeImgH);
+    let srcW = Math.max(1, Math.round(((normXmax - normXmin) / 1000) * safeImgW));
+    let srcH = Math.max(1, Math.round(((normYmax - normYmin) / 1000) * safeImgH));
+
+    if (srcX + srcW > safeImgW) srcW = Math.max(1, safeImgW - srcX);
+    if (srcY + srcH > safeImgH) srcH = Math.max(1, safeImgH - srcY);
+
+    const scale = Math.min(canvasWidth / srcW, canvasHeight / srcH);
+    const destW = Math.round(srcW * scale);
+    const destH = Math.round(srcH * scale);
+    const destX = Math.round((canvasWidth - destW) / 2);
+    const destY = Math.round((canvasHeight - destH) / 2);
+
+    return {
+      srcX,
+      srcY,
+      srcW,
+      srcH,
+      destX,
+      destY,
+      destW,
+      destH,
+      canvasWidth,
+      canvasHeight,
+      isCropped: true,
+    };
+  }
+
+  // フォールバック: 元画像全体をアスペクト比維持で中央に配置
+  const scale = Math.min(canvasWidth / safeImgW, canvasHeight / safeImgH);
+  const destW = Math.round(safeImgW * scale);
+  const destH = Math.round(safeImgH * scale);
+  const destX = Math.round((canvasWidth - destW) / 2);
+  const destY = Math.round((canvasHeight - destH) / 2);
+
+  return {
+    srcX: 0,
+    srcY: 0,
+    srcW: safeImgW,
+    srcH: safeImgH,
+    destX,
+    destY,
+    destW,
+    destH,
+    canvasWidth,
+    canvasHeight,
+    isCropped: false,
+  };
+}
+
+/**
+ * 服の登録写真を 3:4 (900×1200px) の統一規格へ自動切り抜き・正規化する
+ * - cropBox がある場合: A4用紙や背景を除いた服領域＋6%余白で切り抜き、#f8fafc キャンバスの中央に配置
+ * - cropBox が無い場合: 元画像全体を余白付きで 3:4 キャンバスの中央に収める (フォールバック)
+ */
+export async function cropAndNormalizeGarmentImage(
+  sourceDataUrl: string,
+  cropBox?: GarmentCropBox | null,
+  marginRatio = 0.06,
+  quality = 0.85
+): Promise<{ blob: Blob; dataUrl: string; width: number; height: number; isCropped: boolean }> {
+  if (typeof document === 'undefined') {
+    // 非ブラウザ環境では明示的に失敗させる（空 Blob を成功扱いしない）
+    return Promise.reject(new Error('画像の正規化にはブラウザ環境（Canvas）が必要です'));
+  }
+
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onerror = () => reject(new Error('切り抜き対象画像の読み込み・デコードに失敗しました'));
+    img.onload = () => {
+      const placement = calculateCropAndPlacement(
+        img.naturalWidth || img.width,
+        img.naturalHeight || img.height,
+        cropBox,
+        marginRatio,
+        STANDARD_IMAGE_WIDTH,
+        STANDARD_IMAGE_HEIGHT
+      );
+
+      const canvas = document.createElement('canvas');
+      canvas.width = STANDARD_IMAGE_WIDTH;
+      canvas.height = STANDARD_IMAGE_HEIGHT;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        reject(new Error('Canvas 2D コンテキストの取得に失敗しました'));
+        return;
+      }
+
+      // クリーンなスタジオ背景 (#f8fafc) で塗りつぶし
+      ctx.fillStyle = STANDARD_STUDIO_BG_COLOR;
+      ctx.fillRect(0, 0, STANDARD_IMAGE_WIDTH, STANDARD_IMAGE_HEIGHT);
+
+      // 切り抜き領域を描画
+      ctx.drawImage(
+        img,
+        placement.srcX,
+        placement.srcY,
+        placement.srcW,
+        placement.srcH,
+        placement.destX,
+        placement.destY,
+        placement.destW,
+        placement.destH
+      );
+
+      const dataUrl = canvas.toDataURL('image/jpeg', quality);
+      canvas.toBlob(
+        (blob) => {
+          if (!blob) {
+            reject(new Error('切り抜き JPEG Blob の生成に失敗しました'));
+            return;
+          }
+          resolve({
+            blob,
+            dataUrl,
+            width: STANDARD_IMAGE_WIDTH,
+            height: STANDARD_IMAGE_HEIGHT,
+            isCropped: placement.isCropped,
+          });
+        },
+        'image/jpeg',
+        quality
+      );
+    };
+    img.src = sourceDataUrl;
+  });
+}
 
 /**
  * ユーザーが選択した画像ファイルをリサイズ・JPEG圧縮して正規化する

@@ -1,6 +1,54 @@
 export type Category = 'shirt' | 'pants';
 export type SceneMode = 'office' | 'remote';
 
+/**
+ * 標準色パレット（全12色、青の濃淡3段：濃紺（ネイビー含む）／ブルー／淡青）
+ * 奥さんのNG判定3類型（濃紺×濃紺、淡青×ブルー/淡青、生成り×淡色）を再現する語彙
+ */
+export const GARMENT_COLOR_PALETTE = [
+  '白',
+  '生成り',
+  '黒',
+  'チャコール',
+  'ミディアムグレー',
+  'ライトグレー',
+  'グレージュ',
+  '濃紺',
+  'ブルー',
+  '淡青',
+  'オリーブ',
+  'ブラウン',
+] as const;
+
+export type GarmentColor = (typeof GARMENT_COLOR_PALETTE)[number];
+
+/**
+ * 主要実寸目安（cm、A4用紙 210×297mm 基準で推定／手動修正可）
+ */
+export interface GarmentMeasurements {
+  // シャツ用 (category === 'shirt')
+  bodyLength?: number;    // 着丈 (cm): 後ろ襟ぐり中央〜裾
+  chestWidth?: number;    // 身幅 (cm): 両脇下の平置き直線幅
+  shoulderWidth?: number; // 肩幅 (cm): 左肩先〜右肩先の直線幅
+  sleeveLength?: number;  // 袖丈 (cm): 肩先〜袖口
+
+  // パンツ用 (category === 'pants')
+  waist?: number;         // ウエスト (cm): 平置き上端幅×2 の内周目安
+  inseam?: number;        // 股下 (cm): 内股の縫い目〜裾
+  totalLength?: number;   // 総丈 (cm): ウエスト上端〜裾までの全長
+  hemWidth?: number;      // 裾幅 (cm): 裾の平置き幅
+}
+
+/**
+ * Gemini Vision による服領域の正規化座標 (0〜1000)
+ */
+export interface GarmentCropBox {
+  ymin: number;
+  xmin: number;
+  ymax: number;
+  xmax: number;
+}
+
 export interface ClosetItem {
   id: string;
   category: Category;
@@ -14,6 +62,21 @@ export interface ClosetItem {
   ngIds: string[];
   ngReason: string;
   notes: string;
+  color?: GarmentColor;
+  measurements?: GarmentMeasurements;
+}
+
+/**
+ * 既存服の色パレット一括相談用のペイロード型
+ */
+export interface ColorUpdateItem {
+  id: string;
+  color: GarmentColor;
+  name?: string;
+}
+
+export interface BatchColorUpdatesPayload {
+  colorUpdates: ColorUpdateItem[];
 }
 
 export interface ClosetData {
