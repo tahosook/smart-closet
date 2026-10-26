@@ -12,6 +12,10 @@ import type {
   GarmentCropBox,
   BatchColorUpdatesPayload,
   ColorUpdateItem,
+  BatchGarmentDraftItem,
+  BatchGarmentsPayload,
+  BatchGarmentItemResult,
+  BatchGarmentsMergeResult,
 } from '../types/closet';
 
 /**
@@ -54,6 +58,29 @@ export const GARMENT_COLOR_ANCHOR_GUIDE = `【12色パレットの判定アン�
 4. グレー各色（チャコール／ミディアムグレー／ライトグレー／グレージュ）の境界:
    - A4白用紙と黒の間の明度を基準に、黒に近い濃灰は「チャコール」、標準的な中間調の灰は「ミディアムグレー」、白に近い明るい薄灰（杢グレー・アイスグレー等）は「ライトグレー」。
    - グレーに明確なベージュみ・茶み・黄みが混じる中間色（トープ等）は「グレージュ」。`;
+
+/**
+ * まとめ撮り一括登録の最大着数（推奨2〜3着、ハード上限3着）
+ */
+export const MAX_BATCH_GARMENTS = 3;
+
+/**
+ * 12色パレット外の色名が指定された場合に、情報欠損を防ぐため notes の末尾に目安を決定論的に追記する純粋関数
+ * 既に同一の追記が含まれる場合は二重追記しない。
+ */
+export function appendUnconfirmedColorNote(notes: string, unconfirmedColor: string): string {
+  const trimmedColor = (unconfirmedColor || '').trim();
+  if (!trimmedColor) return notes;
+  const noteSnippet = `（色の目安：${trimmedColor} ※12色パレット外のため未確定）`;
+  if (notes.includes(noteSnippet)) {
+    return notes;
+  }
+  const trimmedNotes = notes.trim();
+  if (!trimmedNotes) {
+    return noteSnippet;
+  }
+  return `${trimmedNotes} ${noteSnippet}`;
+}
 
 /**
  * 指定された値が12色パレットに含まれる有効な色であるかを判定する
@@ -696,12 +723,20 @@ export function getNextSequentialId(items: ClosetItem[], category: Category): st
 }
 
 /**
- * Gemini 等から出力された単一アイテム JSON のスキーマ・型・参照整合性を厳密に検証する。
+ * Gemini 等から出力された単一アイテム JSON のスキーマ・型・参照整合性を検証する。
+ * 色（color）がパレット外または未指定の場合は警告（color=undefined）として登録を通し、
+ * パレット外色名は notes 末尾に目安を決定論的に追記する（色以外の検証は従来どおり厳密にエラーとする）。
  */
 export function validateSingleClosetItem(
   item: unknown,
   existingData: ClosetData
-): { valid: boolean; item?: ClosetItem; error?: string } {
+): {
+  valid: boolean;
+  item?: ClosetItem;
+  error?: string;
+  warning?: string;
+  unconfirmedColorHint?: string;
+} {
   if (!item || typeof item !== 'object') {
     return { valid: false, error: 'アイテムがオブジェクト形式ではありません。' };
   }
@@ -835,33 +870,51 @@ export function validateSingleClosetItem(
     }
   }
 
-  // 色の検証（新規登録・単一アイテム検証では必須かつ12色パレット内であることを厳格に要求）
-  const rawColor = candidate.color as unknown;
-  if (!rawColor || typeof rawColor !== 'string' || rawColor.trim() === '') {
-    return {
-      valid: false,
-      error: `[${candidate.id}] の色 (color) が未設定です。12色パレット（${GARMENT_COLOR_PALETTE.join(', ')}）から指定してください。`,
-    };
+  // 寸法（measurements）の範囲チェック（指定された対象カテゴリ寸法は 10〜200cm の有限数値であること）
+  if (candidate.measurements && typeof candidate.measurements === 'object') {
+    const m = candidate.measurements as Record<string, unknown>;
+    const targetKeys = candidate.category === 'shirt'
+      ? ['bodyLength', 'chestWidth', 'shoulderWidth', 'sleeveLength']
+      : ['waist', 'inseam', 'totalLength', 'hemWidth'];
+    for (const k of targetKeys) {
+      const val = m[k];
+      if (val !== undefined && val !== null) {
+        if (typeof val !== 'number' || !Number.isFinite(val) || val < 10 || val > 200) {
+          return {
+            valid: false,
+            error: `[${candidate.id}] の寸法 "${k}" (${val}) は 10〜200cm の範囲である必要があります。`,
+          };
+        }
+      }
+    }
   }
 
-  if (rawColor === 'ネイビー') {
-    return {
-      valid: false,
-      error: `[${candidate.id}] の色「ネイビー」はパレット上「濃紺」に統合されています。確認パネルで「濃紺」を選択してください。`,
-    };
-  }
-
-  if (!isValidGarmentColor(rawColor)) {
-    return {
-      valid: false,
-      error: `[${candidate.id}] の色 "${rawColor}" は無効です。12色パレット（${GARMENT_COLOR_PALETTE.join(', ')}）から指定してください。`,
-    };
-  }
-
-  // measurements の検証・正規化
+  // measurements の検証・正規化 (0.5cm刻み)
   const validatedMeasurements = candidate.measurements
     ? validateGarmentMeasurements(candidate.measurements, candidate.category)
     : undefined;
+
+  // 色の検証（非ブロッキング化: パレット外・欠落でも登録を止めず警告扱い、notes に目安追記）
+  const rawColor = candidate.color as unknown;
+  let finalColor: GarmentColor | undefined = undefined;
+  let warning: string | undefined = undefined;
+  let unconfirmedColorHint: string | undefined = undefined;
+  let updatedNotes = candidate.notes;
+
+  if (typeof rawColor === 'string' && rawColor.trim() !== '') {
+    const trimmedColor = rawColor.trim();
+    if (isValidGarmentColor(trimmedColor)) {
+      finalColor = trimmedColor;
+    } else {
+      finalColor = undefined;
+      unconfirmedColorHint = trimmedColor;
+      updatedNotes = appendUnconfirmedColorNote(updatedNotes, trimmedColor);
+      warning = `色「${trimmedColor}」は12色パレット外のため未確定として登録します（メモに目安を記録済み）。`;
+    }
+  } else {
+    finalColor = undefined;
+    warning = '色が未設定のため「未確定」として扱います（後から色の一括相談で確定可能）。';
+  }
 
   // 一時プロパティ (cropBox, garmentBox 等) を除外したクリーンな ClosetItem を返却
   const candidateItem = candidate as ClosetItem;
@@ -877,12 +930,17 @@ export function validateSingleClosetItem(
     remoteRecommendIds: candidateItem.remoteRecommendIds,
     ngIds: candidateItem.ngIds,
     ngReason: candidateItem.ngReason,
-    notes: candidateItem.notes,
-    color: rawColor,
+    notes: updatedNotes,
+    ...(finalColor !== undefined ? { color: finalColor } : {}),
     ...(validatedMeasurements ? { measurements: validatedMeasurements } : {}),
   };
 
-  return { valid: true, item: finalItem };
+  return {
+    valid: true,
+    item: finalItem,
+    ...(warning ? { warning } : {}),
+    ...(unconfirmedColorHint ? { unconfirmedColorHint } : {}),
+  };
 }
 
 /**
@@ -1220,5 +1278,263 @@ export function applyBatchColorUpdates(
       updatedAt: Date.now(),
     },
     updatedCount,
+  };
+}
+
+/**
+ * バッチ内の仮IDや未確定IDなど、現有ワードローブに存在しない相手IDを相性配列から安全に除外する純粋関数（案B確定）
+ */
+export function sanitizeDraftPeerReferences(
+  draft: Partial<ClosetItem>,
+  existingData: ClosetData
+): Partial<ClosetItem> {
+  if (!draft || typeof draft !== 'object') return draft;
+  const targetCategory = draft.category === 'shirt' ? 'pants' : 'shirt';
+  const validTargetIds = new Set(
+    existingData.items.filter((i) => i.category === targetCategory).map((i) => i.id)
+  );
+
+  const filterList = (list: unknown): string[] => {
+    if (!Array.isArray(list)) return [];
+    return list.filter((id): id is string => typeof id === 'string' && validTargetIds.has(id));
+  };
+
+  return {
+    ...draft,
+    officeRecommendIds: filterList(draft.officeRecommendIds),
+    remoteRecommendIds: filterList(draft.remoteRecommendIds),
+    ngIds: filterList(draft.ngIds),
+  };
+}
+
+/**
+ * 確認パネル表示・プレビュー用に、対象着に対してカテゴリ別の次連番IDとimageUrlを決定論的に割り当てる純粋関数
+ * includedFlags[i] === false のアイテムは除外（ID繰り上げの消費を行わない）
+ */
+export function assignSequentialIdsForBatch(
+  existingItems: ClosetItem[],
+  drafts: BatchGarmentDraftItem[],
+  includedFlags?: boolean[]
+): BatchGarmentDraftItem[] {
+  let currentShirts = existingItems.filter((i) => i.category === 'shirt');
+  let currentPants = existingItems.filter((i) => i.category === 'pants');
+
+  return drafts.map((draft, idx) => {
+    const isIncluded = includedFlags ? includedFlags[idx] !== false : true;
+    if (!isIncluded) {
+      return { ...draft };
+    }
+    if (draft.category === 'shirt') {
+      const nextId = getNextSequentialId(currentShirts, 'shirt');
+      currentShirts = [...currentShirts, { id: nextId, category: 'shirt' } as ClosetItem];
+      return {
+        ...draft,
+        id: nextId,
+        category: 'shirt',
+        imageUrl: `/images/${nextId}.jpg`,
+      };
+    } else if (draft.category === 'pants') {
+      const nextId = getNextSequentialId(currentPants, 'pants');
+      currentPants = [...currentPants, { id: nextId, category: 'pants' } as ClosetItem];
+      return {
+        ...draft,
+        id: nextId,
+        category: 'pants',
+        imageUrl: `/images/${nextId}.jpg`,
+      };
+    }
+    return { ...draft };
+  });
+}
+
+/**
+ * まとめ撮り（1〜3着）の服配列を検証し、既存データへ決定論的連番IDで順次マージする純粋関数
+ * - 色パレット外・欠落は警告通過とし、パレット外色名は notes 末尾に目安を追記する
+ * - 色以外のエラーは拒否し、部分適用時は成功着のみマージして失敗着は remainingDrafts に格納する
+ */
+export function validateAndMergeBatchGarments(
+  existingData: ClosetData,
+  payload: BatchGarmentsPayload | BatchGarmentDraftItem[] | unknown,
+  includedFlags?: boolean[]
+): BatchGarmentsMergeResult {
+  if (!payload || typeof payload !== 'object') {
+    return {
+      valid: false,
+      results: [],
+      appliedCount: 0,
+      failedCount: 0,
+      skippedCount: 0,
+      remainingDrafts: [],
+      error: 'まとめ撮り一括登録のペイロードが不正です。',
+    };
+  }
+
+  const rawList = Array.isArray(payload)
+    ? payload
+    : Array.isArray((payload as any).garments)
+    ? (payload as any).garments
+    : null;
+
+  if (!rawList) {
+    return {
+      valid: false,
+      results: [],
+      appliedCount: 0,
+      failedCount: 0,
+      skippedCount: 0,
+      remainingDrafts: [],
+      error: 'ペイロードに "garments" 配列または服アイテム配列が含まれていません。',
+    };
+  }
+
+  if (rawList.length === 0) {
+    return {
+      valid: false,
+      results: [],
+      appliedCount: 0,
+      failedCount: 0,
+      skippedCount: 0,
+      remainingDrafts: [],
+      error: '登録するアイテムがありません。1〜3着のアイテムを指定してください。',
+    };
+  }
+
+  if (rawList.length > MAX_BATCH_GARMENTS) {
+    return {
+      valid: false,
+      results: [],
+      appliedCount: 0,
+      failedCount: 0,
+      skippedCount: 0,
+      remainingDrafts: rawList as BatchGarmentDraftItem[],
+      error: `一度に登録できるのは最大${MAX_BATCH_GARMENTS}着までです（現在: ${rawList.length}着）。`,
+    };
+  }
+
+  let workingData: ClosetData = {
+    items: [...existingData.items],
+    updatedAt: existingData.updatedAt,
+  };
+
+  const results: BatchGarmentItemResult[] = [];
+  const remainingDrafts: BatchGarmentDraftItem[] = [];
+  let appliedCount = 0;
+  let failedCount = 0;
+  let skippedCount = 0;
+
+  for (let i = 0; i < rawList.length; i++) {
+    const draft = rawList[i] as BatchGarmentDraftItem;
+    const isIncluded = includedFlags ? includedFlags[i] !== false : true;
+
+    if (!isIncluded) {
+      skippedCount++;
+      results.push({
+        index: i,
+        status: 'skipped',
+        name: draft?.name,
+        category: draft?.category,
+        cropBox: draft?.cropBox,
+      });
+      continue;
+    }
+
+    if (!draft || typeof draft !== 'object') {
+      failedCount++;
+      remainingDrafts.push(draft);
+      results.push({
+        index: i,
+        status: 'failed',
+        error: `アイテム[${i}] の形式が不正です。`,
+      });
+      continue;
+    }
+
+    if (draft.category !== 'shirt' && draft.category !== 'pants') {
+      failedCount++;
+      remainingDrafts.push(draft);
+      results.push({
+        index: i,
+        status: 'failed',
+        name: draft.name,
+        category: draft.category,
+        cropBox: draft.cropBox,
+        error: `カテゴリ "${draft.category}" が不正です（"shirt" または "pants"）。`,
+      });
+      continue;
+    }
+
+    // 決定論的連番IDの採番（前の着が失敗しても歯抜けにならないよう現在の workingData.items から採番）
+    const assignedId = getNextSequentialId(workingData.items, draft.category);
+    const candidate: BatchGarmentDraftItem = {
+      ...draft,
+      id: assignedId,
+      imageUrl: `/images/${assignedId}.jpg`,
+    };
+
+    // 案B確定: バッチ開始時点の確定済み既存データ (existingData) を基準に未確定IDを安全にストリップ
+    const sanitized = sanitizeDraftPeerReferences(candidate, existingData);
+
+    // 単一アイテムバリデータで検証（色の未確定は警告通過、色以外のエラーは拒否）
+    const validation = validateSingleClosetItem(sanitized, workingData);
+
+    if (validation.valid && validation.item) {
+      workingData = mergeSingleItemIntoClosetData(workingData, validation.item);
+      appliedCount++;
+
+      // 双方向リンクで更新された相手着数を算出
+      const targetCat = validation.item.category === 'shirt' ? 'pants' : 'shirt';
+      const updatedPeersCount = workingData.items.filter(
+        (it) =>
+          it.category === targetCat &&
+          (it.officeRecommendIds.includes(validation.item!.id) ||
+            it.remoteRecommendIds.includes(validation.item!.id) ||
+            it.ngIds.includes(validation.item!.id))
+      ).length;
+
+      results.push({
+        index: i,
+        status: 'applied',
+        assignedId,
+        name: validation.item.name,
+        category: validation.item.category,
+        item: validation.item,
+        cropBox: draft.cropBox,
+        updatedPeersCount,
+        warning: validation.warning,
+        unconfirmedColorHint: validation.unconfirmedColorHint,
+      });
+    } else {
+      failedCount++;
+      remainingDrafts.push(draft);
+      results.push({
+        index: i,
+        status: 'failed',
+        name: draft.name,
+        category: draft.category,
+        cropBox: draft.cropBox,
+        error: validation.error || 'バリデーションエラー',
+      });
+    }
+  }
+
+  const valid = appliedCount > 0;
+  let overallError: string | undefined = undefined;
+  if (appliedCount === 0) {
+    if (skippedCount === rawList.length) {
+      overallError = '登録対象として選択されたアイテムがありません。';
+    } else {
+      overallError = 'すべてのアイテムの検証に失敗しました。';
+    }
+  }
+
+  return {
+    valid,
+    data: valid ? { ...workingData, updatedAt: Date.now() } : undefined,
+    results,
+    appliedCount,
+    failedCount,
+    skippedCount,
+    remainingDrafts,
+    ...(overallError ? { error: overallError } : {}),
   };
 }

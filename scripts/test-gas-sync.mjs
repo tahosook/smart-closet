@@ -44,6 +44,11 @@ const {
   validateGarmentMeasurements,
   normalizeCropBox,
   applyBatchColorUpdates,
+  MAX_BATCH_GARMENTS,
+  appendUnconfirmedColorNote,
+  sanitizeDraftPeerReferences,
+  assignSequentialIdsForBatch,
+  validateAndMergeBatchGarments,
 } = closetDomain;
 
 const imageProcessorTsPath = path.join(projectRoot, 'src/utils/imageProcessor.ts');
@@ -2794,20 +2799,27 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
   assert.equal('cropBox' in p16ValidRes.item, false, 'cropBox must be stripped from returned ClosetItem');
   assert.equal('garmentBox' in p16ValidRes.item, false, 'garmentBox must be stripped from returned ClosetItem');
 
-  // 色欠落はエラー
+  // 5b. 色の非ブロッキング化検証（パレット外・欠落でも登録を止めず、color=undefined で登録を通す）
+  // 色欠落は警告通過（color=undefined、notes追記なし）
   const noColorRes = validateSingleClosetItem({ ...testP16Candidate, color: undefined }, rawCloset);
-  assert.equal(noColorRes.valid, false);
-  assert.ok(noColorRes.error.includes('未設定'));
+  assert.equal(noColorRes.valid, true, 'Missing color must pass as unconfirmed warning');
+  assert.equal(noColorRes.item.color, undefined);
+  assert.ok(noColorRes.warning.includes('未設定'), 'Warning must note unconfirmed color');
+  assert.equal(noColorRes.item.notes, testP16Candidate.notes, 'Notes must NOT have hint when color is missing');
 
-  // 「ネイビー」単独指定は濃紺統合の案内付きでエラー
+  // 「ネイビー」単独指定もエラーにせず、color=undefined かつ notes に目安追記
   const navyRes = validateSingleClosetItem({ ...testP16Candidate, color: 'ネイビー' }, rawCloset);
-  assert.equal(navyRes.valid, false);
-  assert.ok(navyRes.error.includes('「濃紺」に統合'), 'Error must guide that navy is integrated into dark navy');
+  assert.equal(navyRes.valid, true, 'Navy must pass as unconfirmed warning with note hint');
+  assert.equal(navyRes.item.color, undefined);
+  assert.equal(navyRes.unconfirmedColorHint, 'ネイビー');
+  assert.ok(navyRes.item.notes.includes('（色の目安：ネイビー ※12色パレット外のため未確定）'));
 
-  // パレット外の色はエラー
-  const invalidColorRes = validateSingleClosetItem({ ...testP16Candidate, color: '水色' }, rawCloset);
-  assert.equal(invalidColorRes.valid, false);
-  assert.ok(invalidColorRes.error.includes('無効です'));
+  // パレット外の色（ベージュ）もエラーにせず、color=undefined かつ notes に目安追記
+  const beigeRes = validateSingleClosetItem({ ...testP16Candidate, color: 'ベージュ' }, rawCloset);
+  assert.equal(beigeRes.valid, true, 'Beige must pass as unconfirmed warning with note hint');
+  assert.equal(beigeRes.item.color, undefined);
+  assert.equal(beigeRes.unconfirmedColorHint, 'ベージュ');
+  assert.ok(beigeRes.item.notes.includes('（色の目安：ベージュ ※12色パレット外のため未確定）'));
 
   // 6. 【レビュー条件検証】validateClosetDataSchema の暫定値非永続化と既存データ読み込み保護
   // 6a. color が未設定のレガシーデータ: 読み込み成功し、color は undefined のまま保持（inferGarmentColor で勝手に上書きされない）
@@ -2956,6 +2968,412 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
   assert.ok(itemImageCode.includes('inferGarmentColor'), 'ItemImage must use inferGarmentColor for fallback silhouette');
 
   console.log('  ✅ Phase 2 UI, prompts, smart crop, measurements and batch color integration verified');
+}
+
+// -------------------------------------------------------------
+// Test Case 25: まとめ撮り一括登録（Phase 1: ドメインモデル・決定論的ID割当・順次マージ・非ブロッキング色正規化・部分適用・境界値検証）
+// -------------------------------------------------------------
+{
+  const rawCloset = JSON.parse(fs.readFileSync(path.join(projectRoot, 'src/data/closet.json'), 'utf-8'));
+
+  // 1. MAX_BATCH_GARMENTS 定数の検証 (ハード上限3着・定義の一本化と re-export)
+  assert.equal(MAX_BATCH_GARMENTS, 3, 'MAX_BATCH_GARMENTS must be 3');
+  const closetTsCode = fs.readFileSync(path.join(projectRoot, 'src/types/closet.ts'), 'utf-8');
+  assert.ok(
+    closetTsCode.includes("export { MAX_BATCH_GARMENTS } from '../utils/closetDomain';"),
+    'src/types/closet.ts must re-export MAX_BATCH_GARMENTS from closetDomain'
+  );
+
+  // 2. appendUnconfirmedColorNote の決定論的動作検証
+  assert.equal(
+    appendUnconfirmedColorNote('', 'ベージュ'),
+    '（色の目安：ベージュ ※12色パレット外のため未確定）',
+    'Must format empty notes'
+  );
+  assert.equal(
+    appendUnconfirmedColorNote('白オックスフォードシャツ', 'ベージュ'),
+    '白オックスフォードシャツ （色の目安：ベージュ ※12色パレット外のため未確定）',
+    'Must append to existing notes'
+  );
+  // 二重追記防止
+  const withHint = '白オックスフォードシャツ （色の目安：ベージュ ※12色パレット外のため未確定）';
+  assert.equal(
+    appendUnconfirmedColorNote(withHint, 'ベージュ'),
+    withHint,
+    'Must prevent duplicate color hint in notes'
+  );
+  // 空文字色名の場合は変更なし
+  assert.equal(appendUnconfirmedColorNote('メモ', ''), 'メモ');
+  assert.equal(appendUnconfirmedColorNote('メモ', '   '), 'メモ');
+
+  // 3. validateSingleClosetItem の色非ブロッキング化と色以外の厳格検証
+  const baseShirtCandidate = {
+    id: 'S10',
+    category: 'shirt',
+    name: 'テストシャツ',
+    imageUrl: '/images/S10.jpg',
+    seasonSleeve: '長袖・通年',
+    dressScore: 3.5,
+    comfortScore: 4.0,
+    officeRecommendIds: ['P1', 'P2'],
+    remoteRecommendIds: ['P3'],
+    ngIds: ['P5'],
+    ngReason: '同系色',
+    notes: 'テストシャツメモ',
+  };
+
+  // 3a. パレット外の色（ベージュ）: 警告として通過、color=undefined、notes 末尾に目安追記
+  const beigeShirtRes = validateSingleClosetItem(
+    { ...baseShirtCandidate, color: 'ベージュ' },
+    rawCloset
+  );
+  assert.equal(beigeShirtRes.valid, true, 'Beige shirt must pass validation');
+  assert.equal(beigeShirtRes.item.color, undefined, 'Out-of-palette color must be stored as undefined');
+  assert.equal(beigeShirtRes.unconfirmedColorHint, 'ベージュ');
+  assert.ok(beigeShirtRes.item.notes.includes('（色の目安：ベージュ ※12色パレット外のため未確定）'));
+  assert.ok(beigeShirtRes.warning.includes('12色パレット外'));
+
+  // 3b. 色欠落（undefined / 空文字）: 警告として通過、color=undefined、notes への目安追記はなし
+  const noColorShirtRes = validateSingleClosetItem(
+    { ...baseShirtCandidate, color: undefined },
+    rawCloset
+  );
+  assert.equal(noColorShirtRes.valid, true, 'Missing color shirt must pass validation');
+  assert.equal(noColorShirtRes.item.color, undefined);
+  assert.equal(noColorShirtRes.unconfirmedColorHint, undefined);
+  assert.equal(noColorShirtRes.item.notes, baseShirtCandidate.notes, 'Notes must NOT have hint for missing color');
+  assert.ok(noColorShirtRes.warning.includes('未設定'));
+
+  // 3c. 色以外の検証エラー（厳密エラー維持）
+  // スコア範囲外 (1.0〜5.0 外)
+  const invalidScoreRes1 = validateSingleClosetItem({ ...baseShirtCandidate, color: '白', dressScore: 0.5 }, rawCloset);
+  assert.equal(invalidScoreRes1.valid, false, 'dressScore < 1 must be rejected');
+  assert.ok(invalidScoreRes1.error.includes('dressScore'));
+
+  const invalidScoreRes2 = validateSingleClosetItem({ ...baseShirtCandidate, color: '白', dressScore: 9.0 }, rawCloset);
+  assert.equal(invalidScoreRes2.valid, false, 'dressScore > 5 must be rejected');
+
+  const invalidComfortRes = validateSingleClosetItem({ ...baseShirtCandidate, color: '白', comfortScore: 6.0 }, rawCloset);
+  assert.equal(invalidComfortRes.valid, false, 'comfortScore > 5 must be rejected');
+
+  // ID接頭辞とカテゴリ不一致
+  const prefixMismatchRes = validateSingleClosetItem({ ...baseShirtCandidate, id: 'P16', color: '白' }, rawCloset);
+  assert.equal(prefixMismatchRes.valid, false, 'Prefix mismatch must be rejected');
+
+  // 寸法範囲外 (10〜200cm 外)
+  const invalidMeasurementRes = validateSingleClosetItem(
+    { ...baseShirtCandidate, color: '白', measurements: { bodyLength: 300 } },
+    rawCloset
+  );
+  assert.equal(invalidMeasurementRes.valid, false, 'Out of range measurement must be rejected');
+  assert.ok(invalidMeasurementRes.error.includes('10〜200cm'));
+
+  // 4. sanitizeDraftPeerReferences の検証（案B確定: 確定済み現有アイテムのみ保持し、未確定IDを除外）
+  const draftWithBogusPeers = {
+    category: 'shirt',
+    officeRecommendIds: ['P1', 'P999', 'S1', 'P16'], // P999, S1, P16(バッチ内仮ID) は未確定/不正
+    remoteRecommendIds: ['P2', 'P17'],
+    ngIds: ['P3', 'INVALID'],
+  };
+  const sanitizedDraft = sanitizeDraftPeerReferences(draftWithBogusPeers, rawCloset);
+  assert.deepEqual(sanitizedDraft.officeRecommendIds, ['P1'], 'Only existing pants IDs must be kept');
+  assert.deepEqual(sanitizedDraft.remoteRecommendIds, ['P2']);
+  assert.deepEqual(sanitizedDraft.ngIds, ['P3']);
+
+  // 5. assignSequentialIdsForBatch の決定論的採番検証
+  const testDrafts = [
+    { category: 'shirt', name: 'シャツ1' },
+    { category: 'pants', name: 'パンツ1' },
+    { category: 'shirt', name: 'シャツ2' },
+  ];
+  // 全着含める場合: S10, P16, S11
+  const assignedAll = assignSequentialIdsForBatch(rawCloset.items, testDrafts);
+  assert.equal(assignedAll[0].id, 'S10');
+  assert.equal(assignedAll[0].imageUrl, '/images/S10.jpg');
+  assert.equal(assignedAll[1].id, 'P16');
+  assert.equal(assignedAll[1].imageUrl, '/images/P16.jpg');
+  assert.equal(assignedAll[2].id, 'S11');
+  assert.equal(assignedAll[2].imageUrl, '/images/S11.jpg');
+
+  // 1着目を除外（includedFlags[0] = false）した場合: 3着目のシャツが S10 に繰り上がる
+  const assignedWithSkip = assignSequentialIdsForBatch(rawCloset.items, testDrafts, [false, true, true]);
+  assert.equal(assignedWithSkip[0].id, undefined, 'Skipped item must not have assigned ID');
+  assert.equal(assignedWithSkip[1].id, 'P16');
+  assert.equal(assignedWithSkip[2].id, 'S10', 'Subsequent shirt must take S10');
+
+  // 1着のみの採番
+  const assignedSingle = assignSequentialIdsForBatch(rawCloset.items, [{ category: 'shirt', name: '単独シャツ' }]);
+  assert.equal(assignedSingle[0].id, 'S10');
+
+  // 2着のみの採番
+  const assignedPair = assignSequentialIdsForBatch(rawCloset.items, [
+    { category: 'shirt', name: 'シャツ' },
+    { category: 'pants', name: 'パンツ' },
+  ]);
+  assert.equal(assignedPair[0].id, 'S10');
+  assert.equal(assignedPair[1].id, 'P16');
+
+  // 6. validateAndMergeBatchGarments の一括検証・順次マージ・双方向リンク検証
+  const validBatchPayload = {
+    garments: [
+      {
+        category: 'shirt',
+        name: 'ベージュリネンシャツ',
+        color: 'ベージュ', // パレット外色 -> color=undefined & notes追記
+        seasonSleeve: '春夏・長袖',
+        dressScore: 3.5,
+        comfortScore: 4.5,
+        officeRecommendIds: ['P1'],
+        remoteRecommendIds: ['P2'],
+        ngIds: ['P3'],
+        ngReason: '同系色',
+        notes: '軽快なリネン',
+      },
+      {
+        category: 'pants',
+        name: 'ライトグレーイージーパンツ',
+        color: 'ライトグレー', // パレット内確定色
+        seasonSleeve: '通年',
+        dressScore: 4.0,
+        comfortScore: 4.0,
+        officeRecommendIds: ['S1'],
+        remoteRecommendIds: ['S2'],
+        ngIds: ['S3'],
+        ngReason: 'なし',
+        notes: '快適スラックス',
+      },
+      {
+        category: 'shirt',
+        name: '生成りバンドカラーシャツ',
+        color: '生成り', // パレット内確定色
+        seasonSleeve: '通年',
+        dressScore: 3.5,
+        comfortScore: 4.0,
+        officeRecommendIds: ['P4'],
+        remoteRecommendIds: ['P5'],
+        ngIds: [],
+        ngReason: 'なし',
+        notes: '柔らかい風合い',
+      },
+    ],
+  };
+
+  const mergeRes = validateAndMergeBatchGarments(rawCloset, validBatchPayload);
+  assert.equal(mergeRes.valid, true, 'Valid batch merge must succeed');
+  assert.equal(mergeRes.appliedCount, 3);
+  assert.equal(mergeRes.failedCount, 0);
+  assert.equal(mergeRes.skippedCount, 0);
+  assert.equal(mergeRes.remainingDrafts.length, 0);
+  assert.equal(mergeRes.results.length, 3);
+
+  // 1着目: S10, color=undefined, notes に目安追記
+  const mergedS10 = mergeRes.data.items.find((i) => i.id === 'S10');
+  assert.ok(mergedS10, 'S10 must be merged into data');
+  assert.equal(mergedS10.color, undefined);
+  assert.ok(mergedS10.notes.includes('（色の目安：ベージュ ※12色パレット外のため未確定）'));
+
+  // 2着目: P16, color='ライトグレー'
+  const mergedP16 = mergeRes.data.items.find((i) => i.id === 'P16');
+  assert.ok(mergedP16, 'P16 must be merged into data');
+  assert.equal(mergedP16.color, 'ライトグレー');
+
+  // 3着目: S11, color='生成り'
+  const mergedS11 = mergeRes.data.items.find((i) => i.id === 'S11');
+  assert.ok(mergedS11, 'S11 must be merged into data');
+  assert.equal(mergedS11.color, '生成り');
+
+  // 相手アイテムへの双方向リンク反映（P1 の officeRecommendIds に S10 が追加されていること）
+  const updatedP1 = mergeRes.data.items.find((i) => i.id === 'P1');
+  assert.ok(updatedP1.officeRecommendIds.includes('S10'), 'P1 must have S10 in officeRecommendIds');
+
+  // 6b. 【修正1検証】1着目（シャツ）が適用された後に、2着目（パンツ）の相性リストに1着目ID（S10）が含まれていても除去され双方向リンクが張られないこと（案Bの厳密性）
+  const intraBatchRefPayload = {
+    garments: [
+      {
+        category: 'shirt',
+        name: 'シャツS10候補',
+        color: '白',
+        seasonSleeve: '通年',
+        dressScore: 4.0,
+        comfortScore: 4.0,
+        officeRecommendIds: ['P1'],
+        remoteRecommendIds: [],
+        ngIds: [],
+        ngReason: 'なし',
+        notes: '1着目',
+      },
+      {
+        category: 'pants',
+        name: 'パンツP16候補',
+        color: '黒',
+        seasonSleeve: '通年',
+        dressScore: 4.0,
+        comfortScore: 4.0,
+        officeRecommendIds: ['S10', 'S1'], // 'S10' はバッチ内1着目のID！
+        remoteRecommendIds: [],
+        ngIds: [],
+        ngReason: 'なし',
+        notes: '2着目',
+      },
+    ],
+  };
+  const intraRes = validateAndMergeBatchGarments(rawCloset, intraBatchRefPayload);
+  assert.equal(intraRes.valid, true);
+  assert.equal(intraRes.appliedCount, 2);
+  const registeredP16 = intraRes.data.items.find((i) => i.id === 'P16');
+  const registeredS10 = intraRes.data.items.find((i) => i.id === 'S10');
+  assert.ok(registeredP16, 'P16 must exist');
+  assert.ok(registeredS10, 'S10 must exist');
+  // P16 の officeRecommendIds に S10 が含まれていないこと（S1 のみ残る）
+  assert.equal(registeredP16.officeRecommendIds.includes('S10'), false, 'Intra-batch reference S10 must be stripped from P16');
+  assert.ok(registeredP16.officeRecommendIds.includes('S1'), 'Pre-existing reference S1 must be retained');
+  // S10 側にも P16 への逆参照が張られていないこと
+  assert.equal(registeredS10.officeRecommendIds.includes('P16'), false, 'S10 must not link back to intra-batch P16');
+
+  // 7. 部分適用と相性マトリクス保護・再試行検証
+  // 3着中2着目がスコア範囲外エラー (dressScore: 9.0)
+  const partiallyInvalidBatch = [
+    {
+      category: 'shirt',
+      name: '白ブロードシャツ',
+      color: '白',
+      seasonSleeve: '長袖・通年',
+      dressScore: 4.0,
+      comfortScore: 3.5,
+      officeRecommendIds: ['P1'],
+      remoteRecommendIds: [],
+      ngIds: [],
+      ngReason: 'なし',
+      notes: '定番白シャツ',
+    },
+    {
+      category: 'pants',
+      name: '不正スコアパンツ',
+      color: '黒',
+      seasonSleeve: '通年',
+      dressScore: 9.0, // 不正スコア！
+      comfortScore: 4.0,
+      officeRecommendIds: ['S1'],
+      remoteRecommendIds: [],
+      ngIds: [],
+      ngReason: 'なし',
+      notes: '不正アイテム',
+    },
+    {
+      category: 'shirt',
+      name: '濃紺オックスフォードシャツ',
+      color: '濃紺',
+      seasonSleeve: '長袖・通年',
+      dressScore: 4.0,
+      comfortScore: 4.0,
+      officeRecommendIds: ['P2'],
+      remoteRecommendIds: [],
+      ngIds: [],
+      ngReason: 'なし',
+      notes: '定番紺シャツ',
+    },
+  ];
+
+  const partialRes = validateAndMergeBatchGarments(rawCloset, partiallyInvalidBatch);
+  assert.equal(partialRes.valid, true, 'Partial application must return valid: true when appliedCount > 0');
+  assert.equal(partialRes.appliedCount, 2, '2 items must be applied');
+  assert.equal(partialRes.failedCount, 1, '1 item must fail');
+  assert.equal(partialRes.remainingDrafts.length, 1, 'Only failed item must remain in remainingDrafts');
+  assert.equal(partialRes.remainingDrafts[0].name, '不正スコアパンツ');
+
+  // 歯抜けのない連番IDの検証: 1着目=S10, 3着目のシャツ=S11（失敗した着には assignedId がないこと）
+  assert.equal(partialRes.results[0].status, 'applied');
+  assert.equal(partialRes.results[0].assignedId, 'S10');
+  assert.equal(partialRes.results[1].status, 'failed');
+  assert.equal(partialRes.results[1].assignedId, undefined, 'Failed item must NOT have assignedId');
+  assert.ok(partialRes.results[1].error.includes('dressScore'));
+  assert.equal(partialRes.results[2].status, 'applied');
+  assert.equal(partialRes.results[2].assignedId, 'S11');
+
+  // 失敗したパンツの ID やリンクはマージ後データに一切混入していないこと
+  assert.equal(partialRes.data.items.some((i) => i.id === 'P16'), false, 'Failed pants must NOT exist in data');
+  const checkS1 = partialRes.data.items.find((i) => i.id === 'S1');
+  assert.equal(checkS1.officeRecommendIds.includes('P16'), false, 'Failed item must not be linked in existing peers');
+
+  // 7b. 【修正2検証】同カテゴリで失敗→成功の順に処理した場合、失敗着の結果に assignedId がなく、成功着がその ID で登録されること
+  const sameCategoryFailThenSuccess = [
+    {
+      category: 'shirt',
+      name: '失敗シャツ',
+      color: '白',
+      seasonSleeve: '通年',
+      dressScore: 9.0, // エラーで失敗
+      comfortScore: 4.0,
+      officeRecommendIds: ['P1'],
+      remoteRecommendIds: [],
+      ngIds: [],
+      ngReason: 'なし',
+      notes: '1着目失敗',
+    },
+    {
+      category: 'shirt',
+      name: '後続成功シャツ',
+      color: '白',
+      seasonSleeve: '通年',
+      dressScore: 4.0, // 正常
+      comfortScore: 4.0,
+      officeRecommendIds: ['P1'],
+      remoteRecommendIds: [],
+      ngIds: [],
+      ngReason: 'なし',
+      notes: '2着目成功',
+    },
+  ];
+  const failThenSuccessRes = validateAndMergeBatchGarments(rawCloset, sameCategoryFailThenSuccess);
+  assert.equal(failThenSuccessRes.valid, true);
+  assert.equal(failThenSuccessRes.appliedCount, 1);
+  assert.equal(failThenSuccessRes.failedCount, 1);
+  // 1着目（失敗）には assignedId が存在しない (undefined)
+  assert.equal(failThenSuccessRes.results[0].status, 'failed');
+  assert.equal(failThenSuccessRes.results[0].assignedId, undefined, 'Failed shirt must NOT have assignedId in results');
+  // 2着目（成功）が S10 を取得して登録される
+  assert.equal(failThenSuccessRes.results[1].status, 'applied');
+  assert.equal(failThenSuccessRes.results[1].assignedId, 'S10', 'Subsequent successful shirt must receive S10');
+  assert.equal(failThenSuccessRes.data.items.find((i) => i.id === 'S10').name, '後続成功シャツ');
+
+  // 再試行の検証: 失敗した remainingDrafts の dressScore を 4.0 に修正して再適用
+  const fixedDrafts = partialRes.remainingDrafts.map((d) => ({ ...d, dressScore: 4.0 }));
+  const retryRes = validateAndMergeBatchGarments(partialRes.data, fixedDrafts);
+  assert.equal(retryRes.valid, true);
+  assert.equal(retryRes.appliedCount, 1);
+  assert.equal(retryRes.results[0].assignedId, 'P16', 'Fixed item must take next sequential ID P16');
+  assert.ok(retryRes.data.items.find((i) => i.id === 'P16'), 'P16 must be registered on retry');
+
+  // 8. 境界値・異常系検証 (0着拒否、1〜3着受付、4着以上拒否)
+  // 8a. 空配列 (0着)
+  const emptyRes = validateAndMergeBatchGarments(rawCloset, { garments: [] });
+  assert.equal(emptyRes.valid, false);
+  assert.ok(emptyRes.error.includes('1〜3着'), 'Error must specify 1-3 items');
+
+  const emptyRawArrayRes = validateAndMergeBatchGarments(rawCloset, []);
+  assert.equal(emptyRawArrayRes.valid, false);
+
+  // 8b. 4着以上 (MAX_BATCH_GARMENTS 超過)
+  const fourItems = [
+    { category: 'shirt', name: 'S1', color: '白', seasonSleeve: '通年', dressScore: 3, comfortScore: 3, officeRecommendIds: [], remoteRecommendIds: [], ngIds: [], ngReason: '', notes: '' },
+    { category: 'shirt', name: 'S2', color: '白', seasonSleeve: '通年', dressScore: 3, comfortScore: 3, officeRecommendIds: [], remoteRecommendIds: [], ngIds: [], ngReason: '', notes: '' },
+    { category: 'shirt', name: 'S3', color: '白', seasonSleeve: '通年', dressScore: 3, comfortScore: 3, officeRecommendIds: [], remoteRecommendIds: [], ngIds: [], ngReason: '', notes: '' },
+    { category: 'shirt', name: 'S4', color: '白', seasonSleeve: '通年', dressScore: 3, comfortScore: 3, officeRecommendIds: [], remoteRecommendIds: [], ngIds: [], ngReason: '', notes: '' },
+  ];
+  const fourItemsRes = validateAndMergeBatchGarments(rawCloset, fourItems);
+  assert.equal(fourItemsRes.valid, false);
+  assert.ok(fourItemsRes.error.includes('最大3着'), 'Error must specify maximum 3 items limit');
+
+  // 8c. 1着のみ、2着のみの正常受付
+  const oneItemRes = validateAndMergeBatchGarments(rawCloset, [fourItems[0]]);
+  assert.equal(oneItemRes.valid, true);
+  assert.equal(oneItemRes.appliedCount, 1);
+
+  const twoItemsRes = validateAndMergeBatchGarments(rawCloset, [fourItems[0], fourItems[1]]);
+  assert.equal(twoItemsRes.valid, true);
+  assert.equal(twoItemsRes.appliedCount, 2);
+
+  console.log('  ✅ Batch garment registration Phase 1 (deterministic IDs, non-blocking color, partial merge & bounds) verified');
 }
 
 console.log('🎉 All GAS backend & sync logic tests passed successfully!');
