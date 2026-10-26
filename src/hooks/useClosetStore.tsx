@@ -860,12 +860,17 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         let addedItem: ClosetItem | undefined = undefined;
         let updatedPeersCount = 0;
 
-        // 一括色更新形式（colorUpdates 配列を含むオブジェクト）かどうかの判別
-        if (
+        // 一括色更新形式（colorUpdates 配列を含むオブジェクト、または直接の更新配列）かどうかの判別
+        const isBatchCandidate =
           parsed &&
           typeof parsed === 'object' &&
-          Array.isArray((parsed as any).colorUpdates)
-        ) {
+          (Array.isArray((parsed as any).colorUpdates) ||
+            (Array.isArray(parsed) &&
+              parsed.length > 0 &&
+              typeof (parsed[0] as any)?.id === 'string' &&
+              (parsed[0] as any)?.color !== undefined));
+
+        if (isBatchCandidate) {
           const batchRes = applyBatchColorUpdates(stateRef.current.closetData, parsed);
           if (!batchRes.valid || !batchRes.data) {
             return {

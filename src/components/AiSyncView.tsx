@@ -552,7 +552,10 @@ ${itemsList}
 
     // 一括色更新の適用
     if (parseRes.kind === 'batch_color') {
-      const res = importCustomData(jsonInput);
+      const payload = JSON.stringify({
+        colorUpdates: parseRes.batchColorUpdates ?? [],
+      });
+      const res = importCustomData(payload);
       if (res.success) {
         setImportStatus({
           type: 'success',
@@ -613,6 +616,7 @@ ${itemsList}
             applySmartCrop && draftCropBox && normalizeCropBox(draftCropBox) ? draftCropBox : null;
           let finalBlob = currentBlob;
           let finalDataUrl = previewDataUrl;
+          let isNormalized = false;
 
           if (previewDataUrl && typeof document !== 'undefined') {
             try {
@@ -624,22 +628,25 @@ ${itemsList}
               );
               finalBlob = normalized.blob;
               finalDataUrl = normalized.dataUrl;
+              isNormalized = true;
             } catch (cropErr) {
               console.warn('Smart crop failed, fallback to original blob:', cropErr);
             }
           }
 
-          // 1. 確定したIDで3:4正規化画像を本保存ストアへ永続化 (0ms)
+          // 1. 確定したIDで画像を本保存ストアへ永続化 (0ms)
           await saveImageBlob(addedItem.id, finalBlob, Date.now());
 
           // 2. 専用下書き枠を消去（中断ゴミの蓄積防止）
           await clearDraftImage();
 
+          const label = isNormalized ? '3:4正規化版' : '元画像フォールバック';
+
           // 3. GAS 設定がある場合は Google ドライブ正本フォルダへ自動アップロード
           if (gasConfig.webAppUrl && finalDataUrl) {
             setImageUploadStatus({
               type: 'uploading',
-              text: `Google ドライブへ「${addedItem.id}.jpg（3:4正規化版）」を自動アップロード中...`,
+              text: `Google ドライブへ「${addedItem.id}.jpg（${label}）」を自動アップロード中...`,
             });
             uploadImageToGas({
               webAppUrl: gasConfig.webAppUrl,
@@ -650,7 +657,7 @@ ${itemsList}
               if (uploadRes.ok) {
                 setImageUploadStatus({
                   type: 'success',
-                  text: `Google ドライブへ「${addedItem.id}.jpg（3:4正規化版）」として自動保存しました！`,
+                  text: `Google ドライブへ「${addedItem.id}.jpg（${label}）」として自動保存しました！`,
                 });
               } else {
                 setImageUploadStatus({
@@ -659,9 +666,13 @@ ${itemsList}
                 });
               }
             });
-            extraMsg = '（Google ドライブへ3:4正規化画像を自動アップロード中）';
+            extraMsg = isNormalized
+              ? '（Google ドライブへ3:4正規化画像を自動アップロード中）'
+              : '（※画像正規化に失敗したため、Google ドライブへ元画像を自動アップロード中）';
           } else {
-            extraMsg = `（端末内 IndexedDB に「${addedItem.id}（3:4正規化版）」として保存完了）`;
+            extraMsg = isNormalized
+              ? `（端末内 IndexedDB に「${addedItem.id}（3:4正規化版）」として保存完了）`
+              : `（※画像正規化に失敗したため、端末内 IndexedDB に「${addedItem.id}（元画像）」として保存完了）`;
           }
         } catch (imgErr: unknown) {
           console.error('Failed to finalize draft image:', imgErr);
@@ -730,7 +741,7 @@ ${itemsList}
           <span>服の追加・AIおまかせ登録 (Add & AI Sync)</span>
         </div>
         <p className="text-xs text-slate-300 leading-relaxed">
-          新しい服の写真を選ぶだけで、Gemini が種別・色パレット・寸法・名前・切り抜き範囲・既存服との相性を全自動判定します。事前の種別選択や名前入力は不要です。
+          新しい服の写真を選ぶだけで、Gemini が種別・A4参照の色パレット・寸法・名前・切り抜き範囲・既存服との相性を全自動判定します。事前の種別選択や名前入力は不要です。
         </p>
       </div>
 
@@ -749,7 +760,7 @@ ${itemsList}
         {/* A4 Paper Guide Banner */}
         <div className="pl-8">
           <div className="p-2.5 bg-blue-950/40 border border-blue-800/40 rounded-xl text-xs text-blue-300 leading-relaxed">
-            💡 服の隣に <strong>A4の白い紙（210×297mm）</strong> を置いて撮影すると、照明の色かぶり補正・実寸（cm）推定・服だけの自動切り抜きがすべて自動で行われます。
+            💡 服の隣に <strong>A4の白い紙（210×297mm）</strong> を置いて撮影すると、AIがA4用紙を参照して色判定（色かぶり考慮）・実寸（cm）推定・服だけの自動切り抜き（3:4配置）を行います。
           </div>
         </div>
 

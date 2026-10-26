@@ -2887,6 +2887,16 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
   assert.equal(batchWithDupId.valid, false);
   assert.ok(batchWithDupId.error.includes('重複'));
 
+  // 7b. 素配列形式の直接入力の検証（レビュー指摘対応）
+  const batchResRawArray = applyBatchColorUpdates(rawCloset, [
+    { id: 'S1', color: '濃紺' },
+    { id: 'S2', color: '白' },
+  ]);
+  assert.equal(batchResRawArray.valid, true);
+  assert.equal(batchResRawArray.updatedCount, 2);
+  assert.equal(batchResRawArray.data.items.find((i) => i.id === 'S1').color, '濃紺');
+  assert.equal(batchResRawArray.data.items.find((i) => i.id === 'S2').color, '白');
+
   console.log('  ✅ Garment standardization (12-color palette, anchors, measurements, crop, resilience & batch updates) verified');
 }
 
@@ -2915,15 +2925,24 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
     'Batch color prompt must strictly forbid outputting name'
   );
 
-  // Step 3: 確認パネル UI 要件
+  // Step 3: 確認パネル UI 要件 & レビュー指摘対応
   assert.ok(aiSyncCode.includes('10〜200cm（0.5cm刻み・空欄で未設定）'), 'Measurements must specify 10-200cm valid range notice');
   assert.ok(aiSyncCode.includes('自動切り抜きを適用'), 'Smart crop toggle must be present');
   assert.ok(aiSyncCode.includes('getColorForPalette'), 'Color chips must use getColorForPalette');
+  assert.ok(
+    aiSyncCode.includes('colorUpdates: parseRes.batchColorUpdates'),
+    'AiSyncView must normalize batchColorUpdates payload before passing to importCustomData'
+  );
+  assert.ok(
+    aiSyncCode.includes('元画像フォールバック'),
+    'AiSyncView must explicitly label fallback to raw photo when normalization fails'
+  );
 
-  // 2. useClosetStore.tsx の batch_color モードと名前保護連携
+  // 2. useClosetStore.tsx の batch_color モードと名前保護連携（素配列対応含む）
   const useStoreCode = fs.readFileSync(path.join(projectRoot, 'src/hooks/useClosetStore.tsx'), 'utf8');
   assert.ok(useStoreCode.includes("'batch_color'"), 'useClosetStore must support batch_color mode');
   assert.ok(useStoreCode.includes('applyBatchColorUpdates'), 'useClosetStore must call applyBatchColorUpdates');
+  assert.ok(useStoreCode.includes('isBatchCandidate'), 'useClosetStore must recognize raw array batch updates');
 
   // 3. TodayView.tsx の色・寸法表示
   const todayCode = fs.readFileSync(path.join(projectRoot, 'src/components/TodayView.tsx'), 'utf8');

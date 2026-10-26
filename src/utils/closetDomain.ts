@@ -11,6 +11,7 @@ import type {
   GarmentMeasurements,
   GarmentCropBox,
   BatchColorUpdatesPayload,
+  ColorUpdateItem,
 } from '../types/closet';
 
 /**
@@ -1136,7 +1137,7 @@ export function switchDraftItemCategory(
  */
 export function applyBatchColorUpdates(
   existingData: ClosetData,
-  payload: unknown
+  payload: BatchColorUpdatesPayload | ColorUpdateItem[] | unknown
 ): {
   valid: boolean;
   data?: ClosetData;
@@ -1144,21 +1145,28 @@ export function applyBatchColorUpdates(
   updatedCount?: number;
 } {
   if (!payload || typeof payload !== 'object') {
-    return { valid: false, error: '一括色更新ペイロードがオブジェクトではありません。' };
+    return { valid: false, error: '一括色更新ペイロードがオブジェクトまたは配列ではありません。' };
   }
-  const candidate = payload as Partial<BatchColorUpdatesPayload>;
-  if (!Array.isArray(candidate.colorUpdates)) {
-    return { valid: false, error: 'ペイロードに "colorUpdates" 配列が含まれていません。' };
+
+  // { colorUpdates: [...] } または 素配列 [...] の両方を受理
+  const rawList = Array.isArray(payload)
+    ? payload
+    : Array.isArray((payload as any).colorUpdates)
+    ? (payload as any).colorUpdates
+    : null;
+
+  if (!rawList) {
+    return { valid: false, error: 'ペイロードに "colorUpdates" 配列または更新アイテム配列が含まれていません。' };
   }
-  if (candidate.colorUpdates.length === 0) {
-    return { valid: false, error: '"colorUpdates" 配列が空です。' };
+  if (rawList.length === 0) {
+    return { valid: false, error: '一括色更新の配列が空です。' };
   }
 
   const existingMap = new Map(existingData.items.map((it) => [it.id, it]));
   const seenIds = new Set<string>();
 
-  for (let i = 0; i < candidate.colorUpdates.length; i++) {
-    const update = candidate.colorUpdates[i];
+  for (let i = 0; i < rawList.length; i++) {
+    const update = rawList[i];
     if (!update || typeof update !== 'object') {
       return { valid: false, error: `colorUpdates[${i}] の形式が不正です。` };
     }
@@ -1189,7 +1197,9 @@ export function applyBatchColorUpdates(
     }
   }
 
-  const updateMap = new Map(candidate.colorUpdates.map((u) => [u.id.trim().toUpperCase(), u]));
+  const updateMap = new Map<string, ColorUpdateItem>(
+    rawList.map((u: any) => [u.id.trim().toUpperCase(), u as ColorUpdateItem])
+  );
   let updatedCount = 0;
 
   const newItems = existingData.items.map((item) => {
