@@ -3376,4 +3376,69 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
   console.log('  ✅ Batch garment registration Phase 1 (deterministic IDs, non-blocking color, partial merge & bounds) verified');
 }
 
+// -------------------------------------------------------------
+// Test Case 26: 服の「まとめ撮り」一括登録 Phase 2（UI登録モード切替・バッチプロンプト生成・着別確認パネル・直列アップロード・部分適用リカバリ・ドキュメント整合性）
+// -------------------------------------------------------------
+{
+  const aiSyncCode = fs.readFileSync(path.join(projectRoot, 'src/components/AiSyncView.tsx'), 'utf8');
+
+  // 1. 登録モード切替（通常／まとめ撮り）と撮影ガイド・解像度制御
+  assert.ok(aiSyncCode.includes("registrationMode === 'batch' ? 2000 : 1200"), 'AiSyncView must use 2000px max dimension for batch mode');
+  assert.ok(aiSyncCode.includes('1着ずつ登録（通常）'), 'AiSyncView must render single mode switcher button');
+  assert.ok(aiSyncCode.includes('まとめ撮り一括登録（最大3着）'), 'AiSyncView must render batch mode switcher button');
+  assert.ok(aiSyncCode.includes('服同士を重ねず、少し間を空けて並べ'), 'AiSyncView must display batch photo guide');
+  assert.ok(aiSyncCode.includes('推奨2〜3着・最大3着'), 'AiSyncView must recommend 2-3 garments up to 3');
+
+  // 2. まとめ撮り専用プロンプト生成
+  assert.ok(aiSyncCode.includes('まとめ撮り一括登録用JSON'), 'Batch prompt must describe multi-garment batch JSON');
+  assert.ok(aiSyncCode.includes('"garments": ['), 'Batch prompt schema must output garments array');
+  assert.ok(
+    aiSyncCode.includes('バッチ内の服同士の相性は含めず、現存する相手カテゴリの服'),
+    'Batch prompt must enforce Rule B (no intra-batch peer relationships)'
+  );
+  assert.ok(aiSyncCode.includes('最大3着まで'), 'Batch prompt must instruct maximum 3 items');
+
+  // 3. Step 3 パースと着別確認パネル
+  assert.ok(aiSyncCode.includes("kind === 'batch_garments'"), 'parseSyncInputJson must recognize batch_garments');
+  assert.ok(aiSyncCode.includes('まとめ撮り確認パネル（全'), 'AiSyncView must render batch confirmation panel header');
+  assert.ok(aiSyncCode.includes('assignSequentialIdsForBatch'), 'AiSyncView must call assignSequentialIdsForBatch');
+  assert.ok(aiSyncCode.includes('この服を登録する（'), 'AiSyncView must render per-item inclusion checkbox');
+  assert.ok(aiSyncCode.includes('handleSwitchBatchItemCategory'), 'AiSyncView must support per-item category switching');
+  assert.ok(aiSyncCode.includes('handleUpdateBatchMeasurement'), 'AiSyncView must support per-item measurements editing');
+  assert.ok(aiSyncCode.includes('handleApplyBatchGarments'), 'AiSyncView must provide batch apply handler');
+
+  // 4. 非ブロッキング色検証表示（未確定バッジと1タップ一括適用）
+  assert.ok(aiSyncCode.includes('色：未確定'), 'AiSyncView must display unconfirmed color badge');
+  assert.ok(
+    !aiSyncCode.includes('色の必須検証\n    if (!candidateItem.color'),
+    'AiSyncView single item mode must not block on missing or out-of-palette color'
+  );
+
+  // 5. 直列Googleドライブ同期進捗表示 & 部分適用リカバリ
+  assert.ok(aiSyncCode.includes('着)...'), 'AiSyncView batch apply must report serial Drive upload progress');
+  assert.ok(
+    aiSyncCode.includes('result.remainingDrafts'),
+    'AiSyncView must retain failed items in remainingDrafts upon partial apply'
+  );
+
+  // 6. useClosetStore.tsx の importBatchGarments & importCustomData 連携
+  const useStoreCode = fs.readFileSync(path.join(projectRoot, 'src/hooks/useClosetStore.tsx'), 'utf8');
+  assert.ok(useStoreCode.includes('importBatchGarments'), 'useClosetStore must provide importBatchGarments');
+  assert.ok(useStoreCode.includes("'batch_garments'"), 'useClosetStore must support batch_garments mode');
+  assert.ok(useStoreCode.includes('validateAndMergeBatchGarments'), 'useClosetStore must call validateAndMergeBatchGarments');
+
+  // 7. ドキュメント（SPECIFICATION.md & SKILL.md）の整合性
+  const specCode = fs.readFileSync(path.join(projectRoot, 'docs/SPECIFICATION.md'), 'utf8');
+  assert.ok(specCode.includes('まとめ撮り一括登録（推奨2〜3着・最大3着）'), 'SPECIFICATION.md must document batch registration');
+  assert.ok(specCode.includes('長辺最大2000px'), 'SPECIFICATION.md must document 2000px downscaling in batch mode');
+  assert.ok(specCode.includes('appendUnconfirmedColorNote'), 'SPECIFICATION.md must document non-blocking color note handling');
+
+  const skillCode = fs.readFileSync(path.join(projectRoot, '.agents/skills/manage-wardrobe/SKILL.md'), 'utf8');
+  assert.ok(skillCode.includes('まとめ撮り一括登録'), 'SKILL.md must document batch registration workflow');
+  assert.ok(skillCode.includes('2000px'), 'SKILL.md must document 2000px batch resolution');
+  assert.ok(skillCode.includes('（色の目安：〇〇 ※12色パレット外のため未確定）'), 'SKILL.md must document unconfirmed color hint');
+
+  console.log('  ✅ Phase 2 UI registration mode, batch prompt, per-item panel, Drive progress & doc sync verified');
+}
+
 console.log('🎉 All GAS backend & sync logic tests passed successfully!');

@@ -12,6 +12,8 @@ import {
   GasSyncResponse,
   SyncTombstones,
   BootstrapConfigResponse,
+  BatchGarmentDraftItem,
+  BatchGarmentsMergeResult,
 } from '../types/closet';
 import defaultClosetData from '../data/closet.json';
 import {
@@ -23,6 +25,7 @@ import {
   validateSingleClosetItem,
   mergeSingleItemIntoClosetData,
   applyBatchColorUpdates,
+  validateAndMergeBatchGarments,
   mergeClosetDataWithWifeNg,
   checkIsNgPair,
   calculateRecommendationsForShirt,
@@ -87,11 +90,15 @@ export interface ClosetStoreContextType {
   removeWifeNg: (shirtId: string, pantsId: string) => void;
   importCustomData: (jsonString: string) => {
     success: boolean;
-    mode?: 'single' | 'full' | 'batch_color';
+    mode?: 'single' | 'full' | 'batch_color' | 'batch_garments';
     addedItem?: ClosetItem;
     updatedPeersCount?: number;
     error?: string;
   };
+  importBatchGarments: (
+    drafts: BatchGarmentDraftItem[],
+    includedFlags?: boolean[]
+  ) => BatchGarmentsMergeResult;
   resetToDefaultData: () => void;
   updateGasConfig: (newConfig: Partial<GasSyncConfig>) => void;
   pullFromGas: () => Promise<boolean>;
@@ -847,7 +854,7 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       jsonString: string
     ): {
       success: boolean;
-      mode?: 'single' | 'full' | 'batch_color';
+      mode?: 'single' | 'full' | 'batch_color' | 'batch_garments';
       addedItem?: ClosetItem;
       updatedPeersCount?: number;
       error?: string;
@@ -856,7 +863,7 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         const parsed = JSON.parse(jsonString);
 
         let finalData: ClosetData;
-        let mode: 'single' | 'full' | 'batch_color' = 'full';
+        let mode: 'single' | 'full' | 'batch_color' | 'batch_garments' = 'full';
         let addedItem: ClosetItem | undefined = undefined;
         let updatedPeersCount = 0;
 
@@ -870,6 +877,18 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
               typeof (parsed[0] as any)?.id === 'string' &&
               (parsed[0] as any)?.color !== undefined));
 
+        // まとめ撮り服形式（garments 配列を含むオブジェクト、または直接の服ドラフト配列）かどうかの判別
+        const isBatchGarmentsCandidate =
+          parsed &&
+          typeof parsed === 'object' &&
+          !isBatchCandidate &&
+          (Array.isArray((parsed as any).garments) ||
+            (Array.isArray(parsed) &&
+              parsed.length > 0 &&
+              ((parsed[0] as any)?.category === 'shirt' ||
+                (parsed[0] as any)?.category === 'pants' ||
+                (parsed[0] as any)?.name !== undefined)));
+
         if (isBatchCandidate) {
           const batchRes = applyBatchColorUpdates(stateRef.current.closetData, parsed);
           if (!batchRes.valid || !batchRes.data) {
@@ -881,6 +900,17 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           mode = 'batch_color';
           finalData = batchRes.data;
           updatedPeersCount = batchRes.updatedCount || 0;
+        } else if (isBatchGarmentsCandidate) {
+          const batchMergeRes = validateAndMergeBatchGarments(stateRef.current.closetData, parsed);
+          if (!batchMergeRes.valid || !batchMergeRes.data) {
+            return {
+              success: false,
+              error: batchMergeRes.error || 'まとめ撮り一括登録の検証に失敗しました。',
+            };
+          }
+          mode = 'batch_garments';
+          finalData = batchMergeRes.data;
+          updatedPeersCount = batchMergeRes.appliedCount;
         } else if (
           parsed &&
           typeof parsed === 'object' &&
@@ -943,6 +973,51 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     [triggerBackgroundPush]
   );
 
+  const importBatchGarments = useCallback(
+    (
+      drafts: BatchGarmentDraftItem[],
+      includedFlags?: boolean[]
+    ): BatchGarmentsMergeResult => {
+      const result = validateAndMergeBatchGarments(
+        stateRef.current.closetData,
+        { garments: drafts },
+        includedFlags
+      );
+
+      if (result.valid && result.data && result.appliedCount > 0) {
+        mutationSeqRef.current++;
+        customDataSeqRef.current++;
+        const now = Math.max(
+          Date.now(),
+          (stateRef.current.closetData.updatedAt || 0) + 1,
+          (stateRef.current.tombstones.customClosetDataClearedAt || 0) + 1
+        );
+        const dataWithTimestamp: ClosetData = {
+          ...result.data,
+          updatedAt: now,
+        };
+        localStorage.setItem(STORAGE_KEYS.CUSTOM_DATA, JSON.stringify(dataWithTimestamp));
+        stateRef.current.closetData = dataWithTimestamp;
+        const updatedTombstones: SyncTombstones = {
+          ...stateRef.current.tombstones,
+          clearCustomClosetData: false,
+          customClosetDataClearedAt: undefined,
+        };
+        stateRef.current.tombstones = updatedTombstones;
+        setClosetData(dataWithTimestamp);
+        setTombstones(updatedTombstones);
+        triggerBackgroundPush();
+        return {
+          ...result,
+          data: dataWithTimestamp,
+        };
+      }
+
+      return result;
+    },
+    [triggerBackgroundPush]
+  );
+
   const resetToDefaultData = useCallback(() => {
     mutationSeqRef.current++;
     customDataSeqRef.current++;
@@ -995,6 +1070,7 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       registerWifeNg,
       removeWifeNg,
       importCustomData,
+      importBatchGarments,
       resetToDefaultData,
       updateGasConfig,
       pullFromGas,
@@ -1023,6 +1099,7 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       registerWifeNg,
       removeWifeNg,
       importCustomData,
+      importBatchGarments,
       resetToDefaultData,
       updateGasConfig,
       pullFromGas,
