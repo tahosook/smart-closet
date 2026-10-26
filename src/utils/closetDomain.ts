@@ -1696,3 +1696,70 @@ export function parseSyncInputJson(
     return { kind: 'invalid', error: `JSON構文が不正または不完全です: ${msg}` };
   }
 }
+
+export const FAILED_DRIVE_UPLOADS_STORAGE_KEY = 'smart_closet_failed_drive_uploads';
+
+export interface FailedDriveUploadItem {
+  itemId: string;
+  label: string;
+  failedAt?: number;
+}
+
+/**
+ * 失敗したドライブ画像アップロードリストを安全にパース・検証するヘルパー
+ */
+export function parseFailedDriveUploads(rawJson: string | null): FailedDriveUploadItem[] {
+  if (!rawJson) return [];
+  try {
+    const parsed = JSON.parse(rawJson);
+    if (!Array.isArray(parsed)) return [];
+    const validList: FailedDriveUploadItem[] = [];
+    const seenIds = new Set<string>();
+    for (const item of parsed) {
+      if (item && typeof item.itemId === 'string' && item.itemId.trim()) {
+        const normId = item.itemId.trim().toUpperCase();
+        if (!seenIds.has(normId)) {
+          seenIds.add(normId);
+          validList.push({
+            itemId: normId,
+            label: typeof item.label === 'string' && item.label.trim() ? item.label.trim() : '3:4正規化版',
+            ...(typeof item.failedAt === 'number' ? { failedAt: item.failedAt } : {}),
+          });
+        }
+      }
+    }
+    return validList;
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * localStorage または ストレージ互換オブジェクトへ失敗リストを永続化（空ならキーを削除）
+ */
+export function saveFailedDriveUploadsToStorage(
+  storage: { setItem: (k: string, v: string) => void; removeItem: (k: string) => void },
+  items: FailedDriveUploadItem[]
+): void {
+  if (!storage) return;
+  if (!items || items.length === 0) {
+    storage.removeItem(FAILED_DRIVE_UPLOADS_STORAGE_KEY);
+  } else {
+    storage.setItem(FAILED_DRIVE_UPLOADS_STORAGE_KEY, JSON.stringify(items));
+  }
+}
+
+/**
+ * localStorage または ストレージ互換オブジェクトから失敗リストを復元
+ */
+export function loadFailedDriveUploadsFromStorage(
+  storage: { getItem: (k: string) => string | null }
+): FailedDriveUploadItem[] {
+  if (!storage) return [];
+  try {
+    const raw = storage.getItem(FAILED_DRIVE_UPLOADS_STORAGE_KEY);
+    return parseFailedDriveUploads(raw);
+  } catch {
+    return [];
+  }
+}

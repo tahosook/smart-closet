@@ -252,7 +252,13 @@ export interface WardrobeAnalysisResult {
 // ----------------------------------------------------
 
 export { MAX_BATCH_GARMENTS } from '../utils/closetDomain';
-export type { ParsedSyncInput } from '../utils/closetDomain';
+export type { ParsedSyncInput, FailedDriveUploadItem } from '../utils/closetDomain';
+export {
+  FAILED_DRIVE_UPLOADS_STORAGE_KEY,
+  parseFailedDriveUploads,
+  saveFailedDriveUploadsToStorage,
+  loadFailedDriveUploadsFromStorage,
+} from '../utils/closetDomain';
 
 /**
  * まとめ撮り1着分の下書きペイロード型（SingleItem + 個別cropBox）

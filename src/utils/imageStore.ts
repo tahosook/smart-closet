@@ -79,6 +79,26 @@ export async function getImageBlob(id: string): Promise<Blob | null> {
 }
 
 /**
+ * 指定アイテムの画像 Blob を取得し、Base64 Data URL として返す（Drive 再送信用）
+ */
+export async function getImageDataUrl(id: string): Promise<string | null> {
+  const blob = await getImageBlob(id);
+  if (!blob) return null;
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      if (typeof reader.result === 'string') {
+        resolve(reader.result);
+      } else {
+        resolve(null);
+      }
+    };
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(blob);
+  });
+}
+
+/**
  * 単一アイテムの画像 Blob とタイムスタンプを保存
  */
 export async function saveImageBlob(id: string, blob: Blob, timestamp: number): Promise<void> {

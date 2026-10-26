@@ -50,6 +50,10 @@ const {
   assignSequentialIdsForBatch,
   validateAndMergeBatchGarments,
   parseSyncInputJson,
+  FAILED_DRIVE_UPLOADS_STORAGE_KEY,
+  parseFailedDriveUploads,
+  saveFailedDriveUploadsToStorage,
+  loadFailedDriveUploadsFromStorage,
 } = closetDomain;
 
 const imageProcessorTsPath = path.join(projectRoot, 'src/utils/imageProcessor.ts');
@@ -3537,6 +3541,78 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
   const originalS1 = rawCloset.items.find((i) => i.id === 'S1');
   const preservedS1 = mergeDupRes.data.items.find((i) => i.id === 'S1');
   assert.equal(preservedS1.name, originalS1.name, 'Existing item must not be overwritten');
+
+  // 8e. 【再レビュー指摘対応】Drive画像アップロード未完了リストの永続化・復元・Blob再構成挙動テスト
+  // (1) parseFailedDriveUploads の耐障害性・大文字正規化・重複排除
+  assert.deepEqual(parseFailedDriveUploads(null), []);
+  assert.deepEqual(parseFailedDriveUploads('invalid json {'), []);
+  assert.deepEqual(parseFailedDriveUploads('{"not": "array"}'), []);
+  const normalizedParsed = parseFailedDriveUploads(JSON.stringify([
+    { itemId: '  s10  ', label: '3:4正規化版' },
+    { itemId: 'S10', label: '重複アイテム' },
+    { itemId: 'p16' }, // label 欠落フォールバック
+  ]));
+  assert.equal(normalizedParsed.length, 2, 'Duplicates must be removed by normalized ID');
+  assert.equal(normalizedParsed[0].itemId, 'S10');
+  assert.equal(normalizedParsed[0].label, '3:4正規化版');
+  assert.equal(normalizedParsed[1].itemId, 'P16');
+  assert.equal(normalizedParsed[1].label, '3:4正規化版', 'Missing label must default to 3:4正規化版');
+
+  // (2) saveFailedDriveUploadsToStorage と loadFailedDriveUploadsFromStorage の永続化・復元・データURL非二重化検証
+  const mockStorageMap = new Map();
+  const mockStorage = {
+    getItem: (k) => mockStorageMap.get(k) ?? null,
+    setItem: (k, v) => mockStorageMap.set(k, String(v)),
+    removeItem: (k) => mockStorageMap.delete(k),
+  };
+
+  // 失敗リストの永続化
+  const failedItemsToSave = [
+    { itemId: 'S10', label: '3:4正規化版', failedAt: 1700000000000 },
+    { itemId: 'P16', label: '元画像フォールバック', failedAt: 1700000000001 },
+  ];
+  saveFailedDriveUploadsToStorage(mockStorage, failedItemsToSave);
+  assert.ok(mockStorageMap.has(FAILED_DRIVE_UPLOADS_STORAGE_KEY), 'Storage must contain failed uploads key');
+  const rawSavedJson = mockStorageMap.get(FAILED_DRIVE_UPLOADS_STORAGE_KEY);
+  // 【重要要件】dataUrl は永続化せず二重保持しないこと（端末内 IndexedDB から再構成するため）
+  assert.equal(rawSavedJson.includes('dataUrl'), false, 'dataUrl must NOT be persisted in localStorage');
+  assert.ok(rawSavedJson.includes('S10') && rawSavedJson.includes('P16'));
+
+  // ページ再読み込みをシミュレートした復元
+  const reloadedFailed = loadFailedDriveUploadsFromStorage(mockStorage);
+  assert.equal(reloadedFailed.length, 2, 'All failed items must be restored upon page reload');
+  assert.equal(reloadedFailed[0].itemId, 'S10');
+  assert.equal(reloadedFailed[1].itemId, 'P16');
+
+  // S10 のみ再試行成功した場合（部分成功時のリスト更新）
+  saveFailedDriveUploadsToStorage(mockStorage, [reloadedFailed[1]]);
+  const partialRemaining = loadFailedDriveUploadsFromStorage(mockStorage);
+  assert.equal(partialRemaining.length, 1);
+  assert.equal(partialRemaining[0].itemId, 'P16');
+
+  // 全着再試行成功した場合（ストレージキー削除と初期化）
+  saveFailedDriveUploadsToStorage(mockStorage, []);
+  assert.equal(mockStorageMap.has(FAILED_DRIVE_UPLOADS_STORAGE_KEY), false, 'Storage key must be removed when all succeed');
+  assert.deepEqual(loadFailedDriveUploadsFromStorage(mockStorage), []);
+
+  // (3) AiSyncView & imageStore のコード整合性検証
+  assert.ok(
+    aiSyncCode.includes('loadFailedDriveUploadsFromStorage'),
+    'AiSyncView must call loadFailedDriveUploadsFromStorage on mount'
+  );
+  assert.ok(
+    aiSyncCode.includes('saveFailedDriveUploadsToStorage'),
+    'AiSyncView must call saveFailedDriveUploadsToStorage on failure and retry'
+  );
+  assert.ok(
+    aiSyncCode.includes('getImageDataUrl(item.itemId)'),
+    'AiSyncView must reconstruct image dataUrl from IndexedDB via getImageDataUrl'
+  );
+  const imageStoreCode = fs.readFileSync(path.join(projectRoot, 'src/utils/imageStore.ts'), 'utf-8');
+  assert.ok(
+    imageStoreCode.includes('export async function getImageDataUrl'),
+    'imageStore.ts must export getImageDataUrl'
+  );
 
   console.log('  ✅ Phase 2 UI registration mode, batch prompt, per-item panel, Drive retry & parse guard verified');
 }

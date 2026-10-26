@@ -31,6 +31,9 @@ import {
   ColorUpdateItem,
   BatchGarmentDraftItem,
   MAX_BATCH_GARMENTS,
+  FailedDriveUploadItem,
+  saveFailedDriveUploadsToStorage,
+  loadFailedDriveUploadsFromStorage,
 } from '../types/closet';
 import {
   getNextSequentialId,
@@ -49,6 +52,7 @@ import {
   getDraftImage,
   clearDraftImage,
   saveImageBlob,
+  getImageDataUrl,
 } from '../utils/imageStore';
 import {
   processGarmentImage,
@@ -84,12 +88,6 @@ const PANTS_MEASUREMENT_FIELDS: { key: keyof GarmentMeasurements; label: string;
   { key: 'totalLength', label: '総丈', desc: 'ウエスト上端〜裾' },
   { key: 'hemWidth', label: '裾幅', desc: '裾の直線距離' },
 ];
-
-interface FailedImageUpload {
-  itemId: string;
-  dataUrl: string;
-  label: string;
-}
 
 export const AiSyncView: React.FC = () => {
   const {
@@ -148,8 +146,8 @@ export const AiSyncView: React.FC = () => {
   const [batchNormalizedPreviews, setBatchNormalizedPreviews] = useState<(string | null)[]>([]);
   const [isApplyingBatch, setIsApplyingBatch] = useState(false);
 
-  // 修正1: Drive アップロード失敗時の画像再試行管理
-  const [failedDriveUploads, setFailedDriveUploads] = useState<FailedImageUpload[]>([]);
+  // 修正1: Drive アップロード失敗時の画像再試行管理（localStorage永続化連携）
+  const [failedDriveUploads, setFailedDriveUploads] = useState<FailedDriveUploadItem[]>([]);
   const [isRetryingDriveUploads, setIsRetryingDriveUploads] = useState(false);
 
   // 修正4: JSON パース警告（既存ID重複、ID付き配列等）
@@ -173,6 +171,15 @@ export const AiSyncView: React.FC = () => {
         setIsDraftRestored(true);
       }
     });
+
+    // 修正1: ページ再読み込み時にもDriveアップロード未完了リストをlocalStorageから復元
+    if (typeof window !== 'undefined' && window.localStorage) {
+      const restored = loadFailedDriveUploadsFromStorage(window.localStorage);
+      if (restored.length > 0) {
+        setFailedDriveUploads(restored);
+      }
+    }
+
     return () => {
       isMounted = false;
     };
@@ -205,7 +212,6 @@ export const AiSyncView: React.FC = () => {
 
     setIsProcessingImage(true);
     setImageUploadStatus({ type: 'idle', text: '' });
-    setFailedDriveUploads([]);
 
     try {
       // 1. クライアント側で JPEG にリサイズ＆正規化 (まとめ撮りモードは長辺2000px、通常時は1200px, quality 0.85)
@@ -241,13 +247,12 @@ export const AiSyncView: React.FC = () => {
     setBatchNormalizedPreviews([]);
     setIsDraftRestored(false);
     setImageUploadStatus({ type: 'idle', text: '' });
-    setFailedDriveUploads([]);
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
   };
 
-  // 修正1: Google ドライブへの画像アップロードのみを再試行するハンドラー（二重登録防止）
+  // 修正1: Google ドライブへの画像アップロードのみを再試行するハンドラー（二重登録防止・IndexedDBから画像再構成・永続化同期）
   const handleRetryDriveUploads = async () => {
     if (failedDriveUploads.length === 0 || !gasConfig.webAppUrl) return;
     setIsRetryingDriveUploads(true);
@@ -256,17 +261,32 @@ export const AiSyncView: React.FC = () => {
       text: `Google ドライブへ未完了画像（${failedDriveUploads.length}着）を再アップロード中...`,
     });
 
-    const stillFailed: FailedImageUpload[] = [];
+    const stillFailed: FailedDriveUploadItem[] = [];
     let retrySuccessCount = 0;
 
     for (const item of failedDriveUploads) {
       try {
+        // 画像データそのものは端末内 IndexedDB から ID で再構成（二重永続化を防止）
+        let targetDataUrl = await getImageDataUrl(item.itemId);
+
+        // 万一 IndexedDB に見つからない場合は下書き写真からフォールバック
+        if (!targetDataUrl && previewDataUrl) {
+          targetDataUrl = previewDataUrl;
+        }
+
+        if (!targetDataUrl) {
+          console.warn(`[AiSyncView] Image not found in IndexedDB for retry item: ${item.itemId}`);
+          stillFailed.push(item);
+          continue;
+        }
+
         const uploadRes = await uploadImageToGas({
           webAppUrl: gasConfig.webAppUrl,
           secretToken: gasConfig.secretToken,
           itemId: item.itemId,
-          dataUrl: item.dataUrl,
+          dataUrl: targetDataUrl,
         });
+
         if (uploadRes.ok) {
           retrySuccessCount++;
         } else {
@@ -278,6 +298,9 @@ export const AiSyncView: React.FC = () => {
     }
 
     setFailedDriveUploads(stillFailed);
+    if (typeof window !== 'undefined' && window.localStorage) {
+      saveFailedDriveUploadsToStorage(window.localStorage, stillFailed);
+    }
     setIsRetryingDriveUploads(false);
 
     if (stillFailed.length === 0) {
@@ -978,7 +1001,7 @@ ${itemsList}
       );
 
       let uploadSuccessCount = 0;
-      const newFailedUploads: FailedImageUpload[] = [];
+      const newFailedUploads: FailedDriveUploadItem[] = [];
 
       if (previewDataUrl && appliedResults.length > 0) {
         for (let i = 0; i < result.results.length; i++) {
@@ -1034,24 +1057,35 @@ ${itemsList}
               } else {
                 newFailedUploads.push({
                   itemId: resItem.assignedId,
-                  dataUrl: finalDataUrl,
                   label,
+                  failedAt: Date.now(),
                 });
               }
             } catch (uErr) {
               newFailedUploads.push({
                 itemId: resItem.assignedId,
-                dataUrl: finalDataUrl,
                 label,
+                failedAt: Date.now(),
               });
             }
           }
         }
       }
 
-      // 修正1: 失敗した着の画像アップロード情報を保持し、再試行可能にする
+      // 修正1: 失敗した着の画像アップロード情報を永続化し、ページ再読み込み後も再試行可能にする
       if (newFailedUploads.length > 0) {
-        setFailedDriveUploads(newFailedUploads);
+        const mergedMap = new Map<string, FailedDriveUploadItem>();
+        for (const item of failedDriveUploads) {
+          mergedMap.set(item.itemId, item);
+        }
+        for (const item of newFailedUploads) {
+          mergedMap.set(item.itemId, item);
+        }
+        const updatedFailed = Array.from(mergedMap.values());
+        setFailedDriveUploads(updatedFailed);
+        if (typeof window !== 'undefined' && window.localStorage) {
+          saveFailedDriveUploadsToStorage(window.localStorage, updatedFailed);
+        }
       }
 
       if (gasConfig.webAppUrl && appliedResults.length > 0) {
@@ -1150,6 +1184,10 @@ ${itemsList}
   const handleReset = () => {
     if (window.confirm('初期マスターデータ（全24着）に戻しますか？')) {
       resetToDefaultData();
+      setFailedDriveUploads([]);
+      if (typeof window !== 'undefined' && window.localStorage) {
+        saveFailedDriveUploadsToStorage(window.localStorage, []);
+      }
       setImportStatus({
         type: 'success',
         message: '初期マスターデータにリセットしました。',
