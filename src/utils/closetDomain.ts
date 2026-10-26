@@ -1471,8 +1471,8 @@ export function validateAndMergeBatchGarments(
       imageUrl: `/images/${assignedId}.jpg`,
     };
 
-    // 案B確定: 確定済みの現有ワードローブに存在しない未確定ID（バッチ内仮ID等）を安全にストリップ
-    const sanitized = sanitizeDraftPeerReferences(candidate, workingData);
+    // 案B確定: バッチ開始時点の確定済み既存データ (existingData) を基準に未確定IDを安全にストリップ
+    const sanitized = sanitizeDraftPeerReferences(candidate, existingData);
 
     // 単一アイテムバリデータで検証（色の未確定は警告通過、色以外のエラーは拒否）
     const validation = validateSingleClosetItem(sanitized, workingData);
@@ -1509,7 +1509,6 @@ export function validateAndMergeBatchGarments(
       results.push({
         index: i,
         status: 'failed',
-        assignedId,
         name: draft.name,
         category: draft.category,
         cropBox: draft.cropBox,

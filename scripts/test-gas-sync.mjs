@@ -2976,8 +2976,13 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
 {
   const rawCloset = JSON.parse(fs.readFileSync(path.join(projectRoot, 'src/data/closet.json'), 'utf-8'));
 
-  // 1. MAX_BATCH_GARMENTS 定数の検証 (ハード上限3着)
+  // 1. MAX_BATCH_GARMENTS 定数の検証 (ハード上限3着・定義の一本化と re-export)
   assert.equal(MAX_BATCH_GARMENTS, 3, 'MAX_BATCH_GARMENTS must be 3');
+  const closetTsCode = fs.readFileSync(path.join(projectRoot, 'src/types/closet.ts'), 'utf-8');
+  assert.ok(
+    closetTsCode.includes("export { MAX_BATCH_GARMENTS } from '../utils/closetDomain';"),
+    'src/types/closet.ts must re-export MAX_BATCH_GARMENTS from closetDomain'
+  );
 
   // 2. appendUnconfirmedColorNote の決定論的動作検証
   assert.equal(
@@ -3181,6 +3186,50 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
   const updatedP1 = mergeRes.data.items.find((i) => i.id === 'P1');
   assert.ok(updatedP1.officeRecommendIds.includes('S10'), 'P1 must have S10 in officeRecommendIds');
 
+  // 6b. 【修正1検証】1着目（シャツ）が適用された後に、2着目（パンツ）の相性リストに1着目ID（S10）が含まれていても除去され双方向リンクが張られないこと（案Bの厳密性）
+  const intraBatchRefPayload = {
+    garments: [
+      {
+        category: 'shirt',
+        name: 'シャツS10候補',
+        color: '白',
+        seasonSleeve: '通年',
+        dressScore: 4.0,
+        comfortScore: 4.0,
+        officeRecommendIds: ['P1'],
+        remoteRecommendIds: [],
+        ngIds: [],
+        ngReason: 'なし',
+        notes: '1着目',
+      },
+      {
+        category: 'pants',
+        name: 'パンツP16候補',
+        color: '黒',
+        seasonSleeve: '通年',
+        dressScore: 4.0,
+        comfortScore: 4.0,
+        officeRecommendIds: ['S10', 'S1'], // 'S10' はバッチ内1着目のID！
+        remoteRecommendIds: [],
+        ngIds: [],
+        ngReason: 'なし',
+        notes: '2着目',
+      },
+    ],
+  };
+  const intraRes = validateAndMergeBatchGarments(rawCloset, intraBatchRefPayload);
+  assert.equal(intraRes.valid, true);
+  assert.equal(intraRes.appliedCount, 2);
+  const registeredP16 = intraRes.data.items.find((i) => i.id === 'P16');
+  const registeredS10 = intraRes.data.items.find((i) => i.id === 'S10');
+  assert.ok(registeredP16, 'P16 must exist');
+  assert.ok(registeredS10, 'S10 must exist');
+  // P16 の officeRecommendIds に S10 が含まれていないこと（S1 のみ残る）
+  assert.equal(registeredP16.officeRecommendIds.includes('S10'), false, 'Intra-batch reference S10 must be stripped from P16');
+  assert.ok(registeredP16.officeRecommendIds.includes('S1'), 'Pre-existing reference S1 must be retained');
+  // S10 側にも P16 への逆参照が張られていないこと
+  assert.equal(registeredS10.officeRecommendIds.includes('P16'), false, 'S10 must not link back to intra-batch P16');
+
   // 7. 部分適用と相性マトリクス保護・再試行検証
   // 3着中2着目がスコア範囲外エラー (dressScore: 9.0)
   const partiallyInvalidBatch = [
@@ -3232,10 +3281,11 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
   assert.equal(partialRes.remainingDrafts.length, 1, 'Only failed item must remain in remainingDrafts');
   assert.equal(partialRes.remainingDrafts[0].name, '不正スコアパンツ');
 
-  // 歯抜けのない連番IDの検証: 1着目=S10, 3着目のシャツ=S11
+  // 歯抜けのない連番IDの検証: 1着目=S10, 3着目のシャツ=S11（失敗した着には assignedId がないこと）
   assert.equal(partialRes.results[0].status, 'applied');
   assert.equal(partialRes.results[0].assignedId, 'S10');
   assert.equal(partialRes.results[1].status, 'failed');
+  assert.equal(partialRes.results[1].assignedId, undefined, 'Failed item must NOT have assignedId');
   assert.ok(partialRes.results[1].error.includes('dressScore'));
   assert.equal(partialRes.results[2].status, 'applied');
   assert.equal(partialRes.results[2].assignedId, 'S11');
@@ -3244,6 +3294,47 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
   assert.equal(partialRes.data.items.some((i) => i.id === 'P16'), false, 'Failed pants must NOT exist in data');
   const checkS1 = partialRes.data.items.find((i) => i.id === 'S1');
   assert.equal(checkS1.officeRecommendIds.includes('P16'), false, 'Failed item must not be linked in existing peers');
+
+  // 7b. 【修正2検証】同カテゴリで失敗→成功の順に処理した場合、失敗着の結果に assignedId がなく、成功着がその ID で登録されること
+  const sameCategoryFailThenSuccess = [
+    {
+      category: 'shirt',
+      name: '失敗シャツ',
+      color: '白',
+      seasonSleeve: '通年',
+      dressScore: 9.0, // エラーで失敗
+      comfortScore: 4.0,
+      officeRecommendIds: ['P1'],
+      remoteRecommendIds: [],
+      ngIds: [],
+      ngReason: 'なし',
+      notes: '1着目失敗',
+    },
+    {
+      category: 'shirt',
+      name: '後続成功シャツ',
+      color: '白',
+      seasonSleeve: '通年',
+      dressScore: 4.0, // 正常
+      comfortScore: 4.0,
+      officeRecommendIds: ['P1'],
+      remoteRecommendIds: [],
+      ngIds: [],
+      ngReason: 'なし',
+      notes: '2着目成功',
+    },
+  ];
+  const failThenSuccessRes = validateAndMergeBatchGarments(rawCloset, sameCategoryFailThenSuccess);
+  assert.equal(failThenSuccessRes.valid, true);
+  assert.equal(failThenSuccessRes.appliedCount, 1);
+  assert.equal(failThenSuccessRes.failedCount, 1);
+  // 1着目（失敗）には assignedId が存在しない (undefined)
+  assert.equal(failThenSuccessRes.results[0].status, 'failed');
+  assert.equal(failThenSuccessRes.results[0].assignedId, undefined, 'Failed shirt must NOT have assignedId in results');
+  // 2着目（成功）が S10 を取得して登録される
+  assert.equal(failThenSuccessRes.results[1].status, 'applied');
+  assert.equal(failThenSuccessRes.results[1].assignedId, 'S10', 'Subsequent successful shirt must receive S10');
+  assert.equal(failThenSuccessRes.data.items.find((i) => i.id === 'S10').name, '後続成功シャツ');
 
   // 再試行の検証: 失敗した remainingDrafts の dressScore を 4.0 に修正して再適用
   const fixedDrafts = partialRes.remainingDrafts.map((d) => ({ ...d, dressScore: 4.0 }));

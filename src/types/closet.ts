@@ -251,10 +251,7 @@ export interface WardrobeAnalysisResult {
 // まとめ撮り一括登録関連の型定義
 // ----------------------------------------------------
 
-/**
- * まとめ撮り一括登録の最大着数（推奨2〜3着、ハード上限3着）
- */
-export const MAX_BATCH_GARMENTS = 3;
+export { MAX_BATCH_GARMENTS } from '../utils/closetDomain';
 
 /**
  * まとめ撮り1着分の下書きペイロード型（SingleItem + 個別cropBox）
