@@ -247,7 +247,49 @@ export interface WardrobeAnalysisResult {
   officeAcePants: ClosetItem[];
 }
 
+// ----------------------------------------------------
+// まとめ撮り一括登録関連の型定義
+// ----------------------------------------------------
 
+/**
+ * まとめ撮り一括登録の最大着数（推奨2〜3着、ハード上限3着）
+ */
+export const MAX_BATCH_GARMENTS = 3;
 
+/**
+ * まとめ撮り1着分の下書きペイロード型（SingleItem + 個別cropBox）
+ */
+export interface BatchGarmentDraftItem extends Partial<ClosetItem> {
+  cropBox?: GarmentCropBox | null;
+}
+
+export interface BatchGarmentsPayload {
+  garments: BatchGarmentDraftItem[];
+}
+
+export interface BatchGarmentItemResult {
+  index: number;
+  status: 'applied' | 'failed' | 'skipped';
+  assignedId?: string;
+  name?: string;
+  category?: Category;
+  item?: ClosetItem;
+  cropBox?: GarmentCropBox | null;
+  updatedPeersCount?: number;
+  warning?: string;
+  unconfirmedColorHint?: string;
+  error?: string;
+}
+
+export interface BatchGarmentsMergeResult {
+  valid: boolean;
+  data?: ClosetData;
+  results: BatchGarmentItemResult[];
+  appliedCount: number;
+  failedCount: number;
+  skippedCount: number;
+  remainingDrafts: BatchGarmentDraftItem[];
+  error?: string;
+}
 
 
