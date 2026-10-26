@@ -54,6 +54,7 @@ const {
   parseFailedDriveUploads,
   saveFailedDriveUploadsToStorage,
   loadFailedDriveUploadsFromStorage,
+  processDriveRetryUploads,
 } = closetDomain;
 
 const imageProcessorTsPath = path.join(projectRoot, 'src/utils/imageProcessor.ts');
@@ -3605,13 +3606,64 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
     'AiSyncView must call saveFailedDriveUploadsToStorage on failure and retry'
   );
   assert.ok(
-    aiSyncCode.includes('getImageDataUrl(item.itemId)'),
+    aiSyncCode.includes('getImageDataUrl'),
     'AiSyncView must reconstruct image dataUrl from IndexedDB via getImageDataUrl'
   );
   const imageStoreCode = fs.readFileSync(path.join(projectRoot, 'src/utils/imageStore.ts'), 'utf-8');
   assert.ok(
     imageStoreCode.includes('export async function getImageDataUrl'),
     'imageStore.ts must export getImageDataUrl'
+  );
+
+  // (4) 【再レビュー指摘実行テスト】IndexedDB画像欠落時に誤った元写真（previewDataUrl）をアップロードしないことの実行検証
+  const uploadedPayloads = [];
+  const mockIndexedDBImages = {
+    S10: 'data:image/jpeg;base64,s10_cropped_normalized_3x4_data',
+    // P16 は IndexedDB 内に存在しない（null）
+  };
+
+  const mockGetImageDataUrl = async (id) => mockIndexedDBImages[id] ?? null;
+  const mockUploadFn = async (payload) => {
+    uploadedPayloads.push(payload);
+    return { ok: true };
+  };
+
+  const testRetryItems = [
+    { itemId: 'S10', label: '3:4正規化版' },
+    { itemId: 'P16', label: '3:4正規化版' },
+  ];
+
+  const retryProcessResult = await processDriveRetryUploads(
+    testRetryItems,
+    mockGetImageDataUrl,
+    mockUploadFn
+  );
+
+  // S10 は IndexedDB の個別正規化画像で正しくアップロードされたこと
+  assert.equal(retryProcessResult.succeededItemIds.length, 1);
+  assert.equal(retryProcessResult.succeededItemIds[0], 'S10');
+  assert.equal(uploadedPayloads.length, 1);
+  assert.equal(uploadedPayloads[0].itemId, 'S10');
+  assert.equal(uploadedPayloads[0].dataUrl, 'data:image/jpeg;base64,s10_cropped_normalized_3x4_data');
+
+  // P16 は画像欠落として検出され、アップロードがスキップされ failed に残ること
+  assert.equal(retryProcessResult.failedItemIds.length, 1);
+  assert.equal(retryProcessResult.failedItemIds[0], 'P16');
+  assert.equal(retryProcessResult.missingImageItemIds.length, 1);
+  assert.equal(retryProcessResult.missingImageItemIds[0], 'P16');
+
+  // 【最重要】元写真などの別画像が誤って P16 としてアップロードされていないこと
+  assert.equal(uploadedPayloads.some((p) => p.itemId === 'P16'), false, 'Missing image item P16 must NEVER be uploaded to Drive');
+
+  // AiSyncView が元写真へのフォールバック（targetDataUrl = previewDataUrl）を含まないことの静的保証
+  assert.equal(
+    aiSyncCode.includes('targetDataUrl = previewDataUrl'),
+    false,
+    'AiSyncView must NEVER fallback to raw batch previewDataUrl during retry'
+  );
+  assert.ok(
+    aiSyncCode.includes('processDriveRetryUploads'),
+    'AiSyncView must delegate retry uploads to processDriveRetryUploads'
   );
 
   console.log('  ✅ Phase 2 UI registration mode, batch prompt, per-item panel, Drive retry & parse guard verified');

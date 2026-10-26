@@ -252,12 +252,13 @@ export interface WardrobeAnalysisResult {
 // ----------------------------------------------------
 
 export { MAX_BATCH_GARMENTS } from '../utils/closetDomain';
-export type { ParsedSyncInput, FailedDriveUploadItem } from '../utils/closetDomain';
+export type { ParsedSyncInput, FailedDriveUploadItem, RetryUploadResult } from '../utils/closetDomain';
 export {
   FAILED_DRIVE_UPLOADS_STORAGE_KEY,
   parseFailedDriveUploads,
   saveFailedDriveUploadsToStorage,
   loadFailedDriveUploadsFromStorage,
+  processDriveRetryUploads,
 } from '../utils/closetDomain';
 
 /**

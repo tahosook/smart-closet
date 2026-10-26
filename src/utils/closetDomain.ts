@@ -1763,3 +1763,51 @@ export function loadFailedDriveUploadsFromStorage(
     return [];
   }
 }
+
+export interface RetryUploadResult {
+  succeededItemIds: string[];
+  failedItemIds: string[];
+  missingImageItemIds: string[];
+}
+
+/**
+ * Google ドライブ画像アップロード再試行の直列処理
+ * - 各アイテムの画像は必ず IndexedDB（確定IDの個別3:4正規化画像）から取得する
+ * - IndexedDB に個別画像が存在しない場合、複数着が写った元写真（previewDataUrl）へのフォールバックを
+ *   厳格に禁止し、画像取り違え（他人の服や複数着写真の誤アップロード）を防止する
+ */
+export async function processDriveRetryUploads(
+  items: FailedDriveUploadItem[],
+  getImageDataUrlFn: (id: string) => Promise<string | null>,
+  uploadFn: (payload: { itemId: string; dataUrl: string }) => Promise<{ ok: boolean; error?: string }>
+): Promise<RetryUploadResult> {
+  const succeededItemIds: string[] = [];
+  const failedItemIds: string[] = [];
+  const missingImageItemIds: string[] = [];
+
+  for (const item of items) {
+    const targetDataUrl = await getImageDataUrlFn(item.itemId);
+    if (!targetDataUrl) {
+      missingImageItemIds.push(item.itemId);
+      failedItemIds.push(item.itemId);
+      continue;
+    }
+
+    try {
+      const res = await uploadFn({ itemId: item.itemId, dataUrl: targetDataUrl });
+      if (res && res.ok) {
+        succeededItemIds.push(item.itemId);
+      } else {
+        failedItemIds.push(item.itemId);
+      }
+    } catch {
+      failedItemIds.push(item.itemId);
+    }
+  }
+
+  return {
+    succeededItemIds,
+    failedItemIds,
+    missingImageItemIds,
+  };
+}
