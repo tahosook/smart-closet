@@ -97,8 +97,10 @@ export interface ClosetStoreContextType {
   };
   importBatchGarments: (
     drafts: BatchGarmentDraftItem[],
-    includedFlags?: boolean[]
+    includedFlags?: boolean[],
+    options?: { skipPush?: boolean }
   ) => BatchGarmentsMergeResult;
+  triggerBackgroundPush: () => void;
   resetToDefaultData: () => void;
   updateGasConfig: (newConfig: Partial<GasSyncConfig>) => void;
   pullFromGas: () => Promise<boolean>;
@@ -976,7 +978,8 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const importBatchGarments = useCallback(
     (
       drafts: BatchGarmentDraftItem[],
-      includedFlags?: boolean[]
+      includedFlags?: boolean[],
+      options?: { skipPush?: boolean }
     ): BatchGarmentsMergeResult => {
       const result = validateAndMergeBatchGarments(
         stateRef.current.closetData,
@@ -1006,7 +1009,9 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         stateRef.current.tombstones = updatedTombstones;
         setClosetData(dataWithTimestamp);
         setTombstones(updatedTombstones);
-        triggerBackgroundPush();
+        if (!options?.skipPush) {
+          triggerBackgroundPush();
+        }
         return {
           ...result,
           data: dataWithTimestamp,
@@ -1071,6 +1076,7 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       removeWifeNg,
       importCustomData,
       importBatchGarments,
+      triggerBackgroundPush,
       resetToDefaultData,
       updateGasConfig,
       pullFromGas,
@@ -1100,6 +1106,7 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       removeWifeNg,
       importCustomData,
       importBatchGarments,
+      triggerBackgroundPush,
       resetToDefaultData,
       updateGasConfig,
       pullFromGas,

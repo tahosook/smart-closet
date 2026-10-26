@@ -49,6 +49,7 @@ const {
   sanitizeDraftPeerReferences,
   assignSequentialIdsForBatch,
   validateAndMergeBatchGarments,
+  parseSyncInputJson,
 } = closetDomain;
 
 const imageProcessorTsPath = path.join(projectRoot, 'src/utils/imageProcessor.ts');
@@ -3438,7 +3439,106 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
   assert.ok(skillCode.includes('2000px'), 'SKILL.md must document 2000px batch resolution');
   assert.ok(skillCode.includes('（色の目安：〇〇 ※12色パレット外のため未確定）'), 'SKILL.md must document unconfirmed color hint');
 
-  console.log('  ✅ Phase 2 UI registration mode, batch prompt, per-item panel, Drive progress & doc sync verified');
+  // 8. レビュー指摘対応の検証（Drive画像再試行・Sync Push遅延・解像度保護・既存ID重複防止入出力テスト）
+  // 8a. Driveアップロード失敗時の画像単体再試行導線 (修正1)
+  assert.ok(aiSyncCode.includes('handleRetryDriveUploads'), 'AiSyncView must implement handleRetryDriveUploads');
+  assert.ok(aiSyncCode.includes('failedDriveUploads'), 'AiSyncView must track failedDriveUploads');
+  assert.ok(aiSyncCode.includes('失敗した画像'), 'AiSyncView must display retry banner for failed drive uploads');
+
+  // 8b. 直列アップロード完了までの Sync Push 遅延 (修正2)
+  assert.ok(aiSyncCode.includes('skipPush: true'), 'AiSyncView must pass skipPush: true to importBatchGarments');
+  assert.ok(useStoreCode.includes('options?.skipPush'), 'useClosetStore must honor skipPush option');
+  assert.ok(useStoreCode.includes('triggerBackgroundPush'), 'useClosetStore must expose triggerBackgroundPush');
+
+  // 8c. モード切替時の解像度保証と下書きクリア (修正3)
+  assert.ok(aiSyncCode.includes('handleModeSwitch'), 'AiSyncView must implement handleModeSwitch');
+  assert.ok(aiSyncCode.includes("handleModeSwitch('single')"), 'AiSyncView must call handleModeSwitch for single mode');
+  assert.ok(aiSyncCode.includes("handleModeSwitch('batch')"), 'AiSyncView must call handleModeSwitch for batch mode');
+
+  // 8d. 【修正4挙動テスト】既存アイテム配列および重複IDの誤登録防止（入出力テスト）
+  const rawCloset = JSON.parse(fs.readFileSync(path.join(projectRoot, 'src/data/closet.json'), 'utf-8'));
+
+  // (1) id付き服配列（エクスポートデータ等）を貼った場合: batch_garments としてパースされず拒否されること
+  const rawArrayWithIds = JSON.stringify([
+    { id: 'S1', category: 'shirt', name: '既存シャツ' },
+    { id: 'S2', category: 'shirt', name: '既存シャツ2' },
+  ]);
+  const parsedRawWithIds = parseSyncInputJson(rawArrayWithIds, rawCloset.items);
+  assert.equal(parsedRawWithIds.kind, 'invalid', 'Raw array with IDs must NOT be parsed as batch_garments');
+  assert.ok(parsedRawWithIds.error.includes('ID付きの服配列はまとめ撮り一括登録できません'), 'Error must specify rejection of array with IDs');
+
+  // (2) id無しの服ドラフト配列を貼った場合: 正常に batch_garments としてパースされること
+  const rawArrayWithoutIds = JSON.stringify([
+    { category: 'shirt', name: '新規シャツ1' },
+    { category: 'pants', name: '新規パンツ1' },
+  ]);
+  const parsedRawWithoutIds = parseSyncInputJson(rawArrayWithoutIds, rawCloset.items);
+  assert.equal(parsedRawWithoutIds.kind, 'batch_garments', 'Raw array without IDs must be recognized as batch_garments');
+  assert.equal(parsedRawWithoutIds.batchGarments.length, 2);
+
+  // (3) { "garments": [...] } 内に既存アイテムと重複する id が含まれる場合: 警告して登録に進ませないこと
+  const batchWithExistingIdJson = JSON.stringify({
+    garments: [
+      { id: 'S1', category: 'shirt', name: 'S1重複シャツ' },
+    ],
+  });
+  const parsedExistingId = parseSyncInputJson(batchWithExistingIdJson, rawCloset.items);
+  assert.equal(parsedExistingId.kind, 'invalid', 'Garments with existing ID must be rejected by parseSyncInputJson');
+  assert.equal(parsedExistingId.existingIdConflict, 'S1', 'existingIdConflict must identify S1');
+  assert.ok(parsedExistingId.error.includes('既存アイテム（ID: S1）が含まれています'), 'Error message must specify duplicate ID');
+
+  // (4) 正系 { "garments": [...] }（id無し）: 正常に batch_garments として受け入れられること
+  const validBatchJson = JSON.stringify({
+    garments: [
+      { category: 'shirt', name: '新規シャツA', color: '白' },
+    ],
+  });
+  const parsedValidBatch = parseSyncInputJson(validBatchJson, rawCloset.items);
+  assert.equal(parsedValidBatch.kind, 'batch_garments');
+  assert.equal(parsedValidBatch.batchGarments.length, 1);
+
+  // (5) validateAndMergeBatchGarments で既存ID重複 candidate が渡された場合の安全拒否
+  const batchWithDupCandidate = [
+    {
+      id: 'S1',
+      category: 'shirt',
+      name: 'S1上書き試行',
+      color: '白',
+      seasonSleeve: '通年',
+      dressScore: 4.0,
+      comfortScore: 4.0,
+      officeRecommendIds: [],
+      remoteRecommendIds: [],
+      ngIds: [],
+      ngReason: '',
+      notes: '上書き試行',
+    },
+    {
+      category: 'pants',
+      name: '正常パンツ',
+      color: '黒',
+      seasonSleeve: '通年',
+      dressScore: 4.0,
+      comfortScore: 4.0,
+      officeRecommendIds: [],
+      remoteRecommendIds: [],
+      ngIds: [],
+      ngReason: '',
+      notes: '2着目は正常',
+    },
+  ];
+  const mergeDupRes = validateAndMergeBatchGarments(rawCloset, batchWithDupCandidate);
+  assert.equal(mergeDupRes.valid, true, 'Partial application: valid item succeeds');
+  assert.equal(mergeDupRes.appliedCount, 1);
+  assert.equal(mergeDupRes.failedCount, 1);
+  assert.equal(mergeDupRes.results[0].status, 'failed');
+  assert.ok(mergeDupRes.results[0].error.includes('既存アイテム（ID: S1）と重複しています'), 'Error must specify duplicate ID conflict');
+  // 既存データ（S1）が上書きされず、元データが保護されていること
+  const originalS1 = rawCloset.items.find((i) => i.id === 'S1');
+  const preservedS1 = mergeDupRes.data.items.find((i) => i.id === 'S1');
+  assert.equal(preservedS1.name, originalS1.name, 'Existing item must not be overwritten');
+
+  console.log('  ✅ Phase 2 UI registration mode, batch prompt, per-item panel, Drive retry & parse guard verified');
 }
 
 console.log('🎉 All GAS backend & sync logic tests passed successfully!');

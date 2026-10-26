@@ -20,6 +20,7 @@ import {
   Palette,
   Crop,
   Ruler,
+  UploadCloud,
 } from 'lucide-react';
 import { useClosetStore } from '../hooks/useClosetStore';
 import {
@@ -41,6 +42,7 @@ import {
   validateGarmentMeasurements,
   assignSequentialIdsForBatch,
   validateSingleClosetItem,
+  parseSyncInputJson,
 } from '../utils/closetDomain';
 import {
   saveDraftImage,
@@ -83,100 +85,10 @@ const PANTS_MEASUREMENT_FIELDS: { key: keyof GarmentMeasurements; label: string;
   { key: 'hemWidth', label: '裾幅', desc: '裾の直線距離' },
 ];
 
-interface ParsedSyncInput {
-  kind: 'single' | 'batch_color' | 'batch_garments' | 'invalid';
-  item?: Partial<ClosetItem>;
-  cropBox?: GarmentCropBox | null;
-  batchColorUpdates?: ColorUpdateItem[];
-  batchGarments?: BatchGarmentDraftItem[];
-  error?: string;
-}
-
-/**
- * 貼り付けられた JSON テキストから単一アイテム、一括色更新、またはまとめ撮り一括服オブジェクトを安全に解析するヘルパー
- */
-function parseSyncInputJson(rawText: string): ParsedSyncInput {
-  const trimmed = rawText.trim();
-  if (!trimmed) {
-    return { kind: 'invalid', error: 'JSONテキストを貼り付けてください。' };
-  }
-
-  let clean = trimmed;
-  if (clean.startsWith('```json')) {
-    clean = clean.replace(/^```json\s*/, '').replace(/\s*```$/, '');
-  } else if (clean.startsWith('```')) {
-    clean = clean.replace(/^```\s*/, '').replace(/\s*```$/, '');
-  }
-
-  try {
-    const parsed = JSON.parse(clean);
-
-    // 1. 一括色更新形式: { "colorUpdates": [...] } または 配列
-    if (parsed && typeof parsed === 'object') {
-      const candidates = Array.isArray((parsed as any).colorUpdates)
-        ? (parsed as any).colorUpdates
-        : Array.isArray(parsed) &&
-          parsed.length > 0 &&
-          typeof (parsed[0] as any)?.id === 'string' &&
-          (parsed[0] as any)?.color !== undefined &&
-          (parsed[0] as any)?.category === undefined
-        ? parsed
-        : null;
-
-      if (candidates) {
-        const batchList: ColorUpdateItem[] = [];
-        for (const c of candidates) {
-          if (c && typeof c.id === 'string' && typeof c.color === 'string') {
-            batchList.push({ id: c.id.trim().toUpperCase(), color: c.color.trim() as any });
-          }
-        }
-        if (batchList.length > 0) {
-          return { kind: 'batch_color', batchColorUpdates: batchList };
-        }
-      }
-    }
-
-    // 2. まとめ撮り服形式: { "garments": [...] } または 服ドラフト配列
-    if (parsed && typeof parsed === 'object') {
-      const batchCandidates = Array.isArray((parsed as any).garments)
-        ? (parsed as any).garments
-        : Array.isArray(parsed) &&
-          parsed.length > 0 &&
-          ((parsed[0] as any)?.category === 'shirt' ||
-            (parsed[0] as any)?.category === 'pants' ||
-            ((parsed[0] as any)?.name !== undefined && (parsed[0] as any)?.id === undefined))
-        ? parsed
-        : null;
-
-      if (batchCandidates && batchCandidates.length > 0) {
-        return {
-          kind: 'batch_garments',
-          batchGarments: batchCandidates as BatchGarmentDraftItem[],
-        };
-      }
-    }
-
-    // 3. 単一アイテム形式
-    if (
-      parsed &&
-      typeof parsed === 'object' &&
-      !Array.isArray(parsed) &&
-      typeof parsed.id === 'string' &&
-      (parsed.category === 'shirt' || parsed.category === 'pants')
-    ) {
-      const cropBox = normalizeCropBox(parsed.cropBox) ?? null;
-      return { kind: 'single', item: parsed, cropBox };
-    }
-
-    return {
-      kind: 'invalid',
-      error:
-        '単一アイテム形式（id と category）、まとめ撮り形式（garments 配列）、または一括色更新形式（colorUpdates）を満たしていません。',
-    };
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : '構文エラー';
-    return { kind: 'invalid', error: `JSON構文が不正または不完全です: ${msg}` };
-  }
+interface FailedImageUpload {
+  itemId: string;
+  dataUrl: string;
+  label: string;
 }
 
 export const AiSyncView: React.FC = () => {
@@ -186,6 +98,7 @@ export const AiSyncView: React.FC = () => {
     gasConfig,
     importCustomData,
     importBatchGarments,
+    triggerBackgroundPush,
     resetToDefaultData,
   } = useClosetStore();
 
@@ -235,6 +148,13 @@ export const AiSyncView: React.FC = () => {
   const [batchNormalizedPreviews, setBatchNormalizedPreviews] = useState<(string | null)[]>([]);
   const [isApplyingBatch, setIsApplyingBatch] = useState(false);
 
+  // 修正1: Drive アップロード失敗時の画像再試行管理
+  const [failedDriveUploads, setFailedDriveUploads] = useState<FailedImageUpload[]>([]);
+  const [isRetryingDriveUploads, setIsRetryingDriveUploads] = useState(false);
+
+  // 修正4: JSON パース警告（既存ID重複、ID付き配列等）
+  const [jsonParseWarning, setJsonParseWarning] = useState<string | null>(null);
+
   // Suggest next sequential IDs using getNextSequentialId
   const nextShirtId = getNextSequentialId(mergedClosetData.items, 'shirt');
   const nextPantsId = getNextSequentialId(mergedClosetData.items, 'pants');
@@ -258,6 +178,26 @@ export const AiSyncView: React.FC = () => {
     };
   }, []);
 
+  // 修正3: 登録モード切替（通常／まとめ撮り）ハンドラー（解像度保証のため写真クリアを促す）
+  const handleModeSwitch = async (targetMode: 'single' | 'batch') => {
+    if (targetMode === registrationMode) return;
+    if (previewDataUrl || currentBlob) {
+      const isSingleToBatch = targetMode === 'batch';
+      const msg = isSingleToBatch
+        ? 'まとめ撮りモードは高解像度（長辺2000px）で切り抜くため、下書き写真をクリアします。服を並べてA4用紙と一緒に再度撮影または選択してください。'
+        : '通常モード（1着ずつ）に切り替えるため、下書き写真をクリアします。写真を再度選択してください。';
+      if (!window.confirm(`${msg}\n\nモードを切り替えますか？`)) {
+        return;
+      }
+      await handleClearPhoto();
+      setImportStatus({
+        type: 'success',
+        message: `${isSingleToBatch ? 'まとめ撮り' : '通常（1着ずつ）'}モードに切り替えました。写真を再選択してください。`,
+      });
+    }
+    setRegistrationMode(targetMode);
+  };
+
   // 写真ファイル選択ハンドラー（クライアント圧縮 + 専用下書き枠へ1枠自動保存）
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -265,6 +205,7 @@ export const AiSyncView: React.FC = () => {
 
     setIsProcessingImage(true);
     setImageUploadStatus({ type: 'idle', text: '' });
+    setFailedDriveUploads([]);
 
     try {
       // 1. クライアント側で JPEG にリサイズ＆正規化 (まとめ撮りモードは長辺2000px、通常時は1200px, quality 0.85)
@@ -300,14 +241,71 @@ export const AiSyncView: React.FC = () => {
     setBatchNormalizedPreviews([]);
     setIsDraftRestored(false);
     setImageUploadStatus({ type: 'idle', text: '' });
+    setFailedDriveUploads([]);
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
   };
 
+  // 修正1: Google ドライブへの画像アップロードのみを再試行するハンドラー（二重登録防止）
+  const handleRetryDriveUploads = async () => {
+    if (failedDriveUploads.length === 0 || !gasConfig.webAppUrl) return;
+    setIsRetryingDriveUploads(true);
+    setImageUploadStatus({
+      type: 'uploading',
+      text: `Google ドライブへ未完了画像（${failedDriveUploads.length}着）を再アップロード中...`,
+    });
+
+    const stillFailed: FailedImageUpload[] = [];
+    let retrySuccessCount = 0;
+
+    for (const item of failedDriveUploads) {
+      try {
+        const uploadRes = await uploadImageToGas({
+          webAppUrl: gasConfig.webAppUrl,
+          secretToken: gasConfig.secretToken,
+          itemId: item.itemId,
+          dataUrl: item.dataUrl,
+        });
+        if (uploadRes.ok) {
+          retrySuccessCount++;
+        } else {
+          stillFailed.push(item);
+        }
+      } catch (err) {
+        stillFailed.push(item);
+      }
+    }
+
+    setFailedDriveUploads(stillFailed);
+    setIsRetryingDriveUploads(false);
+
+    if (stillFailed.length === 0) {
+      setImageUploadStatus({
+        type: 'success',
+        text: `Google ドライブへ未完了画像の再アップロードが全着完了しました！（${retrySuccessCount}着成功）`,
+      });
+      // 未完了画像がなく、かつ未適用の下書きが残っていなければ下書き写真をクリア
+      if (!draftBatchGarments || draftBatchGarments.length === 0) {
+        await clearDraftImage();
+        setCurrentBlob(null);
+        setPreviewDataUrl(null);
+        setNormalizedPreviewUrl(null);
+        setBatchNormalizedPreviews([]);
+        setIsDraftRestored(false);
+      }
+      triggerBackgroundPush();
+    } else {
+      setImageUploadStatus({
+        type: 'error',
+        text: `ドライブ保存再試行: ${retrySuccessCount}着成功 / ${stillFailed.length}着失敗（端末内 IndexedDB には保存済みです）`,
+      });
+    }
+  };
+
   // リアルタイムに JSON テキストを監視し、有効な単一アイテム、一括色更新、またはまとめ撮り服なら同期
   useEffect(() => {
-    const parseRes = parseSyncInputJson(jsonInput);
+    const parseRes = parseSyncInputJson(jsonInput, mergedClosetData.items);
     if (parseRes.kind === 'single' && parseRes.item) {
       setDraftEditItem(parseRes.item);
       setDraftCropBox(parseRes.cropBox ?? null);
@@ -317,12 +315,14 @@ export const AiSyncView: React.FC = () => {
       setDraftBatchUpdates(null);
       setDraftBatchGarments(null);
       setIsCategorySwitched(false);
+      setJsonParseWarning(null);
     } else if (parseRes.kind === 'batch_color' && parseRes.batchColorUpdates) {
       setDraftBatchUpdates(parseRes.batchColorUpdates);
       setDraftEditItem(null);
       setDraftCropBox(null);
       setDraftBatchGarments(null);
       setIsCategorySwitched(false);
+      setJsonParseWarning(null);
     } else if (parseRes.kind === 'batch_garments' && parseRes.batchGarments) {
       setDraftBatchGarments(parseRes.batchGarments);
       setBatchIncludedFlags((prev) => {
@@ -337,14 +337,16 @@ export const AiSyncView: React.FC = () => {
       setDraftCropBox(null);
       setDraftBatchUpdates(null);
       setIsCategorySwitched(false);
+      setJsonParseWarning(null);
     } else {
       setDraftEditItem(null);
       setDraftCropBox(null);
       setDraftBatchUpdates(null);
       setDraftBatchGarments(null);
       setIsCategorySwitched(false);
+      setJsonParseWarning(jsonInput.trim() ? (parseRes.error ?? 'JSON構文が無効です') : null);
     }
-  }, [jsonInput]);
+  }, [jsonInput, mergedClosetData.items]);
 
   // 下書き写真と切り抜き設定の変更に応じて、リアルタイムに3:4正規化プレビューを生成（単一アイテム用）
   useEffect(() => {
@@ -799,7 +801,7 @@ ${itemsList}
   // Step 3: JSON適用・自動マージ・写真の本保存・下書き消去・GASアップロード連動
   const handleApplyJson = async () => {
     setImportStatus(null);
-    const parseRes = parseSyncInputJson(jsonInput);
+    const parseRes = parseSyncInputJson(jsonInput, mergedClosetData.items);
 
     // 一括色更新の適用
     if (parseRes.kind === 'batch_color') {
@@ -959,7 +961,8 @@ ${itemsList}
     setIsApplyingBatch(true);
 
     try {
-      const result = importBatchGarments(draftBatchGarments, batchIncludedFlags);
+      // 修正2: 直列画像処理とDriveアップロード完了まで background push を遅延させる
+      const result = importBatchGarments(draftBatchGarments, batchIncludedFlags, { skipPush: true });
 
       if (!result.valid && result.appliedCount === 0) {
         setImportStatus({
@@ -975,7 +978,7 @@ ${itemsList}
       );
 
       let uploadSuccessCount = 0;
-      let uploadFailCount = 0;
+      const newFailedUploads: FailedImageUpload[] = [];
 
       if (previewDataUrl && appliedResults.length > 0) {
         for (let i = 0; i < result.results.length; i++) {
@@ -1017,7 +1020,7 @@ ${itemsList}
             const label = isNormalized ? '3:4正規化版' : '元画像フォールバック';
             setImageUploadStatus({
               type: 'uploading',
-              text: `Google ドライブへ「${resItem.assignedId}.jpg（${label}）」を一括アップロード中 (${uploadSuccessCount + uploadFailCount + 1}/${appliedResults.length}着)...`,
+              text: `Google ドライブへ「${resItem.assignedId}.jpg（${label}）」を一括アップロード中 (${uploadSuccessCount + newFailedUploads.length + 1}/${appliedResults.length}着)...`,
             });
             try {
               const uploadRes = await uploadImageToGas({
@@ -1029,17 +1032,30 @@ ${itemsList}
               if (uploadRes.ok) {
                 uploadSuccessCount++;
               } else {
-                uploadFailCount++;
+                newFailedUploads.push({
+                  itemId: resItem.assignedId,
+                  dataUrl: finalDataUrl,
+                  label,
+                });
               }
             } catch (uErr) {
-              uploadFailCount++;
+              newFailedUploads.push({
+                itemId: resItem.assignedId,
+                dataUrl: finalDataUrl,
+                label,
+              });
             }
           }
         }
       }
 
+      // 修正1: 失敗した着の画像アップロード情報を保持し、再試行可能にする
+      if (newFailedUploads.length > 0) {
+        setFailedDriveUploads(newFailedUploads);
+      }
+
       if (gasConfig.webAppUrl && appliedResults.length > 0) {
-        if (uploadFailCount === 0) {
+        if (newFailedUploads.length === 0) {
           setImageUploadStatus({
             type: 'success',
             text: `Google ドライブへ全${uploadSuccessCount}着の画像を保存しました！`,
@@ -1047,10 +1063,13 @@ ${itemsList}
         } else {
           setImageUploadStatus({
             type: 'error',
-            text: `ドライブ保存: ${uploadSuccessCount}着成功 / ${uploadFailCount}着失敗（端末内 IndexedDB には全着保存済みです）`,
+            text: `ドライブ保存: ${uploadSuccessCount}着成功 / ${newFailedUploads.length}着失敗（端末内 IndexedDB には全着保存済みです。下のボタンで画像のみ再試行できます）`,
           });
         }
       }
+
+      // 修正2: 直列画像処理とDriveアップロード完了後に background push を実行
+      triggerBackgroundPush();
 
       // 部分適用（一部失敗）か全着成功かの判定
       const remaining = result.remainingDrafts ?? [];
@@ -1066,16 +1085,20 @@ ${itemsList}
           message: `一部の服（${result.appliedCount}着）を登録しました！ 失敗した ${remaining.length}着 は下書きに残しています。内容を確認・修正して再登録してください。`,
         });
       } else {
-        // 全着成功: 下書き写真を消去しフォームをリセット
-        await clearDraftImage();
+        // 全着成功:
+        // 修正1: Drive アップロード失敗がある場合は元写真（下書き写真）を残し、画像のみ再試行できるようにする
+        if (newFailedUploads.length === 0) {
+          await clearDraftImage();
+          setCurrentBlob(null);
+          setPreviewDataUrl(null);
+          setBatchNormalizedPreviews([]);
+          setIsDraftRestored(false);
+        }
+
         setJsonInput('');
         setDraftBatchGarments(null);
         setBatchIncludedFlags([]);
         setBatchSmartCropFlags([]);
-        setBatchNormalizedPreviews([]);
-        setCurrentBlob(null);
-        setPreviewDataUrl(null);
-        setIsDraftRestored(false);
         setOptionalNote('');
 
         const unconfirmedCount = appliedResults.filter((r) => r.unconfirmedColorHint || r.warning).length;
@@ -1084,9 +1107,14 @@ ${itemsList}
             ? `（うち${unconfirmedCount}着は色未確定として登録し、メモに目安を追記しました。後から一括色相談で確定できます）`
             : '';
 
+        const uploadWarningMsg =
+          newFailedUploads.length > 0
+            ? ` ※Google ドライブへの画像アップロードに${newFailedUploads.length}着失敗しました。下の「失敗した画像のみ再試行」から画像のみアップロードできます。`
+            : '';
+
         setImportStatus({
           type: 'success',
-          message: `全${result.appliedCount}着を一括マージ・保存しました！ ${colorNoteMsg}`,
+          message: `全${result.appliedCount}着を一括マージ・保存しました！ ${colorNoteMsg}${uploadWarningMsg}`,
         });
       }
     } catch (err: unknown) {
@@ -1159,7 +1187,7 @@ ${itemsList}
           <div className="grid grid-cols-2 gap-2">
             <button
               type="button"
-              onClick={() => setRegistrationMode('single')}
+              onClick={() => handleModeSwitch('single')}
               className={`min-h-[44px] py-2 px-3 rounded-xl text-xs font-bold border flex items-center justify-center gap-1.5 transition-all ${
                 registrationMode === 'single'
                   ? 'bg-blue-600 text-white border-blue-500 shadow-md shadow-blue-950 ring-1 ring-blue-400'
@@ -1170,7 +1198,7 @@ ${itemsList}
             </button>
             <button
               type="button"
-              onClick={() => setRegistrationMode('batch')}
+              onClick={() => handleModeSwitch('batch')}
               className={`min-h-[44px] py-2 px-3 rounded-xl text-xs font-bold border flex items-center justify-center gap-1.5 transition-all ${
                 registrationMode === 'batch'
                   ? 'bg-blue-600 text-white border-blue-500 shadow-md shadow-blue-950 ring-1 ring-blue-400'
@@ -1292,6 +1320,39 @@ ${itemsList}
                   </p>
                 )}
               </div>
+            </div>
+          )}
+
+          {/* 修正1: Google ドライブ画像アップロード失敗時の再試行バナー (Step 1) */}
+          {failedDriveUploads.length > 0 && (
+            <div className="p-3 bg-amber-950/70 border border-amber-700/80 rounded-xl space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold flex items-center gap-1.5 text-amber-300">
+                  <AlertCircle className="w-4 h-4 text-amber-400 flex-shrink-0" />
+                  Google ドライブへの画像保存未完了（{failedDriveUploads.length}着）
+                </span>
+              </div>
+              <p className="text-[11px] text-amber-200/90 leading-relaxed">
+                服データと端末内 IndexedDB への画像保存は完了しています。服を二重登録することなく、未送信の画像（{failedDriveUploads.map((f) => f.itemId).join(', ')}）のみをドライブへ再送信できます。
+              </p>
+              <button
+                type="button"
+                onClick={handleRetryDriveUploads}
+                disabled={isRetryingDriveUploads}
+                className="min-h-[44px] w-full py-2.5 px-4 rounded-xl text-xs font-bold bg-amber-600 hover:bg-amber-500 disabled:bg-slate-700 text-white shadow-md flex items-center justify-center gap-2 transition-all active:scale-[0.98]"
+              >
+                {isRetryingDriveUploads ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    <span>ドライブへ画像再送信中...</span>
+                  </>
+                ) : (
+                  <>
+                    <UploadCloud className="w-4 h-4" />
+                    <span>☁️ 失敗した画像（{failedDriveUploads.length}着）のみ再試行</span>
+                  </>
+                )}
+              </button>
             </div>
           )}
         </div>
@@ -1505,6 +1566,14 @@ ${itemsList}
             rows={5}
             className="w-full p-3 rounded-xl bg-slate-900 border border-slate-700 text-xs font-mono text-slate-200 placeholder-slate-600 focus:outline-none focus:border-blue-500"
           />
+
+          {/* 修正4: JSON パース警告（既存ID重複、ID付き配列等） */}
+          {jsonParseWarning && (
+            <div className="p-2.5 bg-rose-950/70 border border-rose-800/80 rounded-xl flex items-start gap-2 text-xs text-rose-300">
+              <AlertCircle className="w-4 h-4 flex-shrink-0 text-rose-400 mt-0.5" />
+              <span className="leading-relaxed">{jsonParseWarning}</span>
+            </div>
+          )}
 
           {/* Case A: Batch Color Updates Preview Card */}
           {draftBatchUpdates && (
@@ -2382,6 +2451,39 @@ ${itemsList}
               </div>
             );
           })()}
+
+          {/* 修正1: Google ドライブ画像アップロード失敗時の再試行バナー (Step 3) */}
+          {failedDriveUploads.length > 0 && (
+            <div className="p-3 bg-amber-950/70 border border-amber-700/80 rounded-xl space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold flex items-center gap-1.5 text-amber-300">
+                  <AlertCircle className="w-4 h-4 text-amber-400 flex-shrink-0" />
+                  Google ドライブへの画像保存未完了（{failedDriveUploads.length}着）
+                </span>
+              </div>
+              <p className="text-[11px] text-amber-200/90 leading-relaxed">
+                服データと端末内 IndexedDB への画像保存は完了しています。服を二重登録することなく、未送信の画像（{failedDriveUploads.map((f) => f.itemId).join(', ')}）のみをドライブへ再送信できます。
+              </p>
+              <button
+                type="button"
+                onClick={handleRetryDriveUploads}
+                disabled={isRetryingDriveUploads}
+                className="min-h-[44px] w-full py-2.5 px-4 rounded-xl text-xs font-bold bg-amber-600 hover:bg-amber-500 disabled:bg-slate-700 text-white shadow-md flex items-center justify-center gap-2 transition-all active:scale-[0.98]"
+              >
+                {isRetryingDriveUploads ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    <span>ドライブへ画像再送信中...</span>
+                  </>
+                ) : (
+                  <>
+                    <UploadCloud className="w-4 h-4" />
+                    <span>☁️ 失敗した画像（{failedDriveUploads.length}着）のみ再試行</span>
+                  </>
+                )}
+              </button>
+            </div>
+          )}
 
           {importStatus && (
             <div

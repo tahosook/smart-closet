@@ -252,6 +252,7 @@ export interface WardrobeAnalysisResult {
 // ----------------------------------------------------
 
 export { MAX_BATCH_GARMENTS } from '../utils/closetDomain';
+export type { ParsedSyncInput } from '../utils/closetDomain';
 
 /**
  * まとめ撮り1着分の下書きペイロード型（SingleItem + 個別cropBox）
