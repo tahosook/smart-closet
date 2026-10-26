@@ -17,10 +17,27 @@ import {
   ChevronDown,
   ChevronUp,
   Sliders,
+  Palette,
+  Crop,
+  Ruler,
 } from 'lucide-react';
 import { useClosetStore } from '../hooks/useClosetStore';
-import { Category, ClosetItem } from '../types/closet';
-import { getNextSequentialId, switchDraftItemCategory } from '../utils/closetDomain';
+import {
+  Category,
+  ClosetItem,
+  GarmentMeasurements,
+  GarmentCropBox,
+  ColorUpdateItem,
+} from '../types/closet';
+import {
+  getNextSequentialId,
+  switchDraftItemCategory,
+  GARMENT_COLOR_PALETTE,
+  GARMENT_COLOR_ANCHOR_GUIDE,
+  isValidGarmentColor,
+  normalizeCropBox,
+  validateGarmentMeasurements,
+} from '../utils/closetDomain';
 import {
   saveDraftImage,
   getDraftImage,
@@ -29,8 +46,10 @@ import {
 } from '../utils/imageStore';
 import {
   processGarmentImage,
+  cropAndNormalizeGarmentImage,
   uploadImageToGas,
 } from '../utils/imageProcessor';
+import { getColorForPalette } from './ItemImage';
 
 const SHIRT_SLEEVE_PRESETS = [
   '長袖・通年',
@@ -46,17 +65,35 @@ const PANTS_SLEEVE_PRESETS = [
   '秋冬',
 ];
 
-/**
- * 貼り付けられた JSON テキストから単一アイテムオブジェクトを安全に抽出・パースするヘルパー
- */
-function parseSingleItemJson(rawText: string): {
-  success: boolean;
+const SHIRT_MEASUREMENT_FIELDS: { key: keyof GarmentMeasurements; label: string; desc: string }[] = [
+  { key: 'bodyLength', label: '着丈', desc: '衿リブ下〜裾' },
+  { key: 'chestWidth', label: '身幅', desc: '両脇下の直線距離' },
+  { key: 'shoulderWidth', label: '肩幅', desc: '両肩先の直線距離' },
+  { key: 'sleeveLength', label: '袖丈', desc: '肩先〜袖口' },
+];
+
+const PANTS_MEASUREMENT_FIELDS: { key: keyof GarmentMeasurements; label: string; desc: string }[] = [
+  { key: 'waist', label: 'ウエスト', desc: '内周目安' },
+  { key: 'inseam', label: '股下', desc: '股の十字縫目〜裾' },
+  { key: 'totalLength', label: '総丈', desc: 'ウエスト上端〜裾' },
+  { key: 'hemWidth', label: '裾幅', desc: '裾の直線距離' },
+];
+
+interface ParsedSyncInput {
+  kind: 'single' | 'batch_color' | 'invalid';
   item?: Partial<ClosetItem>;
+  cropBox?: GarmentCropBox | null;
+  batchColorUpdates?: ColorUpdateItem[];
   error?: string;
-} {
+}
+
+/**
+ * 貼り付けられた JSON テキストから単一アイテムまたは一括色更新オブジェクトを安全に解析するヘルパー
+ */
+function parseSyncInputJson(rawText: string): ParsedSyncInput {
   const trimmed = rawText.trim();
   if (!trimmed) {
-    return { success: false, error: 'JSONテキストを貼り付けてください。' };
+    return { kind: 'invalid', error: 'JSONテキストを貼り付けてください。' };
   }
 
   let clean = trimmed;
@@ -68,6 +105,32 @@ function parseSingleItemJson(rawText: string): {
 
   try {
     const parsed = JSON.parse(clean);
+
+    // 1. 一括色更新形式: { "colorUpdates": [...] } または 配列
+    if (parsed && typeof parsed === 'object') {
+      const candidates = Array.isArray((parsed as any).colorUpdates)
+        ? (parsed as any).colorUpdates
+        : Array.isArray(parsed) &&
+          parsed.length > 0 &&
+          typeof (parsed[0] as any)?.id === 'string' &&
+          (parsed[0] as any)?.color !== undefined
+        ? parsed
+        : null;
+
+      if (candidates) {
+        const batchList: ColorUpdateItem[] = [];
+        for (const c of candidates) {
+          if (c && typeof c.id === 'string' && typeof c.color === 'string') {
+            batchList.push({ id: c.id.trim().toUpperCase(), color: c.color.trim() as any });
+          }
+        }
+        if (batchList.length > 0) {
+          return { kind: 'batch_color', batchColorUpdates: batchList };
+        }
+      }
+    }
+
+    // 2. 単一アイテム形式
     if (
       parsed &&
       typeof parsed === 'object' &&
@@ -75,15 +138,17 @@ function parseSingleItemJson(rawText: string): {
       typeof parsed.id === 'string' &&
       (parsed.category === 'shirt' || parsed.category === 'pants')
     ) {
-      return { success: true, item: parsed };
+      const cropBox = normalizeCropBox(parsed.cropBox) ?? null;
+      return { kind: 'single', item: parsed, cropBox };
     }
+
     return {
-      success: false,
-      error: '単一アイテムの形式（id と category: "shirt" | "pants"）を満たしていません。',
+      kind: 'invalid',
+      error: '単一アイテム形式（id と category）または一括色更新形式（colorUpdates）を満たしていません。',
     };
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : '構文エラー';
-    return { success: false, error: `JSON構文が不正または不完全です: ${msg}` };
+    return { kind: 'invalid', error: `JSON構文が不正または不完全です: ${msg}` };
   }
 }
 
@@ -97,6 +162,7 @@ export const AiSyncView: React.FC = () => {
   } = useClosetStore();
 
   const [copiedPrompt, setCopiedPrompt] = useState(false);
+  const [copiedBatchPrompt, setCopiedBatchPrompt] = useState(false);
   const [copiedJson, setCopiedJson] = useState(false);
   const [jsonInput, setJsonInput] = useState('');
   const [importStatus, setImportStatus] = useState<{
@@ -105,7 +171,7 @@ export const AiSyncView: React.FC = () => {
   } | null>(null);
   const [isBackupOpen, setIsBackupOpen] = useState(false);
 
-  // Photo state (Dedicated draft 1 slot: 条件1)
+  // Photo state (Dedicated draft 1 slot)
   const [previewDataUrl, setPreviewDataUrl] = useState<string | null>(null);
   const [currentBlob, setCurrentBlob] = useState<Blob | null>(null);
   const [isDraftRestored, setIsDraftRestored] = useState(false);
@@ -123,15 +189,22 @@ export const AiSyncView: React.FC = () => {
   const [manualItemName, setManualItemName] = useState('');
   const [manualSleeve, setManualSleeve] = useState('');
 
-  // Step 3: Parsed draft item for confirmation & inline fine-tuning (条件2)
+  // Step 3: Parsed draft item for confirmation & inline fine-tuning
   const [draftEditItem, setDraftEditItem] = useState<Partial<ClosetItem> | null>(null);
+  const [draftCropBox, setDraftCropBox] = useState<GarmentCropBox | null>(null);
+  const [applySmartCrop, setApplySmartCrop] = useState<boolean>(true);
+  const [normalizedPreviewUrl, setNormalizedPreviewUrl] = useState<string | null>(null);
+  const [draftBatchUpdates, setDraftBatchUpdates] = useState<ColorUpdateItem[] | null>(null);
   const [isCategorySwitched, setIsCategorySwitched] = useState(false);
 
   // Suggest next sequential IDs using getNextSequentialId
   const nextShirtId = getNextSequentialId(mergedClosetData.items, 'shirt');
   const nextPantsId = getNextSequentialId(mergedClosetData.items, 'pants');
 
-  // マウント時に専用下書き枠から復元（Geminiアプリ往復でのタブ再読み込み耐性: 条件1）
+  // Count unconfirmed color garments
+  const unconfirmedColorCount = mergedClosetData.items.filter((item) => !item.color).length;
+
+  // マウント時に専用下書き枠から復元（Geminiアプリ往復でのタブ再読み込み耐性）
   useEffect(() => {
     let isMounted = true;
     getDraftImage().then((draft) => {
@@ -147,7 +220,7 @@ export const AiSyncView: React.FC = () => {
     };
   }, []);
 
-  // 写真ファイル選択ハンドラー（クライアント圧縮 + 専用下書き枠へ1枠自動保存: 条件1）
+  // 写真ファイル選択ハンドラー（クライアント圧縮 + 専用下書き枠へ1枠自動保存）
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -162,7 +235,7 @@ export const AiSyncView: React.FC = () => {
       setPreviewDataUrl(dataUrl);
       setIsDraftRestored(false);
 
-      // 2. 専用下書き枠に1枠のみ上書き保存（本保存ストアおよび pruneImages と完全非干渉）
+      // 2. 専用下書き枠に1枠のみ上書き保存
       await saveDraftImage(blob, dataUrl);
     } catch (err: unknown) {
       console.error('Image processing failed:', err);
@@ -179,11 +252,12 @@ export const AiSyncView: React.FC = () => {
     }
   };
 
-  // 下書き写真の明示的な取り消し・消去（中断ゴミの蓄積防止: 条件1）
+  // 下書き写真の明示的な取り消し・消去
   const handleClearPhoto = async () => {
     await clearDraftImage();
     setCurrentBlob(null);
     setPreviewDataUrl(null);
+    setNormalizedPreviewUrl(null);
     setIsDraftRestored(false);
     setImageUploadStatus({ type: 'idle', text: '' });
     if (fileInputRef.current) {
@@ -191,19 +265,59 @@ export const AiSyncView: React.FC = () => {
     }
   };
 
-  // リアルタイムに JSON テキストを監視し、有効な単一アイテムなら最新オブジェクトで同期。
-  // 不正・不完全または空入力になった場合は直ちに null にクリアして古いオブジェクトの残存・誤適用を防止（レビュー指摘対応）
+  // リアルタイムに JSON テキストを監視し、有効な単一アイテムまたは一括色更新なら同期
   useEffect(() => {
-    const parseRes = parseSingleItemJson(jsonInput);
-    if (parseRes.success && parseRes.item) {
+    const parseRes = parseSyncInputJson(jsonInput);
+    if (parseRes.kind === 'single' && parseRes.item) {
       setDraftEditItem(parseRes.item);
+      setDraftCropBox(parseRes.cropBox ?? null);
+      if (parseRes.cropBox && normalizeCropBox(parseRes.cropBox)) {
+        setApplySmartCrop(true);
+      }
+      setDraftBatchUpdates(null);
+    } else if (parseRes.kind === 'batch_color' && parseRes.batchColorUpdates) {
+      setDraftBatchUpdates(parseRes.batchColorUpdates);
+      setDraftEditItem(null);
+      setDraftCropBox(null);
+      setIsCategorySwitched(false);
     } else {
       setDraftEditItem(null);
+      setDraftCropBox(null);
+      setDraftBatchUpdates(null);
       setIsCategorySwitched(false);
     }
   }, [jsonInput]);
 
-  // Step 3 確認パネルで種別を手動切替（相性3配列の自動クリア & 注記表示: 条件2）
+  // 下書き写真と切り抜き設定の変更に応じて、リアルタイムに3:4正規化プレビューを生成
+  useEffect(() => {
+    let isMounted = true;
+    if (!previewDataUrl || typeof document === 'undefined') {
+      setNormalizedPreviewUrl(null);
+      return;
+    }
+
+    const effectiveCropBox =
+      applySmartCrop && draftCropBox && normalizeCropBox(draftCropBox) ? draftCropBox : null;
+
+    cropAndNormalizeGarmentImage(previewDataUrl, effectiveCropBox, 0.06, 0.85)
+      .then((res) => {
+        if (isMounted) {
+          setNormalizedPreviewUrl(res.dataUrl);
+        }
+      })
+      .catch((err) => {
+        console.warn('Failed to generate 3:4 preview:', err);
+        if (isMounted) {
+          setNormalizedPreviewUrl(null);
+        }
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [previewDataUrl, draftCropBox, applySmartCrop]);
+
+  // Step 3 確認パネルで種別を手動切替（相性3配列の自動クリア & 注記表示）
   const handleSwitchCategory = (targetCategory: Category) => {
     if (!draftEditItem || draftEditItem.category === targetCategory) return;
     const switched = switchDraftItemCategory(
@@ -227,6 +341,23 @@ export const AiSyncView: React.FC = () => {
     setJsonInput(JSON.stringify(updated, null, 2));
   };
 
+  // 寸法（GarmentMeasurements）の微修正ハンドラー
+  const handleUpdateMeasurement = (key: keyof GarmentMeasurements, rawVal: string) => {
+    if (!draftEditItem) return;
+    const currentM: GarmentMeasurements = { ...(draftEditItem.measurements || {}) };
+    if (rawVal.trim() === '') {
+      delete currentM[key];
+    } else {
+      const num = parseFloat(rawVal);
+      if (!isNaN(num)) {
+        currentM[key] = num;
+      }
+    }
+    const hasKeys = Object.keys(currentM).length > 0;
+    const updatedM = hasKeys ? currentM : undefined;
+    handleUpdateDraftField('measurements', updatedM);
+  };
+
   // 全自動判定用プロンプトの生成とコピー
   const handleCopyPromptAndData = () => {
     const allShirts = mergedClosetData.items.filter((item) => item.category === 'shirt');
@@ -235,14 +366,14 @@ export const AiSyncView: React.FC = () => {
     const shirtsSummary = allShirts
       .map(
         (s) =>
-          `- [${s.id}] ${s.name}（${s.seasonSleeve}、ドレス度${s.dressScore}、快適度${s.comfortScore}）: ${s.notes}`
+          `- [${s.id}] ${s.name}（色: ${s.color ?? '未設定'}、${s.seasonSleeve}、ドレス度${s.dressScore}、快適度${s.comfortScore}）: ${s.notes}`
       )
       .join('\n');
 
     const pantsSummary = allPants
       .map(
         (p) =>
-          `- [${p.id}] ${p.name}（${p.seasonSleeve}、ドレス度${p.dressScore}、快適度${p.comfortScore}）: ${p.notes}`
+          `- [${p.id}] ${p.name}（色: ${p.color ?? '未設定'}、${p.seasonSleeve}、ドレス度${p.dressScore}、快適度${p.comfortScore}）: ${p.notes}`
       )
       .join('\n');
 
@@ -269,6 +400,34 @@ export const AiSyncView: React.FC = () => {
 添付された服の写真を解析し、以下の指示および現在のワードローブ一覧と照らし合わせ、相性・NGを判定した【新規1着分のみのJSONオブジェクト】を出力してください。
 （※全体データではなく、新規追加する1着分のみを単一JSONオブジェクトとして出力してください。双方向のリンク更新はアプリ側で自動マージされます）
 
+### 登録写真の基準化指示（色・寸法・切り抜き）
+1. **ホワイトバランスと12色パレット判定**:
+   - 写真内に置かれたA4白用紙（210×297mm、白）をホワイトバランスの基準とし、照明の色かぶりを差し引いたうえで服の色（color）を判定してください。
+   - 服の色は必ず次の【12色パレット】から1つ選択してください:
+     ${GARMENT_COLOR_PALETTE.join('／')}
+   - 色の境界判定アンカー:
+${GARMENT_COLOR_ANCHOR_GUIDE}
+   - 新規アイテムのアイテム名（name）の色表記も、12色パレットの語彙に寄せて命名してください（例: 「ネイビー」ではなく「濃紺」）。
+
+2. **A4用紙を基準とした実寸（cm）推定**:
+   - 写真内にA4白用紙（長辺297mm × 短辺210mm）が確認できる場合、用紙を物差しとして主要寸法（実寸目安）を cm（10〜200cm、0.5cm刻み）で推定し、"measurements" に格納してください。
+     - シャツ（shirt）の場合:
+       - bodyLength: 着丈（衿リブ下〜裾）
+       - chestWidth: 身幅（両脇下の直線距離）
+       - shoulderWidth: 肩幅（両肩先の直線距離）
+       - sleeveLength: 袖丈（肩先〜袖口）
+     - パンツ（pants）の場合:
+       - waist: ウエスト内周目安（平置き×2）
+       - inseam: 股下（股の十字縫い目〜裾）
+       - totalLength: 総丈（ウエスト上端〜裾）
+       - hemWidth: 裾幅（裾の直線距離）
+   - 写真内にA4用紙が写っていない場合は推定せず、"measurements": null としてください（推定値は買い物比較用の目安です）。
+
+3. **服の領域座標（cropBox）の出力**:
+   - 写真からA4用紙や周囲の床・背景を除いた「服本体のみの外接矩形」を、画像全体の幅・高さを 0〜1000 とした正規化整数座標で "cropBox" として出力してください:
+     {"ymin": 上端0..1000, "xmin": 左端0..1000, "ymax": 下端0..1000, "xmax": 右端0..1000}
+   - 服領域が判別できない場合は "cropBox": null としてください。
+
 ### 新規追加する服の判定指示
 ${categoryInstruction}
 - IDと画像パスの決定順序:
@@ -290,9 +449,9 @@ ${pantsSummary}
 ${wifeNgSummary}
 
 ### 判定・スタイリング絶対原則（奥様からのダメ出しを完全回避すること）
-1. **同系色・濃紺同士の禁止**: 上下ともに濃紺・インディゴになる組み合わせ（例: S1 濃インディゴ × P1/P5/P6/P8/P11 濃紺系パンツ）は作業着・パジャマに見えるため絶対NG（ngIdsに追加、ngReasonを明記）。
-2. **淡青×青デニムの禁止**: S3 サックスシャンブレーに薄青・ブルーデニム（P4/P7/P15）を合わせると全身が水色で繋がり休日のおじさん感が出るため絶対NG。
-3. **淡色×淡色の膨張禁止**: S8 生成りワークシャツに淡いグレージュや薄グレー（P3/P9/P13）を合わせると輪郭がぼやけて膨張して見えるため絶対NG。
+1. **同系色・濃紺同士の禁止**: 上下ともに濃紺・インディゴになる組み合わせ（例: S1 濃紺 × P1/P5/P6/P8/P11 濃紺系パンツ）は作業着・パジャマに見えるため絶対NG（ngIdsに追加、ngReasonを明記）。
+2. **淡青×青デニムの禁止**: S3 サックス（淡青）にブルーデニム（P4/P7/P15: ブルー）を合わせると全身が水色で繋がり休日のおじさん感が出るため絶対NG。
+3. **淡色×淡色の膨張禁止**: S8 生成りに淡いグレージュやライトグレー（P3/P9/P13）を合わせると輪郭がぼやけて膨張して見えるため絶対NG。
 4. **柄×柄の完全禁止**: チェック・ストライプ・小紋柄シャツ（S5/S6/S9）と柄パンツ（P5/P10/P11）は絶対NG。柄パンツは白無地シャツ（S2/S4/S7）で消化すること。
 5. **TPO分離と出社スウェット除外**:
    - 出社時（officeRecommendIds）: ドレス度 3.5 以上を優先。スウェット・ジョガー系（P2/P4/P13/P14/P15：ドレス度 3.0 未満）は出社候補から除外。
@@ -301,50 +460,28 @@ ${wifeNgSummary}
 7. **排他制約**: officeRecommendIds / remoteRecommendIds と ngIds に同一のIDを重複して含めないでください。相手カテゴリの現存IDのみを指定してください。
 
 ### 出力スキーマ厳密制約（新規1着分の単一JSONオブジェクトのみを出力すること）
-${
-  manualCategory === 'shirt'
-    ? `\`\`\`json
-{
-  "id": "${nextShirtId}",
-  "category": "shirt",
-  "name": "${manualItemName.trim() || '写真から判定した名称'}",
-  "imageUrl": "/images/${nextShirtId}.jpg",
-  "seasonSleeve": "${manualSleeve || '写真から判定した季節袖丈'}",
-  "dressScore": 4.0,
-  "comfortScore": 4.0,
-  "officeRecommendIds": [],
-  "remoteRecommendIds": [],
-  "ngIds": [],
-  "ngReason": "なし（またはNG理由）",
-  "notes": "写真から読み取った素材感・シルエット・役割の簡潔なメモ"
-}
-\`\`\``
-    : manualCategory === 'pants'
-    ? `\`\`\`json
-{
-  "id": "${nextPantsId}",
-  "category": "pants",
-  "name": "${manualItemName.trim() || '写真から判定した名称'}",
-  "imageUrl": "/images/${nextPantsId}.jpg",
-  "seasonSleeve": "${manualSleeve || '写真から判定した季節袖丈'}",
-  "dressScore": 4.0,
-  "comfortScore": 4.0,
-  "officeRecommendIds": [],
-  "remoteRecommendIds": [],
-  "ngIds": [],
-  "ngReason": "なし（またはNG理由）",
-  "notes": "写真から読み取った素材感・シルエット・役割の簡潔なメモ"
-}
-\`\`\``
-    : `\`\`\`json
+\`\`\`json
 {
   "id": "写真からシャツと判定した場合は \\"${nextShirtId}\\"、パンツと判定した場合は \\"${nextPantsId}\\"",
   "category": "写真から判定した種別（\\"shirt\\" または \\"pants\\"）",
-  "name": "写真の視覚的特徴（色・柄・素材感）から命名した適切な日本語名称",
+  "name": "12色パレットの語彙に寄せた適切な日本語名称",
+  "color": "12色パレット（白／生成り／黒／チャコール／ミディアムグレー／ライトグレー／グレージュ／濃紺／ブルー／淡青／オリーブ／ブラウン）から1つ選択",
   "imageUrl": "写真からシャツと判定した場合は \\"/images/${nextShirtId}.jpg\\"、パンツと判定した場合は \\"/images/${nextPantsId}.jpg\\"",
   "seasonSleeve": "写真から判定した季節・袖丈（シャツ: 長袖・通年 / 春夏秋・七分袖 / 春夏・半袖 / 秋冬・長袖、パンツ: 通年 / 春夏秋 / 春夏 / 秋冬）",
   "dressScore": 4.0,
   "comfortScore": 4.0,
+  "measurements": {
+    "bodyLength": 72.0,
+    "chestWidth": 54.0,
+    "shoulderWidth": 46.0,
+    "sleeveLength": 60.0
+  },
+  "cropBox": {
+    "ymin": 120,
+    "xmin": 180,
+    "ymax": 890,
+    "xmax": 820
+  },
   "officeRecommendIds": ["相手カテゴリの現存ID"],
   "remoteRecommendIds": ["相手カテゴリの現存ID"],
   "ngIds": ["相手カテゴリの現存ID"],
@@ -356,22 +493,87 @@ ${
 ※重要制約（アプリの自動検証必須条件）:
 - シャツ（shirt）と判定した場合は、必ず id: "${nextShirtId}"、imageUrl: "/images/${nextShirtId}.jpg" としてください。
 - パンツ（pants）と判定した場合は、必ず id: "${nextPantsId}"、imageUrl: "/images/${nextPantsId}.jpg" としてください。
-- category と id の接頭辞（S / P）の不一致は、アプリのデータ保護検証によって自動で拒否されます。`
-}
-
-出力形式: 説明文や前置きは一切含めず、上記スキーマを満たす単一の有効なJSONコードブロック（\`\`\`json ... \`\`\`）のみを出力してください。`;
+- category と id の接頭辞（S / P）の不一致は、アプリのデータ保護検証によって自動で拒否されます。
+- A4用紙が確認できない場合、measurements は null としてください。
+- 出力形式: 説明文や前置きは一切含めず、上記スキーマを満たす単一の有効なJSONコードブロック（\`\`\`json ... \`\`\`）のみを出力してください。`;
 
     navigator.clipboard.writeText(promptText);
     setCopiedPrompt(true);
     setTimeout(() => setCopiedPrompt(false), 3000);
   };
 
+  // 既存服の色パレット一括相談プロンプトの生成とコピー
+  const handleCopyBatchColorPrompt = () => {
+    const items = mergedClosetData.items;
+    const itemsList = items
+      .map(
+        (item) =>
+          `- [${item.id}] ${item.name}（カテゴリ: ${
+            item.category === 'shirt' ? 'シャツ' : 'パンツ'
+          }、現在の色: ${item.color || '未確定'}）: ${item.notes || 'メモなし'}`
+      )
+      .join('\n');
+
+    const promptText = `あなたは40代後半男性専属のプロスタイリストAIです。
+以下は現在アプリに登録されている全${items.length}着の服リストです。
+各アイテムの名称・メモ・カテゴリから、照明の色かぶりや曖昧さを排除し、下記の12色パレットおよび境界判定アンカーに最も合致する【確定色】を判定してください。
+
+### 12色パレット
+${GARMENT_COLOR_PALETTE.join('／')}
+
+### 境界判定アンカー（色の基準）
+${GARMENT_COLOR_ANCHOR_GUIDE}
+
+### 対象アイテム一覧（全${items.length}着）
+${itemsList}
+
+### 出力スキーマ厳密制約（事故防止ルール・名前保護）
+1. 各要素は必ず "id" と "color" の2項目のみとし、"name" などの他フィールドは絶対に出力しないでください（名前の書き換え事故を完全に防止するためです）。
+2. 色は必ず12色パレット（${GARMENT_COLOR_PALETTE.join('／')}）から選んでください。「ネイビー」は「濃紺」に統合されているため「濃紺」を指定してください。
+3. 出力形式: 説明文や前置きは含めず、以下のJSONコードブロックのみを出力してください。
+\`\`\`json
+{
+  "colorUpdates": [
+    { "id": "S1", "color": "濃紺" },
+    { "id": "S2", "color": "白" }
+  ]
+}
+\`\`\``;
+
+    navigator.clipboard.writeText(promptText);
+    setCopiedBatchPrompt(true);
+    setTimeout(() => setCopiedBatchPrompt(false), 3000);
+  };
+
   // Step 3: JSON適用・自動マージ・写真の本保存・下書き消去・GASアップロード連動
   const handleApplyJson = async () => {
     setImportStatus(null);
-    // 最新の入力テキストをパースし、不完全・構文エラーの場合は適用をブロック（古い draftEditItem の誤適用防止）
-    const parseRes = parseSingleItemJson(jsonInput);
-    if (!parseRes.success || !parseRes.item) {
+    const parseRes = parseSyncInputJson(jsonInput);
+
+    // 一括色更新の適用
+    if (parseRes.kind === 'batch_color') {
+      const payload = JSON.stringify({
+        colorUpdates: parseRes.batchColorUpdates ?? [],
+      });
+      const res = importCustomData(payload);
+      if (res.success) {
+        setImportStatus({
+          type: 'success',
+          message: `全${res.updatedPeersCount || 0}着の色パレットを一括更新しました！（既存のアイテム名・相性は保護されています）`,
+        });
+        setJsonInput('');
+        setDraftBatchUpdates(null);
+      } else {
+        setImportStatus({
+          type: 'error',
+          message: res.error || '色パレット一括更新に失敗しました。形式を確認してください。',
+        });
+      }
+      return;
+    }
+
+    // 単一アイテムの適用
+    if (!parseRes.item || parseRes.kind !== 'single') {
       setImportStatus({
         type: 'error',
         message: parseRes.error || '有効な単一アイテムのJSONテキストを貼り付けてください。',
@@ -379,38 +581,83 @@ ${
       return;
     }
 
-    const jsonString = JSON.stringify(parseRes.item);
+    // 微調整中の draftEditItem を採用
+    const candidateItem = draftEditItem ? { ...draftEditItem } : { ...parseRes.item };
+
+    // 色パレットの必須検証
+    if (!candidateItem.color || !isValidGarmentColor(candidateItem.color)) {
+      setImportStatus({
+        type: 'error',
+        message: `色が未設定またはパレット外です。12色パレット（${GARMENT_COLOR_PALETTE.join(', ')}）から色を選択してください。`,
+      });
+      return;
+    }
+
+    // 寸法値の健全化（10〜200cmの範囲外があれば除去・0.5cm刻み正規化）
+    candidateItem.measurements = validateGarmentMeasurements(
+      candidateItem.measurements,
+      candidateItem.category
+    );
+
+    // cropBox は画像切り抜き用メタデータのため、アイテムスキーマから除去
+    delete (candidateItem as any).cropBox;
+
+    const jsonString = JSON.stringify(candidateItem);
     const res = importCustomData(jsonString);
 
     if (res.success) {
       const addedItem = res.addedItem;
       let extraMsg = '';
 
-      // 写真の下書き本保存・GASアップロード・下書き消去（条件1）
+      // 写真の下書き本保存・3:4正規化・GASアップロード・下書き消去
       if (currentBlob && addedItem) {
         try {
-          // 1. 確定したID（例: P16）で本保存ストアへ永続化 (0ms)
-          await saveImageBlob(addedItem.id, currentBlob, Date.now());
+          const effectiveCropBox =
+            applySmartCrop && draftCropBox && normalizeCropBox(draftCropBox) ? draftCropBox : null;
+          let finalBlob = currentBlob;
+          let finalDataUrl = previewDataUrl;
+          let isNormalized = false;
 
-          // 2. 専用下書き枠を消去（条件1: 中断ゴミの蓄積防止）
+          if (previewDataUrl && typeof document !== 'undefined') {
+            try {
+              const normalized = await cropAndNormalizeGarmentImage(
+                previewDataUrl,
+                effectiveCropBox,
+                0.06,
+                0.85
+              );
+              finalBlob = normalized.blob;
+              finalDataUrl = normalized.dataUrl;
+              isNormalized = true;
+            } catch (cropErr) {
+              console.warn('Smart crop failed, fallback to original blob:', cropErr);
+            }
+          }
+
+          // 1. 確定したIDで画像を本保存ストアへ永続化 (0ms)
+          await saveImageBlob(addedItem.id, finalBlob, Date.now());
+
+          // 2. 専用下書き枠を消去（中断ゴミの蓄積防止）
           await clearDraftImage();
 
+          const label = isNormalized ? '3:4正規化版' : '元画像フォールバック';
+
           // 3. GAS 設定がある場合は Google ドライブ正本フォルダへ自動アップロード
-          if (gasConfig.webAppUrl && previewDataUrl) {
+          if (gasConfig.webAppUrl && finalDataUrl) {
             setImageUploadStatus({
               type: 'uploading',
-              text: `Google ドライブへ「${addedItem.id}.jpg」を自動アップロード中...`,
+              text: `Google ドライブへ「${addedItem.id}.jpg（${label}）」を自動アップロード中...`,
             });
             uploadImageToGas({
               webAppUrl: gasConfig.webAppUrl,
               secretToken: gasConfig.secretToken,
               itemId: addedItem.id,
-              dataUrl: previewDataUrl,
+              dataUrl: finalDataUrl,
             }).then((uploadRes) => {
               if (uploadRes.ok) {
                 setImageUploadStatus({
                   type: 'success',
-                  text: `Google ドライブへ「${addedItem.id}.jpg」として自動保存しました！`,
+                  text: `Google ドライブへ「${addedItem.id}.jpg（${label}）」として自動保存しました！`,
                 });
               } else {
                 setImageUploadStatus({
@@ -419,9 +666,13 @@ ${
                 });
               }
             });
-            extraMsg = '（Google ドライブへ自動アップロード中）';
+            extraMsg = isNormalized
+              ? '（Google ドライブへ3:4正規化画像を自動アップロード中）'
+              : '（※画像正規化に失敗したため、Google ドライブへ元画像を自動アップロード中）';
           } else {
-            extraMsg = `（端末内 IndexedDB に「${addedItem.id}」として保存完了）`;
+            extraMsg = isNormalized
+              ? `（端末内 IndexedDB に「${addedItem.id}（3:4正規化版）」として保存完了）`
+              : `（※画像正規化に失敗したため、端末内 IndexedDB に「${addedItem.id}（元画像）」として保存完了）`;
           }
         } catch (imgErr: unknown) {
           console.error('Failed to finalize draft image:', imgErr);
@@ -438,6 +689,8 @@ ${
       // フォームのクリーンアップ
       setJsonInput('');
       setDraftEditItem(null);
+      setDraftCropBox(null);
+      setNormalizedPreviewUrl(null);
       setCurrentBlob(null);
       setPreviewDataUrl(null);
       setIsDraftRestored(false);
@@ -488,11 +741,11 @@ ${
           <span>服の追加・AIおまかせ登録 (Add & AI Sync)</span>
         </div>
         <p className="text-xs text-slate-300 leading-relaxed">
-          新しい服の写真を選ぶだけで、Gemini が種別・名前・袖丈・スコア・既存服との相性を全自動判定します。事前の種別選択や名前入力は不要です。
+          新しい服の写真を選ぶだけで、Gemini が種別・A4参照の色パレット・寸法・名前・切り抜き範囲・既存服との相性を全自動判定します。事前の種別選択や名前入力は不要です。
         </p>
       </div>
 
-      {/* Step 1: Photo selection, draft storage & restore (条件1) */}
+      {/* Step 1: Photo selection, draft storage & restore */}
       <section className="bg-slate-800/80 border border-slate-700/70 rounded-2xl p-4 space-y-3">
         <div className="flex items-center gap-2">
           <span className="w-6 h-6 rounded-full bg-blue-600 text-white font-bold text-xs flex items-center justify-center">
@@ -502,6 +755,13 @@ ${
             <Camera className="w-4 h-4 text-sky-400" />
             服の写真を選択（自動下書き保存）
           </h3>
+        </div>
+
+        {/* A4 Paper Guide Banner */}
+        <div className="pl-8">
+          <div className="p-2.5 bg-blue-950/40 border border-blue-800/40 rounded-xl text-xs text-blue-300 leading-relaxed">
+            💡 服の隣に <strong>A4の白い紙（210×297mm）</strong> を置いて撮影すると、AIがA4用紙を参照して色判定（色かぶり考慮）・実寸（cm）推定・服だけの自動切り抜き（3:4配置）を行います。
+          </div>
         </div>
 
         <p className="text-xs text-slate-300 leading-relaxed pl-8">
@@ -595,7 +855,7 @@ ${
                   </p>
                 ) : (
                   <p className="text-[11px] text-slate-400 leading-relaxed">
-                    ※ JSON取り込み成功時に確定ID（{nextShirtId} または {nextPantsId}）で本保存・ドライブ同期されます。
+                    ※ JSON取り込み成功時に確定ID（{nextShirtId} または {nextPantsId}）で3:4正規化本保存・ドライブ同期されます。
                   </p>
                 )}
               </div>
@@ -778,7 +1038,7 @@ ${
         </div>
       </section>
 
-      {/* Step 3: Apply JSON, Confirmation & Fine-tuning Panel (条件2) */}
+      {/* Step 3: Apply JSON, Confirmation & Fine-tuning Panel */}
       <section className="bg-slate-800/80 border border-slate-700/70 rounded-2xl p-4 space-y-4">
         <div className="flex items-center gap-2">
           <span className="w-6 h-6 rounded-full bg-blue-600 text-white font-bold text-xs flex items-center justify-center">
@@ -791,21 +1051,80 @@ ${
         </div>
 
         <p className="text-xs text-slate-300 leading-relaxed pl-8">
-          Geminiから出力された【1着分のJSON】を貼り付けると、下に確認・微修正パネルが表示されます。内容を確認してマージ＆保存してください。
+          Geminiから出力された【1着分のJSON】（または既存服の色一括更新JSON）を貼り付けると、下に確認・微修正パネルが表示されます。
         </p>
 
         <div className="pl-8 space-y-3">
           <textarea
             value={jsonInput}
             onChange={(e) => setJsonInput(e.target.value)}
-            placeholder={`{\n  "id": "${nextShirtId} または ${nextPantsId}",\n  "category": "shirt または pants",\n  "name": "...",\n  "officeRecommendIds": [...],\n  ...\n}`}
+            placeholder={`{\n  "id": "${nextShirtId} または ${nextPantsId}",\n  "category": "shirt または pants",\n  "color": "濃紺",\n  "name": "...",\n  "measurements": { ... },\n  "cropBox": { ... },\n  ...\n}`}
             rows={5}
             className="w-full p-3 rounded-xl bg-slate-900 border border-slate-700 text-xs font-mono text-slate-200 placeholder-slate-600 focus:outline-none focus:border-blue-500"
           />
 
-          {/* Inline Confirmation & Fine-tuning Panel (条件2) */}
+          {/* Case A: Batch Color Updates Preview Card */}
+          {draftBatchUpdates && (
+            <div className="p-4 bg-slate-900/95 border border-amber-500/50 rounded-2xl space-y-3 shadow-2xl">
+              <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+                <span className="text-xs font-bold text-amber-300 flex items-center gap-1.5">
+                  <Palette className="w-4 h-4 text-amber-400" />
+                  色パレット一括更新プレビュー（全{draftBatchUpdates.length}着）
+                </span>
+                <span className="text-[10px] text-slate-400">※名前や相性リストは変更されません</span>
+              </div>
+
+              <div className="max-h-60 overflow-y-auto space-y-1.5 pr-1">
+                {draftBatchUpdates.map((update) => {
+                  const existing = mergedClosetData.items.find(
+                    (i) => i.id.toUpperCase() === update.id.toUpperCase()
+                  );
+                  const isColorValid = isValidGarmentColor(update.color);
+                  return (
+                    <div
+                      key={update.id}
+                      className="p-2 rounded-xl bg-slate-950 border border-slate-800 flex items-center justify-between text-xs"
+                    >
+                      <div className="min-w-0 flex items-center gap-2">
+                        <span className="font-bold text-blue-400 font-mono">{update.id}</span>
+                        <span className="text-slate-300 truncate">
+                          {existing ? existing.name : '（未登録アイテム）'}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-1.5 flex-shrink-0 font-medium">
+                        <span className="text-slate-400 text-[11px]">
+                          {existing?.color ? existing.color : '未設定'}
+                        </span>
+                        <span className="text-slate-500">→</span>
+                        <span
+                          className={`font-bold px-1.5 py-0.5 rounded text-[11px] ${
+                            isColorValid
+                              ? 'bg-amber-950 text-amber-300 border border-amber-800'
+                              : 'bg-rose-950 text-rose-300 border border-rose-800'
+                          }`}
+                        >
+                          🎨 {update.color}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <button
+                type="button"
+                onClick={handleApplyJson}
+                className="w-full min-h-[44px] py-3 px-4 rounded-xl text-xs font-bold bg-amber-600 hover:bg-amber-500 text-white shadow-lg shadow-amber-900/40 flex items-center justify-center gap-2 active:scale-[0.98] transition-all"
+              >
+                <Check className="w-4 h-4" />
+                <span>💾 色パレット一括更新を適用（{draftBatchUpdates.length}着）</span>
+              </button>
+            </div>
+          )}
+
+          {/* Case B: Single Item Inline Confirmation & Fine-tuning Panel */}
           {draftEditItem && (
-            <div className="p-4 bg-slate-900/95 border border-indigo-500/50 rounded-2xl space-y-3.5 shadow-2xl">
+            <div className="p-4 bg-slate-900/95 border border-indigo-500/50 rounded-2xl space-y-4 shadow-2xl">
               <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-2.5">
                 <div className="flex items-center gap-2">
                   <span className="text-xs font-bold text-indigo-300 flex items-center gap-1.5">
@@ -818,7 +1137,7 @@ ${
                 </span>
               </div>
 
-              {/* Category Switcher (条件2: 種別切替時に相性3配列を自動クリア & 注記表示) */}
+              {/* 1. Category Switcher */}
               <div>
                 <label className="text-[11px] font-bold text-slate-300 mb-1.5 block">
                   種別（もしAIの判定が違っていればここで切替）
@@ -848,7 +1167,6 @@ ${
                   </button>
                 </div>
 
-                {/* Alert Banner when category is switched (条件2) */}
                 {isCategorySwitched && (
                   <div className="mt-2.5 p-2.5 bg-amber-950/60 border border-amber-800/80 rounded-xl flex items-start gap-2 text-xs text-amber-300">
                     <AlertCircle className="w-4 h-4 flex-shrink-0 text-amber-400 mt-0.5" />
@@ -859,7 +1177,176 @@ ${
                 )}
               </div>
 
-              {/* Name input */}
+              {/* 2. Color Palette Chips */}
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="text-[11px] font-bold text-slate-300 flex items-center gap-1.5">
+                    <Palette className="w-3.5 h-3.5 text-blue-400" />
+                    <span>色パレット（12色から1つ選択）</span>
+                  </label>
+                  <span className="text-[10px] text-blue-400 font-mono">
+                    選択中: {draftEditItem.color || '未設定'}
+                  </span>
+                </div>
+
+                {/* Validation warning if color is missing or invalid */}
+                {(!draftEditItem.color || !isValidGarmentColor(draftEditItem.color)) && (
+                  <div className="mb-2 p-2 bg-amber-950/60 border border-amber-800/70 rounded-xl flex items-center gap-2 text-xs text-amber-300">
+                    <AlertCircle className="w-4 h-4 flex-shrink-0 text-amber-400" />
+                    <span>⚠️ 色が未設定またはパレット外です。下の12色から該当する色を1つタップしてください。</span>
+                  </div>
+                )}
+
+                <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+                  {GARMENT_COLOR_PALETTE.map((c) => {
+                    const isSelected = draftEditItem.color === c;
+                    const chipStyle = getColorForPalette(c);
+                    return (
+                      <button
+                        key={c}
+                        type="button"
+                        onClick={() => handleUpdateDraftField('color', c)}
+                        className={`min-h-[44px] py-2 px-2.5 rounded-xl text-xs font-bold border flex items-center justify-center gap-2 transition-all ${
+                          isSelected
+                            ? 'bg-blue-600/30 text-white border-blue-400 ring-2 ring-blue-500/60 shadow-lg'
+                            : 'bg-slate-950/80 text-slate-300 border-slate-700/80 hover:border-slate-500 hover:text-white'
+                        }`}
+                      >
+                        <span
+                          className="w-3.5 h-3.5 rounded-full flex-shrink-0 shadow-inner"
+                          style={{
+                            backgroundColor: chipStyle.fill,
+                            border: `1.5px solid ${chipStyle.stroke}`,
+                          }}
+                        />
+                        <span>{c}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* 3. Measurements Inputs */}
+              <div>
+                <div className="flex flex-wrap items-center justify-between gap-1 mb-1.5">
+                  <label className="text-[11px] font-bold text-slate-300 flex items-center gap-1.5">
+                    <Ruler className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>実寸目安（cm）</span>
+                  </label>
+                  <span className="text-[10px] text-slate-400">
+                    有効範囲：10〜200cm（0.5cm刻み・空欄で未設定）
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  {(draftEditItem.category === 'shirt'
+                    ? SHIRT_MEASUREMENT_FIELDS
+                    : PANTS_MEASUREMENT_FIELDS
+                  ).map((f) => {
+                    const fieldVal = draftEditItem.measurements?.[f.key];
+                    const isOutOfRange =
+                      fieldVal !== undefined && (fieldVal < 10 || fieldVal > 200);
+                    return (
+                      <div key={f.key} className="space-y-1">
+                        <label className="text-[10px] font-bold text-slate-300 flex items-center justify-between px-0.5">
+                          <span>{f.label}</span>
+                          <span className="text-[9px] text-slate-500">{f.desc}</span>
+                        </label>
+                        <div className="relative">
+                          <input
+                            type="number"
+                            min={10}
+                            max={200}
+                            step={0.5}
+                            value={fieldVal ?? ''}
+                            onChange={(e) => handleUpdateMeasurement(f.key, e.target.value)}
+                            placeholder="未設定"
+                            className={`w-full min-h-[44px] p-2.5 pr-8 rounded-xl bg-slate-950 border text-xs text-white focus:outline-none focus:border-blue-500 font-mono ${
+                              isOutOfRange
+                                ? 'border-amber-500/80 text-amber-200'
+                                : 'border-slate-700'
+                            }`}
+                          />
+                          <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[10px] text-slate-500 font-mono pointer-events-none">
+                            cm
+                          </span>
+                        </div>
+                        {isOutOfRange && (
+                          <p className="text-[9px] text-amber-400 px-0.5">
+                            ※10〜200cm外（保存時除外）
+                          </p>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* 4. Smart Cropping Preview & Toggle */}
+              {previewDataUrl && (
+                <div className="p-3 bg-slate-950/80 rounded-xl border border-slate-800 space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-bold text-slate-300 flex items-center gap-1.5">
+                      <Crop className="w-3.5 h-3.5 text-blue-400" />
+                      <span>3:4 画像正規化プレビュー</span>
+                    </span>
+                    {draftCropBox && normalizeCropBox(draftCropBox) ? (
+                      <span className="text-[10px] text-emerald-400 bg-emerald-950/80 border border-emerald-800/80 px-1.5 py-0.5 rounded font-mono">
+                        服領域座標あり
+                      </span>
+                    ) : (
+                      <span className="text-[10px] text-slate-400 bg-slate-900 border border-slate-800 px-1.5 py-0.5 rounded font-mono">
+                        全体配置フォールバック
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Toggle Checkbox */}
+                  <label className="min-h-[44px] flex items-center gap-2.5 p-2 rounded-xl bg-slate-900 border border-slate-800 cursor-pointer hover:bg-slate-850 transition-colors">
+                    <input
+                      type="checkbox"
+                      checked={applySmartCrop}
+                      onChange={(e) => setApplySmartCrop(e.target.checked)}
+                      className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500 bg-slate-950 border-slate-700"
+                    />
+                    <div className="text-xs text-slate-200">
+                      <span className="font-bold">✂️ 自動切り抜きを適用</span>
+                      <span className="text-[10px] text-slate-400 ml-1.5">
+                        （A4用紙を除いて服本体を中心に3:4配置）
+                      </span>
+                    </div>
+                  </label>
+
+                  {/* Preview Image */}
+                  <div className="flex items-center gap-3 pt-1">
+                    <div className="w-20 h-28 rounded-xl overflow-hidden bg-slate-950 border border-slate-700 flex-shrink-0 relative shadow-inner">
+                      {normalizedPreviewUrl ? (
+                        <img
+                          src={normalizedPreviewUrl}
+                          alt="3:4正規化プレビュー"
+                          className="w-full h-full object-contain"
+                        />
+                      ) : (
+                        <div className="w-full h-full flex items-center justify-center text-[10px] text-slate-500">
+                          生成中...
+                        </div>
+                      )}
+                    </div>
+                    <div className="text-[11px] text-slate-400 leading-relaxed space-y-1">
+                      <div className="text-white font-semibold">
+                        {applySmartCrop && draftCropBox && normalizeCropBox(draftCropBox)
+                          ? '服本体の自動切り抜き（3:4 900×1200px）'
+                          : '全体画像の中央配置（3:4 900×1200px 余白フォールバック）'}
+                      </div>
+                      <p>
+                        確定時にこの3:4画像が IndexedDB と Google ドライブ正本へ保存されます。
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* 5. Name input */}
               <div>
                 <label className="text-[11px] font-bold text-slate-300 mb-1 block">
                   アイテム名
@@ -872,7 +1359,7 @@ ${
                 />
               </div>
 
-              {/* Season Sleeve presets */}
+              {/* 6. Season Sleeve presets */}
               <div>
                 <label className="text-[11px] font-bold text-slate-300 mb-1.5 flex items-center justify-between">
                   <span>季節・袖丈</span>
@@ -904,7 +1391,7 @@ ${
                 </div>
               </div>
 
-              {/* Scores (Dress & Comfort) */}
+              {/* 7. Scores (Dress & Comfort) */}
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="text-[11px] font-bold text-slate-300 mb-1 flex items-center justify-between">
@@ -946,7 +1433,7 @@ ${
                 </div>
               </div>
 
-              {/* Notes input */}
+              {/* 8. Notes input */}
               <div>
                 <label className="text-[11px] font-bold text-slate-300 mb-1 block">
                   メモ・特徴
@@ -959,7 +1446,7 @@ ${
                 />
               </div>
 
-              {/* Compatibility summary chips */}
+              {/* 9. Compatibility summary chips */}
               <div className="p-3 bg-slate-950/80 rounded-xl border border-slate-800 space-y-2">
                 <span className="text-[11px] font-bold text-slate-400 block">相性リストサマリー</span>
                 <div className="flex flex-wrap gap-2 text-xs">
@@ -1000,23 +1487,30 @@ ${
           )}
 
           {/* Main Apply Button */}
-          <button
-            onClick={handleApplyJson}
-            className="w-full min-h-[44px] py-3 px-4 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-900/40 flex items-center justify-center gap-2 active:scale-[0.98] transition-all"
-          >
-            <Check className="w-4 h-4" />
-            <span>💾 JSONを適用して自動マージ・保存</span>
-          </button>
+          {!draftBatchUpdates && (
+            <button
+              onClick={handleApplyJson}
+              className="w-full min-h-[44px] py-3 px-4 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-900/40 flex items-center justify-center gap-2 active:scale-[0.98] transition-all"
+            >
+              <Check className="w-4 h-4" />
+              <span>💾 JSONを適用して自動マージ・保存</span>
+            </button>
+          )}
 
-          {/* Collapsible Backup & Reset Section */}
+          {/* Collapsible Backup, Reset & Batch Color Consult Section */}
           <div className="pt-2 border-t border-slate-800">
             <button
               type="button"
               onClick={() => setIsBackupOpen(!isBackupOpen)}
               className="w-full min-h-[44px] py-2 px-3 rounded-xl bg-slate-900/60 hover:bg-slate-800 text-slate-400 hover:text-slate-300 flex items-center justify-between text-xs transition-colors border border-slate-800/80"
             >
-              <span className="font-semibold text-slate-300">
-                📦 バックアップ・復旧（ファイル保存・初期データに戻す）
+              <span className="font-semibold text-slate-300 flex items-center gap-1.5">
+                <span>📦 バックアップ・復旧（色一括相談・ファイル保存・初期データに戻す）</span>
+                {unconfirmedColorCount > 0 && (
+                  <span className="px-1.5 py-0.2 rounded text-[10px] bg-amber-950 text-amber-300 border border-amber-800 font-bold font-mono">
+                    未確定 {unconfirmedColorCount}着
+                  </span>
+                )}
               </span>
               {isBackupOpen ? (
                 <ChevronUp className="w-4 h-4 text-slate-400" />
@@ -1026,7 +1520,42 @@ ${
             </button>
 
             {isBackupOpen && (
-              <div className="p-3 mt-2 bg-slate-900/80 rounded-xl border border-slate-800 space-y-2.5">
+              <div className="p-3 mt-2 bg-slate-900/80 rounded-xl border border-slate-800 space-y-3">
+                {/* Batch Color Consultation Section */}
+                <div className="p-3 bg-slate-950/80 rounded-xl border border-slate-800 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-amber-300 flex items-center gap-1.5">
+                      <Palette className="w-4 h-4 text-amber-400" />
+                      <span>既存服の色パレット一括相談</span>
+                    </span>
+                    <span className="text-[10px] text-slate-400 font-mono">
+                      全{mergedClosetData.items.length}着中 未確定 {unconfirmedColorCount}着
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-400 leading-relaxed">
+                    全アイテムの情報と12色パレット基準を Gemini に相談するプロンプトです。Geminiから返ってきた
+                    <code>&#123; "colorUpdates": [...] &#125;</code>
+                    を上のStep 3に貼り付けるだけで、名前を変えずに全着の色のみを一括確定できます。
+                  </p>
+                  <button
+                    type="button"
+                    onClick={handleCopyBatchColorPrompt}
+                    className="w-full min-h-[44px] py-2.5 px-3 rounded-xl text-xs font-bold bg-amber-600 hover:bg-amber-500 text-white shadow-md shadow-amber-950 flex items-center justify-center gap-1.5 transition-all"
+                  >
+                    {copiedBatchPrompt ? (
+                      <>
+                        <Check className="w-4 h-4" />
+                        <span>コピー完了！ Gemini に貼って相談してください</span>
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="w-4 h-4" />
+                        <span>🎨 既存服の色パレット一括相談プロンプトをコピー</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+
                 <p className="text-[11px] text-slate-400">
                   通常は上の保存ボタンだけで完了します。ファイルの直接管理や初期化を行う場合のみ使用します。
                 </p>

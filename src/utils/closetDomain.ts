@@ -11,6 +11,7 @@ import type {
   GarmentMeasurements,
   GarmentCropBox,
   BatchColorUpdatesPayload,
+  ColorUpdateItem,
 } from '../types/closet';
 
 /**
@@ -1132,11 +1133,11 @@ export function switchDraftItemCategory(
 }
 
 /**
- * 既存アイテム間の相性配列やスコアを一切破壊せず、全着の color（および指定があれば name）のみを安全に一括更新する純粋関数
+ * 既存アイテム間の相性配列やスコア、名称（name）を一切破壊せず、全着の color のみを安全に一括更新する純粋関数
  */
 export function applyBatchColorUpdates(
   existingData: ClosetData,
-  payload: unknown
+  payload: BatchColorUpdatesPayload | ColorUpdateItem[] | unknown
 ): {
   valid: boolean;
   data?: ClosetData;
@@ -1144,21 +1145,28 @@ export function applyBatchColorUpdates(
   updatedCount?: number;
 } {
   if (!payload || typeof payload !== 'object') {
-    return { valid: false, error: '一括色更新ペイロードがオブジェクトではありません。' };
+    return { valid: false, error: '一括色更新ペイロードがオブジェクトまたは配列ではありません。' };
   }
-  const candidate = payload as Partial<BatchColorUpdatesPayload>;
-  if (!Array.isArray(candidate.colorUpdates)) {
-    return { valid: false, error: 'ペイロードに "colorUpdates" 配列が含まれていません。' };
+
+  // { colorUpdates: [...] } または 素配列 [...] の両方を受理
+  const rawList = Array.isArray(payload)
+    ? payload
+    : Array.isArray((payload as any).colorUpdates)
+    ? (payload as any).colorUpdates
+    : null;
+
+  if (!rawList) {
+    return { valid: false, error: 'ペイロードに "colorUpdates" 配列または更新アイテム配列が含まれていません。' };
   }
-  if (candidate.colorUpdates.length === 0) {
-    return { valid: false, error: '"colorUpdates" 配列が空です。' };
+  if (rawList.length === 0) {
+    return { valid: false, error: '一括色更新の配列が空です。' };
   }
 
   const existingMap = new Map(existingData.items.map((it) => [it.id, it]));
   const seenIds = new Set<string>();
 
-  for (let i = 0; i < candidate.colorUpdates.length; i++) {
-    const update = candidate.colorUpdates[i];
+  for (let i = 0; i < rawList.length; i++) {
+    const update = rawList[i];
     if (!update || typeof update !== 'object') {
       return { valid: false, error: `colorUpdates[${i}] の形式が不正です。` };
     }
@@ -1187,12 +1195,11 @@ export function applyBatchColorUpdates(
         error: `ID "${id}" の色 "${String(rawColor)}" は無効です。12色パレット（${GARMENT_COLOR_PALETTE.join(', ')}）から指定してください。`,
       };
     }
-    if (update.name !== undefined && (typeof update.name !== 'string' || update.name.trim() === '')) {
-      return { valid: false, error: `ID "${id}" の name が空文字列です。` };
-    }
   }
 
-  const updateMap = new Map(candidate.colorUpdates.map((u) => [u.id.trim().toUpperCase(), u]));
+  const updateMap = new Map<string, ColorUpdateItem>(
+    rawList.map((u: any) => [u.id.trim().toUpperCase(), u as ColorUpdateItem])
+  );
   let updatedCount = 0;
 
   const newItems = existingData.items.map((item) => {
@@ -1202,7 +1209,6 @@ export function applyBatchColorUpdates(
     return {
       ...item,
       color: update.color,
-      name: update.name && update.name.trim() !== '' ? update.name.trim() : item.name,
     };
   });
 

@@ -67,12 +67,11 @@ export interface ClosetItem {
 }
 
 /**
- * 既存服の色パレット一括相談用のペイロード型
+ * 既存服の色パレット一括相談用のペイロード型（色のみを更新し名前は書き換えない）
  */
 export interface ColorUpdateItem {
   id: string;
   color: GarmentColor;
-  name?: string;
 }
 
 export interface BatchColorUpdatesPayload {

@@ -14,10 +14,34 @@ import {
   Maximize2,
   ArrowUp,
 } from 'lucide-react';
-import { SceneMode, ClosetItem } from '../types/closet';
+import { SceneMode, ClosetItem, GarmentMeasurements } from '../types/closet';
 import { useClosetStore } from '../hooks/useClosetStore';
 import { WeatherWidget, WeatherData } from './WeatherWidget';
 import { ItemImage } from './ItemImage';
+
+function formatPantsMeasurements(m?: GarmentMeasurements): string | null {
+  if (!m) return null;
+  const parts: string[] = [];
+  if (m.waist !== undefined) parts.push(`W ${m.waist}`);
+  if (m.inseam !== undefined) parts.push(`股下 ${m.inseam}`);
+  if (parts.length === 0) {
+    if (m.totalLength !== undefined) parts.push(`総丈 ${m.totalLength}`);
+    if (m.hemWidth !== undefined) parts.push(`裾幅 ${m.hemWidth}`);
+  }
+  return parts.length > 0 ? parts.join(' / ') + 'cm' : null;
+}
+
+function formatShirtMeasurements(m?: GarmentMeasurements): string | null {
+  if (!m) return null;
+  const parts: string[] = [];
+  if (m.bodyLength !== undefined) parts.push(`着丈 ${m.bodyLength}`);
+  if (m.chestWidth !== undefined) parts.push(`身幅 ${m.chestWidth}`);
+  if (parts.length === 0) {
+    if (m.shoulderWidth !== undefined) parts.push(`肩幅 ${m.shoulderWidth}`);
+    if (m.sleeveLength !== undefined) parts.push(`袖丈 ${m.sleeveLength}`);
+  }
+  return parts.length > 0 ? parts.join(' / ') + 'cm' : null;
+}
 
 export const TodayView: React.FC = () => {
   const {
@@ -370,9 +394,14 @@ export const TodayView: React.FC = () => {
               <ItemImage item={selectedShirt} showBadge={false} className="w-full h-full" imgClassName="object-contain" />
             </div>
             <div className="min-w-0">
-              <div className="flex items-center gap-1.5">
+              <div className="flex items-center gap-1.5 flex-wrap">
                 <span className="text-[10px] font-bold text-blue-400">{selectedShirt.id}</span>
                 <div className="text-xs font-bold text-white truncate">{selectedShirt.name}</div>
+                {selectedShirt.color && (
+                  <span className="px-1.5 py-0.5 rounded text-[9px] font-medium text-slate-300 bg-slate-900 border border-slate-700">
+                    🎨 {selectedShirt.color}
+                  </span>
+                )}
               </div>
               <div className="text-[11px] text-slate-400 truncate mt-0.5">{selectedShirt.notes}</div>
             </div>
@@ -465,6 +494,18 @@ export const TodayView: React.FC = () => {
                           <span className="px-1.5 py-0.5 rounded text-[9px] text-slate-400 bg-slate-900 border border-slate-700">
                             ドレス度 {p.dressScore}
                           </span>
+
+                          {p.color && (
+                            <span className="px-1.5 py-0.5 rounded text-[9px] font-medium text-slate-300 bg-slate-900 border border-slate-700">
+                              🎨 {p.color}
+                            </span>
+                          )}
+
+                          {formatPantsMeasurements(p.measurements) && (
+                            <span className="px-1.5 py-0.5 rounded text-[9px] text-slate-400 bg-slate-900 border border-slate-700">
+                              📏 {formatPantsMeasurements(p.measurements)}
+                            </span>
+                          )}
                         </div>
 
                         {/* Pants Name */}
@@ -542,7 +583,14 @@ export const TodayView: React.FC = () => {
                             ⚠️ 昨日着用
                           </span>
                         )}
-                        <div className="text-xs font-bold text-white truncate">{p.name}</div>
+                        <div className="flex items-center justify-between gap-1 mb-0.5">
+                          <div className="text-xs font-bold text-white truncate">{p.name}</div>
+                          {p.color && (
+                            <span className="text-[9px] text-slate-300 flex-shrink-0">
+                              🎨 {p.color}
+                            </span>
+                          )}
+                        </div>
                         <div className="text-[10px] text-slate-400 truncate mt-0.5">{p.notes}</div>
                       </div>
                       <div className="flex gap-1.5 mt-2.5">
@@ -658,6 +706,18 @@ export const TodayView: React.FC = () => {
                 <div className="text-xs font-bold text-white text-center line-clamp-1">
                   {zoomItemPair.shirt.name}
                 </div>
+                <div className="flex flex-wrap items-center justify-center gap-1 mt-1.5">
+                  {zoomItemPair.shirt.color && (
+                    <span className="px-1.5 py-0.5 rounded text-[9px] font-medium text-slate-300 bg-slate-900 border border-slate-700">
+                      🎨 {zoomItemPair.shirt.color}
+                    </span>
+                  )}
+                  {formatShirtMeasurements(zoomItemPair.shirt.measurements) && (
+                    <span className="px-1.5 py-0.5 rounded text-[9px] text-slate-400 bg-slate-900 border border-slate-700">
+                      📏 {formatShirtMeasurements(zoomItemPair.shirt.measurements)}
+                    </span>
+                  )}
+                </div>
               </div>
 
               <div className="p-3 bg-slate-800/80 rounded-2xl border border-slate-700 flex flex-col items-center">
@@ -667,6 +727,18 @@ export const TodayView: React.FC = () => {
                 </div>
                 <div className="text-xs font-bold text-white text-center line-clamp-1">
                   {zoomItemPair.pants.name}
+                </div>
+                <div className="flex flex-wrap items-center justify-center gap-1 mt-1.5">
+                  {zoomItemPair.pants.color && (
+                    <span className="px-1.5 py-0.5 rounded text-[9px] font-medium text-slate-300 bg-slate-900 border border-slate-700">
+                      🎨 {zoomItemPair.pants.color}
+                    </span>
+                  )}
+                  {formatPantsMeasurements(zoomItemPair.pants.measurements) && (
+                    <span className="px-1.5 py-0.5 rounded text-[9px] text-slate-400 bg-slate-900 border border-slate-700">
+                      📏 {formatPantsMeasurements(zoomItemPair.pants.measurements)}
+                    </span>
+                  )}
                 </div>
               </div>
             </div>
