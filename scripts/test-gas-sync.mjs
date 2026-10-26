@@ -2850,7 +2850,7 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
   const sampleBatchUpdates = {
     colorUpdates: [
       { id: 'S1', color: '濃紺' },
-      { id: 'S9', color: '濃紺', name: '紺×白ロンドンストライプ半袖シャツ' },
+      { id: 'S9', color: '濃紺', name: '意図しない上書き名前' },
       { id: 'P11', color: '濃紺' },
     ],
   };
@@ -2862,7 +2862,11 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
   assert.equal(updatedS1.color, '濃紺');
   assert.deepEqual(updatedS1.officeRecommendIds, rawCloset.items[0].officeRecommendIds, 'officeRecommendIds must remain intact');
   assert.deepEqual(updatedS1.ngIds, rawCloset.items[0].ngIds, 'ngIds must remain intact');
-  assert.equal(updatedS9.name, '紺×白ロンドンストライプ半袖シャツ');
+  assert.equal(
+    updatedS9.name,
+    rawCloset.items.find((i) => i.id === 'S9').name,
+    'applyBatchColorUpdates must protect and preserve original name even if payload includes name'
+  );
 
   // 7a. 異常系: ネイビー単独指定、不正なID、重複ID、パレット外の色
   const batchWithNavy = applyBatchColorUpdates(rawCloset, {
@@ -2884,6 +2888,55 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
   assert.ok(batchWithDupId.error.includes('重複'));
 
   console.log('  ✅ Garment standardization (12-color palette, anchors, measurements, crop, resilience & batch updates) verified');
+}
+
+// -------------------------------------------------------------
+// Test Case 24: Phase 2 UI・プロンプト・インライン確認・3:4正規化連携の検証
+// -------------------------------------------------------------
+{
+  // 1. AiSyncView.tsx のプロンプトテキスト不変条件の検証
+  const aiSyncCode = fs.readFileSync(path.join(projectRoot, 'src/components/AiSyncView.tsx'), 'utf8');
+
+  // Step 1: A4用紙ガイド
+  assert.ok(aiSyncCode.includes('A4の白い紙（210×297mm）'), 'AiSyncView Step 1 must guide A4 white paper');
+
+  // Step 2: 12色パレット・アンカー・寸法・cropBox
+  assert.ok(aiSyncCode.includes('GARMENT_COLOR_PALETTE'), 'AiSyncView must reference GARMENT_COLOR_PALETTE');
+  assert.ok(aiSyncCode.includes('GARMENT_COLOR_ANCHOR_GUIDE'), 'AiSyncView must include GARMENT_COLOR_ANCHOR_GUIDE');
+  assert.ok(aiSyncCode.includes('bodyLength'), 'AiSyncView prompt must include bodyLength for shirts');
+  assert.ok(aiSyncCode.includes('waist'), 'AiSyncView prompt must include waist for pants');
+  assert.ok(aiSyncCode.includes('cropBox'), 'AiSyncView prompt must include cropBox instruction');
+  assert.ok(aiSyncCode.includes('colorUpdates'), 'AiSyncView must support colorUpdates batch updates');
+
+  // 一括色相談プロンプト: name を出力させない指示
+  assert.ok(
+    aiSyncCode.includes('name" などの他フィールドは絶対に出力しないでください') ||
+    aiSyncCode.includes('name" 等の他フィールドは絶対に出力しないでください'),
+    'Batch color prompt must strictly forbid outputting name'
+  );
+
+  // Step 3: 確認パネル UI 要件
+  assert.ok(aiSyncCode.includes('10〜200cm（0.5cm刻み・空欄で未設定）'), 'Measurements must specify 10-200cm valid range notice');
+  assert.ok(aiSyncCode.includes('自動切り抜きを適用'), 'Smart crop toggle must be present');
+  assert.ok(aiSyncCode.includes('getColorForPalette'), 'Color chips must use getColorForPalette');
+
+  // 2. useClosetStore.tsx の batch_color モードと名前保護連携
+  const useStoreCode = fs.readFileSync(path.join(projectRoot, 'src/hooks/useClosetStore.tsx'), 'utf8');
+  assert.ok(useStoreCode.includes("'batch_color'"), 'useClosetStore must support batch_color mode');
+  assert.ok(useStoreCode.includes('applyBatchColorUpdates'), 'useClosetStore must call applyBatchColorUpdates');
+
+  // 3. TodayView.tsx の色・寸法表示
+  const todayCode = fs.readFileSync(path.join(projectRoot, 'src/components/TodayView.tsx'), 'utf8');
+  assert.ok(todayCode.includes('formatPantsMeasurements'), 'TodayView must format pants measurements');
+  assert.ok(todayCode.includes('formatShirtMeasurements'), 'TodayView must format shirt measurements');
+  assert.ok(todayCode.includes('p.color'), 'TodayView must display pants color');
+
+  // 4. ItemImage.tsx の getColorForPalette
+  const itemImageCode = fs.readFileSync(path.join(projectRoot, 'src/components/ItemImage.tsx'), 'utf8');
+  assert.ok(itemImageCode.includes('getColorForPalette'), 'ItemImage must export getColorForPalette');
+  assert.ok(itemImageCode.includes('inferGarmentColor'), 'ItemImage must use inferGarmentColor for fallback silhouette');
+
+  console.log('  ✅ Phase 2 UI, prompts, smart crop, measurements and batch color integration verified');
 }
 
 console.log('🎉 All GAS backend & sync logic tests passed successfully!');

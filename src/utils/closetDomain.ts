@@ -1132,7 +1132,7 @@ export function switchDraftItemCategory(
 }
 
 /**
- * 既存アイテム間の相性配列やスコアを一切破壊せず、全着の color（および指定があれば name）のみを安全に一括更新する純粋関数
+ * 既存アイテム間の相性配列やスコア、名称（name）を一切破壊せず、全着の color のみを安全に一括更新する純粋関数
  */
 export function applyBatchColorUpdates(
   existingData: ClosetData,
@@ -1187,9 +1187,6 @@ export function applyBatchColorUpdates(
         error: `ID "${id}" の色 "${String(rawColor)}" は無効です。12色パレット（${GARMENT_COLOR_PALETTE.join(', ')}）から指定してください。`,
       };
     }
-    if (update.name !== undefined && (typeof update.name !== 'string' || update.name.trim() === '')) {
-      return { valid: false, error: `ID "${id}" の name が空文字列です。` };
-    }
   }
 
   const updateMap = new Map(candidate.colorUpdates.map((u) => [u.id.trim().toUpperCase(), u]));
@@ -1202,7 +1199,6 @@ export function applyBatchColorUpdates(
     return {
       ...item,
       color: update.color,
-      name: update.name && update.name.trim() !== '' ? update.name.trim() : item.name,
     };
   });
 

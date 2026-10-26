@@ -22,6 +22,7 @@ import {
   validateClosetDataSchema,
   validateSingleClosetItem,
   mergeSingleItemIntoClosetData,
+  applyBatchColorUpdates,
   mergeClosetDataWithWifeNg,
   checkIsNgPair,
   calculateRecommendationsForShirt,
@@ -86,7 +87,7 @@ export interface ClosetStoreContextType {
   removeWifeNg: (shirtId: string, pantsId: string) => void;
   importCustomData: (jsonString: string) => {
     success: boolean;
-    mode?: 'single' | 'full';
+    mode?: 'single' | 'full' | 'batch_color';
     addedItem?: ClosetItem;
     updatedPeersCount?: number;
     error?: string;
@@ -846,7 +847,7 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       jsonString: string
     ): {
       success: boolean;
-      mode?: 'single' | 'full';
+      mode?: 'single' | 'full' | 'batch_color';
       addedItem?: ClosetItem;
       updatedPeersCount?: number;
       error?: string;
@@ -855,12 +856,27 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         const parsed = JSON.parse(jsonString);
 
         let finalData: ClosetData;
-        let mode: 'single' | 'full' = 'full';
+        let mode: 'single' | 'full' | 'batch_color' = 'full';
         let addedItem: ClosetItem | undefined = undefined;
         let updatedPeersCount = 0;
 
-        // 単一アイテム形式（items 配列ではなく単一の ClosetItem オブジェクト）かどうかの判別
+        // 一括色更新形式（colorUpdates 配列を含むオブジェクト）かどうかの判別
         if (
+          parsed &&
+          typeof parsed === 'object' &&
+          Array.isArray((parsed as any).colorUpdates)
+        ) {
+          const batchRes = applyBatchColorUpdates(stateRef.current.closetData, parsed);
+          if (!batchRes.valid || !batchRes.data) {
+            return {
+              success: false,
+              error: batchRes.error || '色パレット一括更新データの検証に失敗しました。',
+            };
+          }
+          mode = 'batch_color';
+          finalData = batchRes.data;
+          updatedPeersCount = batchRes.updatedCount || 0;
+        } else if (
           parsed &&
           typeof parsed === 'object' &&
           !Array.isArray((parsed as any).items) &&

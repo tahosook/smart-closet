@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { ClosetItem } from '../types/closet';
+import { ClosetItem, GarmentColor } from '../types/closet';
 import { getImageBlob } from '../utils/imageStore';
+import { inferGarmentColor } from '../utils/closetDomain';
 
 interface ItemImageProps {
   item: ClosetItem;
@@ -9,40 +10,36 @@ interface ItemImageProps {
   showBadge?: boolean;
 }
 
-// Map garment names to realistic aesthetic colors for SVG fallback
-function getColorForGarment(name: string, category: 'shirt' | 'pants'): { fill: string; stroke: string; accent: string } {
-  const n = name.toLowerCase();
-  if (n.includes('白無地') || n.includes('白地') || n.includes('白×')) {
-    return { fill: '#f8fafc', stroke: '#cbd5e1', accent: '#3b82f6' };
+// 12色パレットに対応するSVGシルエット用スタイル
+export function getColorForPalette(color: GarmentColor): { fill: string; stroke: string; accent: string } {
+  switch (color) {
+    case '白':
+      return { fill: '#f8fafc', stroke: '#cbd5e1', accent: '#3b82f6' };
+    case '生成り':
+      return { fill: '#fef3c7', stroke: '#fde047', accent: '#a16207' };
+    case '黒':
+      return { fill: '#09090b', stroke: '#27272a', accent: '#71717a' };
+    case 'チャコール':
+      return { fill: '#334155', stroke: '#1e293b', accent: '#64748b' };
+    case 'ミディアムグレー':
+      return { fill: '#475569', stroke: '#334155', accent: '#94a3b8' };
+    case 'ライトグレー':
+      return { fill: '#94a3b8', stroke: '#64748b', accent: '#cbd5e1' };
+    case 'グレージュ':
+      return { fill: '#d6d3d1', stroke: '#a8a29e', accent: '#78716c' };
+    case '濃紺':
+      return { fill: '#1e293b', stroke: '#0f172a', accent: '#3b82f6' };
+    case 'ブルー':
+      return { fill: '#2563eb', stroke: '#1d4ed8', accent: '#60a5fa' };
+    case '淡青':
+      return { fill: '#bae6fd', stroke: '#7dd3fc', accent: '#0284c7' };
+    case 'オリーブ':
+      return { fill: '#3f6212', stroke: '#365314', accent: '#84cc16' };
+    case 'ブラウン':
+      return { fill: '#78350f', stroke: '#451a03', accent: '#d97706' };
+    default:
+      return { fill: '#e2e8f0', stroke: '#cbd5e1', accent: '#2563eb' };
   }
-  if (n.includes('濃インディゴ') || n.includes('濃ネイビ') || n.includes('濃紺')) {
-    return { fill: '#1e293b', stroke: '#0f172a', accent: '#60a5fa' };
-  }
-  if (n.includes('サックス') || n.includes('淡青')) {
-    return { fill: '#bae6fd', stroke: '#7dd3fc', accent: '#0284c7' };
-  }
-  if (n.includes('生成り')) {
-    return { fill: '#fef08a', stroke: '#fde047', accent: '#a16207' };
-  }
-  if (n.includes('グレージュ') || n.includes('ライトグレー')) {
-    return { fill: '#cbd5e1', stroke: '#94a3b8', accent: '#475569' };
-  }
-  if (n.includes('オリーブ')) {
-    return { fill: '#3f6212', stroke: '#365314', accent: '#84cc16' };
-  }
-  if (n.includes('チャコール') || n.includes('ミディアムグレー')) {
-    return { fill: '#475569', stroke: '#334155', accent: '#94a3b8' };
-  }
-  if (n.includes('黒')) {
-    return { fill: '#09090b', stroke: '#27272a', accent: '#71717a' };
-  }
-  if (n.includes('ブルーデニム') || n.includes('ブルーウォッシュ')) {
-    return { fill: '#38bdf8', stroke: '#0284c7', accent: '#0369a1' };
-  }
-
-  return category === 'shirt'
-    ? { fill: '#e2e8f0', stroke: '#cbd5e1', accent: '#2563eb' }
-    : { fill: '#334155', stroke: '#1e293b', accent: '#38bdf8' };
 }
 
 export const ItemImage: React.FC<ItemImageProps> = ({
@@ -54,7 +51,9 @@ export const ItemImage: React.FC<ItemImageProps> = ({
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
   const [blobError, setBlobError] = useState(false);
   const [fallbackError, setFallbackError] = useState(false);
-  const colors = getColorForGarment(item.name, item.category);
+  // 確定色があれば確定色、未確定の場合は表示専用の暫定推定でシルエット色を決定
+  const effectiveColor = item.color || inferGarmentColor(item.name, item.notes, item.category);
+  const colors = getColorForPalette(effectiveColor);
 
   // 1. IndexedDB から Blob を非同期取得して ObjectURL を発行 (決定5・仕様5)
   useEffect(() => {
