@@ -1,4 +1,4 @@
-import {
+import type {
   Category,
   ClosetData,
   ClosetItem,
@@ -7,7 +7,274 @@ import {
   RecommendationResult,
   ItemCompatibilityStats,
   WardrobeAnalysisResult,
+  GarmentColor,
+  GarmentMeasurements,
+  GarmentCropBox,
+  BatchColorUpdatesPayload,
 } from '../types/closet';
+
+/**
+ * 標準色パレット（全12色、青の濃淡3段：濃紺（ネイビー含む）／ブルー／淡青）
+ * 奥さんのNG判定3類型（濃紺×濃紺、淡青×ブルー/淡青、生成り×淡色）を再現する語彙
+ */
+export const GARMENT_COLOR_PALETTE = [
+  '白',
+  '生成り',
+  '黒',
+  'チャコール',
+  'ミディアムグレー',
+  'ライトグレー',
+  'グレージュ',
+  '濃紺',
+  'ブルー',
+  '淡青',
+  'オリーブ',
+  'ブラウン',
+] as const;
+
+/**
+ * 登録相談プロンプトおよび一括色相談プロンプト共通の色判定アンカー
+ * A4用紙を基準とした隣接色の境界基準を定義
+ */
+export const GARMENT_COLOR_ANCHOR_GUIDE = `【12色パレットの判定アンカーと基準】
+選択肢（全12色）: 白, 生成り, 黒, チャコール, ミディアムグレー, ライトグレー, グレージュ, 濃紺, ブルー, 淡青, オリーブ, ブラウン
+※「ネイビー」「インディゴ」「サックス」等は単独の色名として出力せず、必ず上記12色のいずれかに分類してください。
+
+1. 白と生成りの境界:
+   - A4用紙と同じ系統の白さ（純白・オフホワイト地、白ベースの細ストライプや小紋柄を含む）なら「白」。
+   - A4用紙と比べて明確に黄み・クリーム色・エクリュの温かみを感じれば「生成り」。
+2. 淡青・ブルー・濃紺の境界（青の濃淡3段）:
+   - 白に近い明るい青（サックスブルー・水色・ライトブルー等）は「淡青」。
+   - 一般的な色落ちデニム程度の標準的〜中間の青は「ブルー」。
+   - 標準的なネイビーから黒に近い深い紺・濃インディゴ（ワンウォッシュ／リジッドデニム、紺ストライプ等）はすべて「濃紺」。※ネイビーは濃紺に統合。
+3. 濃紺と黒の境界:
+   - 暗い色調でもわずかにでも青み（ネイビー／インディゴ感）が読み取れれば「濃紺」。
+   - 青みが一切読み取れない純粋な暗さ（ブラック）は「黒」。
+4. グレー各色（チャコール／ミディアムグレー／ライトグレー／グレージュ）の境界:
+   - A4白用紙と黒の間の明度を基準に、黒に近い濃灰は「チャコール」、標準的な中間調の灰は「ミディアムグレー」、白に近い明るい薄灰（杢グレー・アイスグレー等）は「ライトグレー」。
+   - グレーに明確なベージュみ・茶み・黄みが混じる中間色（トープ等）は「グレージュ」。`;
+
+/**
+ * 指定された値が12色パレットに含まれる有効な色であるかを判定する
+ */
+export function isValidGarmentColor(val: unknown): val is GarmentColor {
+  return typeof val === 'string' && (GARMENT_COLOR_PALETTE as readonly string[]).includes(val);
+}
+
+/**
+ * アイテム名やメモから表示用の色を推定する純粋関数（表示・SVGフォールバック専用）
+ * 重要: この関数が返す値は「表示専用の暫定値」であり、ClosetItem.color として
+ * localStorage や Google スプレッドシートへ永続化・同期してはならない。
+ */
+export function inferGarmentColor(
+  name: string,
+  notes?: string,
+  category?: Category
+): GarmentColor {
+  const text = `${name || ''} ${notes || ''}`.toLowerCase();
+
+  // 1. 生成り
+  if (
+    text.includes('生成り') ||
+    text.includes('エクリュ') ||
+    text.includes('キナリ') ||
+    text.includes('アイボリー') ||
+    text.includes('クリーム')
+  ) {
+    return '生成り';
+  }
+
+  // 2. 白
+  if (text.includes('白') || text.includes('ホワイト') || text.includes('white')) {
+    return '白';
+  }
+
+  // 3. 黒
+  if (text.includes('黒') || text.includes('ブラック') || text.includes('black')) {
+    return '黒';
+  }
+
+  // 4. チャコール / グレー系
+  if (text.includes('チャコール') || text.includes('charcoal')) {
+    return 'チャコール';
+  }
+  if (
+    text.includes('グレージュ') ||
+    text.includes('トープ') ||
+    text.includes('greige') ||
+    text.includes('taupe')
+  ) {
+    return 'グレージュ';
+  }
+  if (
+    text.includes('ライトグレー') ||
+    text.includes('薄灰') ||
+    text.includes('アイスグレー') ||
+    text.includes('杢グレー')
+  ) {
+    return 'ライトグレー';
+  }
+  if (
+    text.includes('ミディアムグレー') ||
+    text.includes('グレー') ||
+    text.includes('灰') ||
+    text.includes('gray') ||
+    text.includes('grey')
+  ) {
+    return 'ミディアムグレー';
+  }
+
+  // 5. 青系（青の濃淡3段：濃紺 / ブルー / 淡青）
+  // 濃紺（ネイビー、濃インディゴ、ヒッコリー、ピンストライプ含む）
+  if (
+    text.includes('濃紺') ||
+    text.includes('濃インディゴ') ||
+    text.includes('ネイビー') ||
+    text.includes('navy') ||
+    text.includes('ダークネイビー') ||
+    text.includes('ワンウォッシュ') ||
+    text.includes('リジッド') ||
+    text.includes('ヒッコリー') ||
+    text.includes('ピンストライプ')
+  ) {
+    return '濃紺';
+  }
+
+  // 淡青（サックスブルー、水色、ライトブルー）
+  if (
+    text.includes('サックス') ||
+    text.includes('淡青') ||
+    text.includes('水色') ||
+    text.includes('ライトブルー')
+  ) {
+    return '淡青';
+  }
+
+  // ブルー（標準的な青、デニム、インディゴ柄）
+  if (
+    text.includes('ブルー') ||
+    text.includes('インディゴ') ||
+    text.includes('青') ||
+    text.includes('デニム') ||
+    text.includes('blue')
+  ) {
+    return 'ブルー';
+  }
+
+  // 6. アースカラー
+  if (
+    text.includes('オリーブ') ||
+    text.includes('カーキ') ||
+    text.includes('グリーン') ||
+    text.includes('緑') ||
+    text.includes('olive')
+  ) {
+    return 'オリーブ';
+  }
+  if (
+    text.includes('ブラウン') ||
+    text.includes('モカ') ||
+    text.includes('キャメル') ||
+    text.includes('茶') ||
+    text.includes('ベージュ') ||
+    text.includes('brown')
+  ) {
+    return 'ブラウン';
+  }
+
+  // デフォルト（シャツは白、パンツは濃紺、その他はミディアムグレー）
+  if (category === 'shirt') return '白';
+  if (category === 'pants') return '濃紺';
+  return 'ミディアムグレー';
+}
+
+/**
+ * 服の寸法オブジェクトを検証・正規化する純粋関数
+ * 10cm〜200cmの範囲の有限数値を0.5cm刻みに丸めて格納する。
+ * 有効な数値が1つも含まれない場合は undefined を返す。
+ */
+export function validateGarmentMeasurements(
+  val: unknown,
+  category?: Category
+): GarmentMeasurements | undefined {
+  if (!val || typeof val !== 'object') return undefined;
+  const candidate = val as Record<string, unknown>;
+  const result: GarmentMeasurements = {};
+
+  const sanitizeNumber = (num: unknown): number | undefined => {
+    if (typeof num === 'number' && Number.isFinite(num) && num >= 10 && num <= 200) {
+      return Math.round(num * 2) / 2;
+    }
+    return undefined;
+  };
+
+  if (!category || category === 'shirt') {
+    const bodyLength = sanitizeNumber(candidate.bodyLength);
+    const chestWidth = sanitizeNumber(candidate.chestWidth);
+    const shoulderWidth = sanitizeNumber(candidate.shoulderWidth);
+    const sleeveLength = sanitizeNumber(candidate.sleeveLength);
+    if (bodyLength !== undefined) result.bodyLength = bodyLength;
+    if (chestWidth !== undefined) result.chestWidth = chestWidth;
+    if (shoulderWidth !== undefined) result.shoulderWidth = shoulderWidth;
+    if (sleeveLength !== undefined) result.sleeveLength = sleeveLength;
+  }
+
+  if (!category || category === 'pants') {
+    const waist = sanitizeNumber(candidate.waist);
+    const inseam = sanitizeNumber(candidate.inseam);
+    const totalLength = sanitizeNumber(candidate.totalLength);
+    const hemWidth = sanitizeNumber(candidate.hemWidth);
+    if (waist !== undefined) result.waist = waist;
+    if (inseam !== undefined) result.inseam = inseam;
+    if (totalLength !== undefined) result.totalLength = totalLength;
+    if (hemWidth !== undefined) result.hemWidth = hemWidth;
+  }
+
+  return Object.keys(result).length > 0 ? result : undefined;
+}
+
+/**
+ * 服領域の正規化座標 (0〜1000) を検証・クランプする純粋関数
+ * 不正値や極小領域の場合は undefined を返す。
+ */
+export function normalizeCropBox(val: unknown): GarmentCropBox | undefined {
+  if (!val || typeof val !== 'object') return undefined;
+  const box = val as Partial<GarmentCropBox>;
+  const { ymin, xmin, ymax, xmax } = box;
+
+  if (
+    typeof ymin !== 'number' ||
+    typeof xmin !== 'number' ||
+    typeof ymax !== 'number' ||
+    typeof xmax !== 'number' ||
+    !Number.isFinite(ymin) ||
+    !Number.isFinite(xmin) ||
+    !Number.isFinite(ymax) ||
+    !Number.isFinite(xmax)
+  ) {
+    return undefined;
+  }
+
+  const clampedYmin = Math.max(0, Math.min(1000, Math.round(ymin)));
+  const clampedXmin = Math.max(0, Math.min(1000, Math.round(xmin)));
+  const clampedYmax = Math.max(0, Math.min(1000, Math.round(ymax)));
+  const clampedXmax = Math.max(0, Math.min(1000, Math.round(xmax)));
+
+  const width = clampedXmax - clampedXmin;
+  const height = clampedYmax - clampedYmin;
+
+  // 面積が極小（幅・高さが50未満、または面積が全体の2.5%未満）なら無効
+  if (width < 50 || height < 50 || width * height < 25000) {
+    return undefined;
+  }
+
+  return {
+    ymin: clampedYmin,
+    xmin: clampedXmin,
+    ymax: clampedYmax,
+    xmax: clampedXmax,
+  };
+}
 
 /**
  * ランタイムで ClosetData のスキーマ・型・参照整合性を厳密に検証する。
@@ -39,6 +306,7 @@ export function validateClosetDataSchema(data: unknown): {
   const idSet = new Set<string>();
   const shirtIds = new Set<string>();
   const pantsIds = new Set<string>();
+  const sanitizedItems: ClosetItem[] = [];
 
   // 1. 各アイテムの基本プロパティ・型検査
   for (let i = 0; i < candidate.items.length; i++) {
@@ -115,10 +383,44 @@ export function validateClosetDataSchema(data: unknown): {
     if (!Array.isArray(item.ngIds) || !item.ngIds.every((id) => typeof id === 'string')) {
       return { valid: false, error: `[${item.id}] の ngIds は文字列配列である必要があります。` };
     }
+
+    // color の正規化・検証（未設定やパレット外値でも読み込みを失敗させず、undefined として安全に保持）
+    // 注意: 表示用の inferGarmentColor はここでは呼ばず、データ上は未確定 (undefined) のまま維持する
+    const rawColor = item.color as unknown;
+    let itemColor: GarmentColor | undefined = undefined;
+    if (typeof rawColor === 'string' && rawColor.trim() !== '') {
+      if (isValidGarmentColor(rawColor)) {
+        itemColor = rawColor;
+      }
+      // 不正値（'ネイビー' や古い独自文字列等）の場合は undefined にサニタイズ（全体の読み込みは失敗させない）
+    }
+
+    // measurements の正規化（不正なフィールドは除去し、有効な測定値のみ保持）
+    const itemMeasurements = item.measurements
+      ? validateGarmentMeasurements(item.measurements, item.category as Category)
+      : undefined;
+
+    // 一時プロパティ (cropBox, garmentBox 等) を除外したクリーンな ClosetItem を作成
+    sanitizedItems.push({
+      id: item.id,
+      category: item.category,
+      name: item.name,
+      imageUrl: item.imageUrl,
+      seasonSleeve: item.seasonSleeve,
+      dressScore: item.dressScore,
+      comfortScore: item.comfortScore,
+      officeRecommendIds: item.officeRecommendIds,
+      remoteRecommendIds: item.remoteRecommendIds,
+      ngIds: item.ngIds,
+      ngReason: item.ngReason,
+      notes: item.notes,
+      color: itemColor,
+      ...(itemMeasurements ? { measurements: itemMeasurements } : {}),
+    });
   }
 
   // 2. 参照関係の整合性検査 (相互カテゴリ整合 & 存在チェック & 推薦とNGの非重複)
-  for (const item of candidate.items) {
+  for (const item of sanitizedItems) {
     const isShirt = item.category === 'shirt';
     const targetCategory = isShirt ? 'pants' : 'shirt';
     const validTargetIds = isShirt ? pantsIds : shirtIds;
@@ -155,7 +457,13 @@ export function validateClosetDataSchema(data: unknown): {
     }
   }
 
-  return { valid: true, data: candidate as ClosetData };
+  return {
+    valid: true,
+    data: {
+      ...candidate,
+      items: sanitizedItems,
+    } as ClosetData,
+  };
 }
 
 /**
@@ -526,7 +834,54 @@ export function validateSingleClosetItem(
     }
   }
 
-  return { valid: true, item: candidate as ClosetItem };
+  // 色の検証（新規登録・単一アイテム検証では必須かつ12色パレット内であることを厳格に要求）
+  const rawColor = candidate.color as unknown;
+  if (!rawColor || typeof rawColor !== 'string' || rawColor.trim() === '') {
+    return {
+      valid: false,
+      error: `[${candidate.id}] の色 (color) が未設定です。12色パレット（${GARMENT_COLOR_PALETTE.join(', ')}）から指定してください。`,
+    };
+  }
+
+  if (rawColor === 'ネイビー') {
+    return {
+      valid: false,
+      error: `[${candidate.id}] の色「ネイビー」はパレット上「濃紺」に統合されています。確認パネルで「濃紺」を選択してください。`,
+    };
+  }
+
+  if (!isValidGarmentColor(rawColor)) {
+    return {
+      valid: false,
+      error: `[${candidate.id}] の色 "${rawColor}" は無効です。12色パレット（${GARMENT_COLOR_PALETTE.join(', ')}）から指定してください。`,
+    };
+  }
+
+  // measurements の検証・正規化
+  const validatedMeasurements = candidate.measurements
+    ? validateGarmentMeasurements(candidate.measurements, candidate.category)
+    : undefined;
+
+  // 一時プロパティ (cropBox, garmentBox 等) を除外したクリーンな ClosetItem を返却
+  const candidateItem = candidate as ClosetItem;
+  const finalItem: ClosetItem = {
+    id: candidateItem.id,
+    category: candidateItem.category,
+    name: candidateItem.name,
+    imageUrl: candidateItem.imageUrl,
+    seasonSleeve: candidateItem.seasonSleeve,
+    dressScore: candidateItem.dressScore,
+    comfortScore: candidateItem.comfortScore,
+    officeRecommendIds: candidateItem.officeRecommendIds,
+    remoteRecommendIds: candidateItem.remoteRecommendIds,
+    ngIds: candidateItem.ngIds,
+    ngReason: candidateItem.ngReason,
+    notes: candidateItem.notes,
+    color: rawColor,
+    ...(validatedMeasurements ? { measurements: validatedMeasurements } : {}),
+  };
+
+  return { valid: true, item: finalItem };
 }
 
 /**
@@ -754,6 +1109,7 @@ export function analyzeWardrobeStats(
  * - id を targetCategory の次連番 (getNextSequentialId) に更新
  * - imageUrl を `/images/${newId}.jpg` に更新
  * - 3つの相性リスト (officeRecommendIds, remoteRecommendIds, ngIds) を [] に自動クリア
+ * - measurements を undefined に自動クリア
  * - ngReason を 'なし' に初期化
  */
 export function switchDraftItemCategory(
@@ -771,5 +1127,92 @@ export function switchDraftItemCategory(
     remoteRecommendIds: [],
     ngIds: [],
     ngReason: 'なし',
+    measurements: undefined,
+  };
+}
+
+/**
+ * 既存アイテム間の相性配列やスコアを一切破壊せず、全着の color（および指定があれば name）のみを安全に一括更新する純粋関数
+ */
+export function applyBatchColorUpdates(
+  existingData: ClosetData,
+  payload: unknown
+): {
+  valid: boolean;
+  data?: ClosetData;
+  error?: string;
+  updatedCount?: number;
+} {
+  if (!payload || typeof payload !== 'object') {
+    return { valid: false, error: '一括色更新ペイロードがオブジェクトではありません。' };
+  }
+  const candidate = payload as Partial<BatchColorUpdatesPayload>;
+  if (!Array.isArray(candidate.colorUpdates)) {
+    return { valid: false, error: 'ペイロードに "colorUpdates" 配列が含まれていません。' };
+  }
+  if (candidate.colorUpdates.length === 0) {
+    return { valid: false, error: '"colorUpdates" 配列が空です。' };
+  }
+
+  const existingMap = new Map(existingData.items.map((it) => [it.id, it]));
+  const seenIds = new Set<string>();
+
+  for (let i = 0; i < candidate.colorUpdates.length; i++) {
+    const update = candidate.colorUpdates[i];
+    if (!update || typeof update !== 'object') {
+      return { valid: false, error: `colorUpdates[${i}] の形式が不正です。` };
+    }
+    const id = typeof update.id === 'string' ? update.id.trim().toUpperCase() : '';
+    if (!id) {
+      return { valid: false, error: `colorUpdates[${i}] の ID が未指定です。` };
+    }
+    if (!existingMap.has(id)) {
+      return { valid: false, error: `ID "${id}" は現在のワードローブに存在しません。` };
+    }
+    if (seenIds.has(id)) {
+      return { valid: false, error: `ID "${id}" の色更新が重複して指定されています。` };
+    }
+    seenIds.add(id);
+
+    const rawColor = update.color as unknown;
+    if (rawColor === 'ネイビー') {
+      return {
+        valid: false,
+        error: `ID "${id}" の色「ネイビー」はパレット上「濃紺」に統合されています。「濃紺」を指定してください。`,
+      };
+    }
+    if (!isValidGarmentColor(rawColor)) {
+      return {
+        valid: false,
+        error: `ID "${id}" の色 "${String(rawColor)}" は無効です。12色パレット（${GARMENT_COLOR_PALETTE.join(', ')}）から指定してください。`,
+      };
+    }
+    if (update.name !== undefined && (typeof update.name !== 'string' || update.name.trim() === '')) {
+      return { valid: false, error: `ID "${id}" の name が空文字列です。` };
+    }
+  }
+
+  const updateMap = new Map(candidate.colorUpdates.map((u) => [u.id.trim().toUpperCase(), u]));
+  let updatedCount = 0;
+
+  const newItems = existingData.items.map((item) => {
+    const update = updateMap.get(item.id);
+    if (!update) return item;
+    updatedCount++;
+    return {
+      ...item,
+      color: update.color,
+      name: update.name && update.name.trim() !== '' ? update.name.trim() : item.name,
+    };
+  });
+
+  return {
+    valid: true,
+    data: {
+      ...existingData,
+      items: newItems,
+      updatedAt: Date.now(),
+    },
+    updatedCount,
   };
 }

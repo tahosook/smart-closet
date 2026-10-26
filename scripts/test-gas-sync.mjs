@@ -38,7 +38,28 @@ const {
   mergeSingleItemIntoClosetData,
   analyzeWardrobeStats,
   switchDraftItemCategory,
+  GARMENT_COLOR_ANCHOR_GUIDE,
+  isValidGarmentColor,
+  inferGarmentColor,
+  validateGarmentMeasurements,
+  normalizeCropBox,
+  applyBatchColorUpdates,
 } = closetDomain;
+
+const imageProcessorTsPath = path.join(projectRoot, 'src/utils/imageProcessor.ts');
+const imageProcessorCode = fs.readFileSync(imageProcessorTsPath, 'utf-8');
+const transpiledImageJs = ts.transpileModule(imageProcessorCode, {
+  compilerOptions: { module: ts.ModuleKind.ESNext },
+}).outputText;
+const imageProcessor = await import(
+  'data:text/javascript;base64,' + Buffer.from(transpiledImageJs).toString('base64')
+);
+const {
+  STANDARD_IMAGE_WIDTH,
+  STANDARD_IMAGE_HEIGHT,
+  STANDARD_STUDIO_BG_COLOR,
+  calculateCropAndPlacement,
+} = imageProcessor;
 
 console.log('🧪 Running GAS backend and sync logic tests...');
 
@@ -1931,6 +1952,7 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
     id: 'P16',
     category: 'pants',
     name: '黒テーパードスラックス',
+    color: '黒',
     imageUrl: '/images/P16.jpg',
     seasonSleeve: '通年',
     dressScore: 4.5,
@@ -2315,6 +2337,7 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
   // 1. ID接頭辞とカテゴリの一致検証 (validateSingleClosetItem)
   const baseItem = {
     name: 'テストアイテム',
+    color: '白',
     imageUrl: '/images/S10.jpg',
     seasonSleeve: '長袖・通年',
     dressScore: 4.0,
@@ -2405,6 +2428,7 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
     id: 'S10',
     category: 'shirt',
     name: 'ネイビーシャツ',
+    color: '濃紺',
     imageUrl: '/images/S10.jpg',
     seasonSleeve: '長袖・通年',
     dressScore: 3.5,
@@ -2414,6 +2438,7 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
     ngIds: ['P5'],
     ngReason: '同系色濃紺による作業着見え',
     notes: 'テストシャツ',
+    measurements: { bodyLength: 72, chestWidth: 54 },
   };
 
   // パンツへ種別切替を実行
@@ -2425,6 +2450,7 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
   assert.deepEqual(switchedToPants.remoteRecommendIds, [], 'remoteRecommendIds must be cleared to []');
   assert.deepEqual(switchedToPants.ngIds, [], 'ngIds must be cleared to []');
   assert.equal(switchedToPants.ngReason, 'なし', 'ngReason must be reset to なし');
+  assert.equal(switchedToPants.measurements, undefined, 'measurements must be cleared to undefined on category switch');
 
   // 切替後のアイテムが validateSingleClosetItem を正常に通過することを確認
   const switchedValidation = validateSingleClosetItem(switchedToPants, rawCloset);
@@ -2618,6 +2644,233 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
   assert.ok(errorsFileUrl[0].includes('Forbidden local absolute link'), 'Error must state forbidden local absolute link');
 
   console.log('  ✅ Broken Path Guard Markdown relative & root link regression test verified');
+}
+
+// -------------------------------------------------------------
+// Test Case 23: 登録写真の基準化（全12色パレット・境界アンカー・A4寸法推定・3:4切り抜き配置・暫定値非永続化・一括色更新）
+// -------------------------------------------------------------
+{
+  const rawCloset = JSON.parse(fs.readFileSync(path.join(projectRoot, 'src/data/closet.json'), 'utf-8'));
+
+  // 1. 全12色パレットおよび境界判定アンカー定数の検証
+  const expectedPalette = [
+    '白',
+    '生成り',
+    '黒',
+    'チャコール',
+    'ミディアムグレー',
+    'ライトグレー',
+    'グレージュ',
+    '濃紺',
+    'ブルー',
+    '淡青',
+    'オリーブ',
+    'ブラウン',
+  ];
+  for (const color of expectedPalette) {
+    assert.equal(isValidGarmentColor(color), true, `${color} must be a valid garment color`);
+  }
+  assert.equal(isValidGarmentColor('ネイビー'), false, '「ネイビー」単独指定は濃紺統合のため無効である必要がある');
+  assert.equal(isValidGarmentColor('水色'), false, '水色はパレット外');
+  assert.equal(isValidGarmentColor('インディゴ'), false, 'インディゴはパレット外');
+  assert.equal(isValidGarmentColor(''), false);
+  assert.equal(isValidGarmentColor(null), false);
+  assert.equal(isValidGarmentColor(undefined), false);
+
+  assert.ok(GARMENT_COLOR_ANCHOR_GUIDE.includes('白と生成りの境界'), 'Anchor guide must include white/ecru boundary');
+  assert.ok(GARMENT_COLOR_ANCHOR_GUIDE.includes('淡青・ブルー・濃紺の境界'), 'Anchor guide must include 3-level blue boundary');
+  assert.ok(GARMENT_COLOR_ANCHOR_GUIDE.includes('濃紺と黒の境界'), 'Anchor guide must include dark navy / black boundary');
+  assert.ok(GARMENT_COLOR_ANCHOR_GUIDE.includes('グレー各色'), 'Anchor guide must include gray boundary');
+
+  // 2. inferGarmentColor (表示用暫定値フォールバック) の検証
+  assert.equal(inferGarmentColor('白無地長袖シャツ', '清潔感'), '白');
+  assert.equal(inferGarmentColor('生成りワーク長袖シャツ', 'エクリュ'), '生成り');
+  assert.equal(inferGarmentColor('黒スウェットイージーパンツ'), '黒');
+  assert.equal(inferGarmentColor('チャコールグレージョガーパンツ'), 'チャコール');
+  assert.equal(inferGarmentColor('ライトグレースウェットジョガー'), 'ライトグレー');
+  assert.equal(inferGarmentColor('グレージュチノトラウザー'), 'グレージュ');
+  assert.equal(inferGarmentColor('ミディアムグレーイージースラックス'), 'ミディアムグレー');
+  assert.equal(inferGarmentColor('濃インディゴ無地長袖シャツ'), '濃紺');
+  assert.equal(inferGarmentColor('ネイビーピンストライプパンツ'), '濃紺');
+  assert.equal(inferGarmentColor('ヒッコリー細ストライプパンツ'), '濃紺');
+  assert.equal(inferGarmentColor('サックスシャンブレー長袖シャツ'), '淡青');
+  assert.equal(inferGarmentColor('ブルーウォッシュデニム'), 'ブルー');
+  assert.equal(inferGarmentColor('インディゴパッチワーク柄パンツ'), 'ブルー');
+  assert.equal(inferGarmentColor('オリーブグリーンチノパン'), 'オリーブ');
+  assert.equal(inferGarmentColor('モカブラウンシャツ'), 'ブラウン');
+
+  // 3. validateGarmentMeasurements の検証
+  const validShirtMeasurements = validateGarmentMeasurements(
+    { bodyLength: 72.3, chestWidth: 54.8, shoulderWidth: 46.1, sleeveLength: 61.4, invalidField: 999 },
+    'shirt'
+  );
+  assert.deepEqual(validShirtMeasurements, {
+    bodyLength: 72.5,
+    chestWidth: 55.0,
+    shoulderWidth: 46.0,
+    sleeveLength: 61.5,
+  }, 'Shirt measurements must be normalized to 0.5cm steps and extra fields stripped');
+
+  const validPantsMeasurements = validateGarmentMeasurements(
+    { waist: 82.2, inseam: 71.8, totalLength: 98.4, hemWidth: 18.2, bodyLength: 70 },
+    'pants'
+  );
+  assert.deepEqual(validPantsMeasurements, {
+    waist: 82.0,
+    inseam: 72.0,
+    totalLength: 98.5,
+    hemWidth: 18.0,
+  }, 'Pants measurements must be normalized to 0.5cm steps and category mismatch stripped');
+
+  assert.equal(validateGarmentMeasurements(null), undefined);
+  assert.equal(validateGarmentMeasurements({ bodyLength: 5 }), undefined, 'Out of range < 10 must be ignored');
+  assert.equal(validateGarmentMeasurements({ bodyLength: 300 }), undefined, 'Out of range > 200 must be ignored');
+  assert.equal(validateGarmentMeasurements({ bodyLength: NaN }), undefined);
+
+  // 4. normalizeCropBox & calculateCropAndPlacement の検証
+  const validBox = normalizeCropBox({ ymin: 80, xmin: 150, ymax: 920, xmax: 850 });
+  assert.deepEqual(validBox, { ymin: 80, xmin: 150, ymax: 920, xmax: 850 });
+  assert.equal(normalizeCropBox(null), undefined);
+  assert.equal(normalizeCropBox({ ymin: 80, xmin: 80, ymax: 90, xmax: 90 }), undefined, 'Too small area must be rejected');
+  assert.equal(normalizeCropBox({ ymin: '80', xmin: 100, ymax: 900, xmax: 800 }), undefined, 'Non-numbers must be rejected');
+
+  // 有効な cropBox がある場合: 6%マージン付きで切り抜き、900x1200キャンバスの中央に配置
+  const cropPlacement = calculateCropAndPlacement(1000, 1000, validBox, 0.06);
+  assert.equal(cropPlacement.isCropped, true);
+  assert.equal(cropPlacement.canvasWidth, 900);
+  assert.equal(cropPlacement.canvasHeight, 1200);
+  assert.ok(cropPlacement.destW <= 900 && cropPlacement.destH <= 1200);
+  assert.ok(cropPlacement.destX >= 0 && cropPlacement.destY >= 0);
+
+  // cropBox が無効/null の場合: 元画像全体をアスペクト比維持で中央に配置 (フォールバック)
+  const fallbackPlacement = calculateCropAndPlacement(1600, 1200, null);
+  assert.equal(fallbackPlacement.isCropped, false);
+  assert.equal(fallbackPlacement.srcX, 0);
+  assert.equal(fallbackPlacement.srcY, 0);
+  assert.equal(fallbackPlacement.srcW, 1600);
+  assert.equal(fallbackPlacement.srcH, 1200);
+  assert.equal(fallbackPlacement.destW, 900); // 1600:1200 (4:3) scaled to width 900 -> height 675
+  assert.equal(fallbackPlacement.destH, 675);
+  assert.equal(fallbackPlacement.destX, 0);
+  assert.equal(fallbackPlacement.destY, Math.round((1200 - 675) / 2));
+
+  // 5. validateSingleClosetItem の色・寸法・一時プロパティ除去検証
+  const testP16Candidate = {
+    id: 'P16',
+    category: 'pants',
+    name: '黒テーパードスラックス',
+    color: '黒',
+    imageUrl: '/images/P16.jpg',
+    seasonSleeve: '通年',
+    dressScore: 4.5,
+    comfortScore: 4.0,
+    officeRecommendIds: ['S1', 'S2', 'S3'],
+    remoteRecommendIds: ['S4', 'S5'],
+    ngIds: ['S8'],
+    ngReason: 'なし',
+    notes: '万能黒スラックス',
+    measurements: { waist: 82, inseam: 72 },
+    cropBox: { ymin: 100, xmin: 100, ymax: 900, xmax: 900 },
+    garmentBox: { ymin: 100, xmin: 100, ymax: 900, xmax: 900 },
+  };
+
+  const p16ValidRes = validateSingleClosetItem(testP16Candidate, rawCloset);
+  assert.equal(p16ValidRes.valid, true);
+  assert.equal(p16ValidRes.item.color, '黒');
+  assert.deepEqual(p16ValidRes.item.measurements, { waist: 82, inseam: 72 });
+  assert.equal('cropBox' in p16ValidRes.item, false, 'cropBox must be stripped from returned ClosetItem');
+  assert.equal('garmentBox' in p16ValidRes.item, false, 'garmentBox must be stripped from returned ClosetItem');
+
+  // 色欠落はエラー
+  const noColorRes = validateSingleClosetItem({ ...testP16Candidate, color: undefined }, rawCloset);
+  assert.equal(noColorRes.valid, false);
+  assert.ok(noColorRes.error.includes('未設定'));
+
+  // 「ネイビー」単独指定は濃紺統合の案内付きでエラー
+  const navyRes = validateSingleClosetItem({ ...testP16Candidate, color: 'ネイビー' }, rawCloset);
+  assert.equal(navyRes.valid, false);
+  assert.ok(navyRes.error.includes('「濃紺」に統合'), 'Error must guide that navy is integrated into dark navy');
+
+  // パレット外の色はエラー
+  const invalidColorRes = validateSingleClosetItem({ ...testP16Candidate, color: '水色' }, rawCloset);
+  assert.equal(invalidColorRes.valid, false);
+  assert.ok(invalidColorRes.error.includes('無効です'));
+
+  // 6. 【レビュー条件検証】validateClosetDataSchema の暫定値非永続化と既存データ読み込み保護
+  // 6a. color が未設定のレガシーデータ: 読み込み成功し、color は undefined のまま保持（inferGarmentColor で勝手に上書きされない）
+  const legacyDataWithoutColor = {
+    items: rawCloset.items.map((item) => {
+      const { color: _c, ...rest } = item;
+      return rest;
+    }),
+  };
+  const legacyLoadRes = validateClosetDataSchema(legacyDataWithoutColor);
+  assert.equal(legacyLoadRes.valid, true, 'Legacy data without color must be successfully loaded');
+  assert.equal(
+    legacyLoadRes.data.items[0].color,
+    undefined,
+    'color must remain undefined and NOT be overwritten with inferGarmentColor in validateClosetDataSchema'
+  );
+
+  // 6b. color にパレット外（旧 'ネイビー' など）が含まれる場合: 読み込みは失敗させず、undefined にサニタイズして保護
+  const legacyDataWithOldColor = {
+    items: [
+      { ...rawCloset.items[0], color: 'ネイビー' },
+      ...rawCloset.items.slice(1),
+    ],
+  };
+  const oldColorLoadRes = validateClosetDataSchema(legacyDataWithOldColor);
+  assert.equal(oldColorLoadRes.valid, true, 'Legacy data with invalid color must not fail validation');
+  assert.equal(
+    oldColorLoadRes.data.items[0].color,
+    undefined,
+    'Out-of-palette color must be sanitized to undefined instead of crashing load'
+  );
+
+  // 6c. 有効な確定 color はそのまま保持
+  const confirmedLoadRes = validateClosetDataSchema(rawCloset);
+  assert.equal(confirmedLoadRes.valid, true);
+  assert.equal(confirmedLoadRes.data.items[0].color, '濃紺');
+  assert.equal(confirmedLoadRes.data.items[1].color, '白');
+
+  // 7. applyBatchColorUpdates の検証
+  const sampleBatchUpdates = {
+    colorUpdates: [
+      { id: 'S1', color: '濃紺' },
+      { id: 'S9', color: '濃紺', name: '紺×白ロンドンストライプ半袖シャツ' },
+      { id: 'P11', color: '濃紺' },
+    ],
+  };
+  const batchRes = applyBatchColorUpdates(rawCloset, sampleBatchUpdates);
+  assert.equal(batchRes.valid, true);
+  assert.equal(batchRes.updatedCount, 3);
+  const updatedS1 = batchRes.data.items.find((i) => i.id === 'S1');
+  const updatedS9 = batchRes.data.items.find((i) => i.id === 'S9');
+  assert.equal(updatedS1.color, '濃紺');
+  assert.deepEqual(updatedS1.officeRecommendIds, rawCloset.items[0].officeRecommendIds, 'officeRecommendIds must remain intact');
+  assert.deepEqual(updatedS1.ngIds, rawCloset.items[0].ngIds, 'ngIds must remain intact');
+  assert.equal(updatedS9.name, '紺×白ロンドンストライプ半袖シャツ');
+
+  // 7a. 異常系: ネイビー単独指定、不正なID、重複ID、パレット外の色
+  const batchWithNavy = applyBatchColorUpdates(rawCloset, {
+    colorUpdates: [{ id: 'S1', color: 'ネイビー' }],
+  });
+  assert.equal(batchWithNavy.valid, false);
+  assert.ok(batchWithNavy.error.includes('「濃紺」に統合'));
+
+  const batchWithInvalidId = applyBatchColorUpdates(rawCloset, {
+    colorUpdates: [{ id: 'S999', color: '濃紺' }],
+  });
+  assert.equal(batchWithInvalidId.valid, false);
+  assert.ok(batchWithInvalidId.error.includes('存在しません'));
+
+  const batchWithDupId = applyBatchColorUpdates(rawCloset, {
+    colorUpdates: [{ id: 'S1', color: '濃紺' }, { id: 'S1', color: '白' }],
+  });
+  assert.equal(batchWithDupId.valid, false);
+  assert.ok(batchWithDupId.error.includes('重複'));
+
+  console.log('  ✅ Garment standardization (12-color palette, anchors, measurements, crop, resilience & batch updates) verified');
 }
 
 console.log('🎉 All GAS backend & sync logic tests passed successfully!');
