@@ -180,7 +180,7 @@
 | **`WifeNgPair`** | 奥様NGペア記録（シャツID、パンツID、登録理由、登録日時）。アプリ内判定で最優先除外される。 |
 | **`RecommendationResult`** | 朝モード計算結果（パンツアイテム実体、順位、前日着用フラグ、総合スコア、相性理由、出社/リモートフラグ）。 |
 | **`GasSyncConfig` / `Payload` / `Response`** | Google Apps Script（GAS）との双方向同期通信ペイロード。LWW（Last-Write-Wins）および削除追跡（`SyncTombstones`）による端末間マージを実現。 |
-| **`GetImageSyncPlan*` / `FetchImages*`** | Google ドライブ画像同期（Phase 1〜2）の差分プラン策定・分割取得インターフェース。 |
+| **`GetImageSyncPlan*` / `FetchImages*`** | Google ドライブ画像同期（Phase 1〜2）の差分プラン策定・分割取得インターフェース（Issue #4: neededItemIds 分のファイル情報引渡しによるフォルダ再走査回避対応）。 |
 | **`UploadImageRequest` / `Response`** | 新規服追加時の端末下書き写真から Google ドライブへの直接自動アップロード用インターフェース。 |
 | **`ItemCompatibilityStats` / `WardrobeAnalysisResult`** | 全マトリクス画面（Tab 4）におけるワードローブ健全性サマリーおよびボトルネック判定データ構造。 |
 | **`BootstrapConfigResponse`** | Cloudflare Pages Functions (`/api/bootstrap-config`) からのゼロ入力設定配布インターフェース。 |

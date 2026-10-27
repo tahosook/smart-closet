@@ -1519,6 +1519,11 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
   assert.deepEqual(planRes.validItemIds, ['P2', 'P4', 'S1']);
   // neededItemIds: P2 (更新差分) と P4 (新規差分)、S1 はすでに最新なので不要
   assert.deepEqual(planRes.neededItemIds, ['P2', 'P4']);
+  // neededItemIds 分のファイル情報が含まれること (Issue #4)
+  assert.ok(planRes.files, 'planRes.files must be present');
+  assert.equal(planRes.files['P2'].fileId, 'f2');
+  assert.equal(planRes.files['P4'].fileId, 'f_huge');
+  assert.equal(planRes.files['S1'], undefined, 'S1 is not in neededItemIds so must not be in files');
   // HEIC 形式に対する警告が含まれていること (指摘B)
   assert.ok(planRes.warnings && planRes.warnings.some((w) => w.includes('p3.heic')), 'Warning for HEIC format must be returned');
 
@@ -3706,6 +3711,295 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
   );
 
   console.log('  ✅ Phase 2 UI registration mode, batch prompt, per-item panel, Drive retry & parse guard verified');
+}
+
+// -------------------------------------------------------------
+// Test Case 27: Issue #4 - fetchImages のバッチごとフォルダ全体再走査回避と後方互換性検証
+// -------------------------------------------------------------
+{
+  const token = 'token-perf-test';
+  const { ss, context } = createGasEnvironment(token);
+  vm.runInContext('setupSpreadsheet()', context);
+
+  // folderId の登録
+  const pushFolderReq = {
+    postData: {
+      contents: JSON.stringify({
+        token,
+        action: 'push',
+        imageFolderId: 'folder-perf-123',
+      }),
+    },
+  };
+  context.mockPushFolder = pushFolderReq;
+  const pushRes = JSON.parse(vm.runInContext('doPost(mockPushFolder).getContent()', context));
+  assert.equal(pushRes.ok, true);
+
+  // 18件の画像ファイルをシミュレート (S1〜S9, P1〜P9)
+  const mockFiles = [];
+  const baseTime = 1700000000000;
+  for (let i = 1; i <= 9; i++) {
+    mockFiles.push({
+      id: `file_s${i}`,
+      name: `S${i}.jpg`,
+      modifiedTime: new Date(baseTime + i * 1000).toISOString(),
+      thumbnailLink: `https://lh3.googleusercontent.com/d/s${i}=s220`,
+      size: 50000,
+      mimeType: 'image/jpeg',
+    });
+    mockFiles.push({
+      id: `file_p${i}`,
+      name: `P${i}.jpg`,
+      modifiedTime: new Date(baseTime + (i + 10) * 1000).toISOString(),
+      thumbnailLink: `https://lh3.googleusercontent.com/d/p${i}=s220`,
+      size: 60000,
+      mimeType: 'image/jpeg',
+    });
+  }
+
+  let folderScanCount = 0;
+  context.Drive = {
+    Files: {
+      list: (params) => {
+        if (params.pageSize === 1) {
+          return { files: [{ modifiedTime: new Date(baseTime).toISOString() }] };
+        }
+        folderScanCount++;
+        return { files: mockFiles };
+      },
+    },
+  };
+
+  context.UrlFetchApp = {
+    fetch: (url) => ({
+      getResponseCode: () => 200,
+      getBlob: () => ({
+        getContentType: () => 'image/jpeg',
+        getBytes: () => Buffer.from('mock-bytes-' + url),
+      }),
+    }),
+  };
+
+  // 1. プラン策定 (getImageSyncPlan) を実行
+  // 端末はローカル画像ゼロ（全18件取得が必要）
+  const planReq = {
+    postData: {
+      contents: JSON.stringify({
+        token,
+        action: 'getImageSyncPlan',
+        imageFolderId: 'folder-perf-123',
+        localMeta: {},
+      }),
+    },
+  };
+  context.mockPlanReq = planReq;
+  const planRes = JSON.parse(vm.runInContext('doPost(mockPlanReq).getContent()', context));
+
+  assert.equal(planRes.ok, true);
+  assert.equal(planRes.validItemIds.length, 18);
+  assert.equal(planRes.neededItemIds.length, 18);
+  assert.equal(folderScanCount, 1, 'getImageSyncPlan must scan image folder exactly once');
+
+  // neededItemIds 分のファイル情報（fileId, thumbnailLink, modifiedTime, mimeType, size）が含まれていること
+  assert.ok(planRes.files, 'getImageSyncPlan response must include files map');
+  assert.equal(Object.keys(planRes.files).length, 18);
+  for (const id of planRes.neededItemIds) {
+    const fileInfo = planRes.files[id];
+    assert.ok(fileInfo, `File info for ${id} must be present`);
+    assert.ok(fileInfo.fileId, `fileId for ${id} must be present`);
+    assert.ok(fileInfo.thumbnailLink, `thumbnailLink for ${id} must be present`);
+    assert.ok(typeof fileInfo.modifiedTime === 'number', `modifiedTime for ${id} must be a number`);
+    assert.equal(fileInfo.mimeType, 'image/jpeg');
+    assert.ok(typeof fileInfo.size === 'number', `size for ${id} must be a number`);
+  }
+
+  // 2. クライアント側（GasSyncModal）と同様に 6件ずつ 3チャンクで fetchImages を直列実行
+  const CHUNK_SIZE = 6;
+  let totalFetchedImages = 0;
+
+  for (let i = 0; i < planRes.neededItemIds.length; i += CHUNK_SIZE) {
+    const chunk = planRes.neededItemIds.slice(i, i + CHUNK_SIZE);
+    const chunkFiles = {};
+    for (const id of chunk) {
+      if (planRes.files[id]) {
+        chunkFiles[id] = planRes.files[id];
+      }
+    }
+
+    const fetchReq = {
+      postData: {
+        contents: JSON.stringify({
+          token,
+          action: 'fetchImages',
+          imageFolderId: 'folder-perf-123',
+          itemIds: chunk,
+          files: chunkFiles, // Issue #4: プランで受け取ったファイル情報を渡す
+        }),
+      },
+    };
+    context.mockFetchChunk = fetchReq;
+    const fetchRes = JSON.parse(vm.runInContext('doPost(mockFetchChunk).getContent()', context));
+
+    assert.equal(fetchRes.ok, true);
+    for (const id of chunk) {
+      assert.ok(fetchRes.images[id], `Image for ${id} must be returned`);
+      assert.ok(fetchRes.timestamps[id], `Timestamp for ${id} must be returned`);
+      totalFetchedImages++;
+    }
+
+    // 【重要検証】各バッチで scanImageFolder が再実行されず、初期の1回から増えていないこと！
+    assert.equal(
+      folderScanCount,
+      1,
+      `scanImageFolder count must remain 1 after chunk ${i / CHUNK_SIZE + 1} fetch`
+    );
+  }
+
+  assert.equal(totalFetchedImages, 18, 'All 18 images must be fetched across 3 chunks');
+  assert.equal(folderScanCount, 1, 'Total scanImageFolder calls during full sync must be EXACTLY 1');
+
+  // 3. 後方互換性および不完全ファイル情報時のフォールバック検証
+  // (a) files が未指定の場合
+  const legacyReq = {
+    postData: {
+      contents: JSON.stringify({
+        token,
+        action: 'fetchImages',
+        imageFolderId: 'folder-perf-123',
+        itemIds: ['S1', 'P1'],
+        // files は未指定
+      }),
+    },
+  };
+  context.mockLegacyReq = legacyReq;
+  const legacyRes = JSON.parse(vm.runInContext('doPost(mockLegacyReq).getContent()', context));
+
+  assert.equal(legacyRes.ok, true);
+  assert.ok(legacyRes.images['S1'], 'S1 image must be fetched in legacy request');
+  assert.ok(legacyRes.images['P1'], 'P1 image must be fetched in legacy request');
+  // files が渡されなかったため、従来どおり scanImageFolder が実行されてカウントが 2 に増加すること
+  assert.equal(
+    folderScanCount,
+    2,
+    'scanImageFolder must be invoked when files is omitted for backward compatibility'
+  );
+
+  // (b) 【ChatGPT レビュー指摘対応】files が一部不足している場合、静かにスキップせず scanImageFolder にフォールバックして全件取得できること
+  const partialFilesReq = {
+    postData: {
+      contents: JSON.stringify({
+        token,
+        action: 'fetchImages',
+        imageFolderId: 'folder-perf-123',
+        itemIds: ['S2', 'P2'],
+        // S2 のみファイル情報があり、P2 が欠落している場合
+        files: {
+          S2: planRes.files['S2'],
+        },
+      }),
+    },
+  };
+  context.mockPartialReq = partialFilesReq;
+  const partialRes = JSON.parse(vm.runInContext('doPost(mockPartialReq).getContent()', context));
+
+  assert.equal(partialRes.ok, true);
+  assert.ok(partialRes.images['S2'], 'S2 image must be fetched when files is partial');
+  assert.ok(partialRes.images['P2'], 'P2 image must be fetched via scanImageFolder fallback (never quietly dropped)');
+  // 不足していたため scanImageFolder が実行されてカウントが 3 に増加すること
+  assert.equal(
+    folderScanCount,
+    3,
+    'scanImageFolder must be invoked when files is incomplete for requested itemIds'
+  );
+
+  // (c) files が空オブジェクト {} の場合も scanImageFolder にフォールバックすること
+  const emptyFilesReq = {
+    postData: {
+      contents: JSON.stringify({
+        token,
+        action: 'fetchImages',
+        imageFolderId: 'folder-perf-123',
+        itemIds: ['S3'],
+        files: {},
+      }),
+    },
+  };
+  context.mockEmptyReq = emptyFilesReq;
+  const emptyRes = JSON.parse(vm.runInContext('doPost(mockEmptyReq).getContent()', context));
+  assert.equal(emptyRes.ok, true);
+  assert.ok(emptyRes.images['S3'], 'S3 image must be fetched via fallback when files is empty');
+  assert.equal(
+    folderScanCount,
+    4,
+    'scanImageFolder must be invoked when files is an empty object {}'
+  );
+
+  // (d) files 内のデータが不正（fileId 欠落など）の場合もフォールバックすること
+  const corruptFilesReq = {
+    postData: {
+      contents: JSON.stringify({
+        token,
+        action: 'fetchImages',
+        imageFolderId: 'folder-perf-123',
+        itemIds: ['S4'],
+        files: {
+          S4: { name: 'S4.jpg' }, // fileId と modifiedTime が欠落
+        },
+      }),
+    },
+  };
+  context.mockCorruptReq = corruptFilesReq;
+  const corruptRes = JSON.parse(vm.runInContext('doPost(mockCorruptReq).getContent()', context));
+  assert.equal(corruptRes.ok, true);
+  assert.ok(corruptRes.images['S4'], 'S4 image must be fetched via fallback when file info is corrupt');
+  assert.equal(
+    folderScanCount,
+    5,
+    'scanImageFolder must be invoked when file info lacks required fields'
+  );
+
+  // (e) 大文字小文字の差異があっても全件そろっていれば走査スキップされること
+  const mixedCaseReq = {
+    postData: {
+      contents: JSON.stringify({
+        token,
+        action: 'fetchImages',
+        imageFolderId: 'folder-perf-123',
+        itemIds: ['s5', 'P5'],
+        files: {
+          'S5': planRes.files['S5'],
+          'p5': planRes.files['P5'],
+        },
+      }),
+    },
+  };
+  context.mockMixedCaseReq = mixedCaseReq;
+  const mixedCaseRes = JSON.parse(vm.runInContext('doPost(mockMixedCaseReq).getContent()', context));
+  assert.equal(mixedCaseRes.ok, true);
+  assert.ok(mixedCaseRes.images['S5']);
+  assert.ok(mixedCaseRes.images['P5']);
+  // 全件有効に揃っているため走査はスキップされ、カウントは 5 のまま維持されること
+  assert.equal(
+    folderScanCount,
+    5,
+    'scanImageFolder must be skipped when all files are complete regardless of case'
+  );
+
+  // 4. クライアントコード（GasSyncModal.tsx）の静的整合性検証
+  const gasSyncModalCode = fs.readFileSync(
+    path.join(projectRoot, 'src/components/GasSyncModal.tsx'),
+    'utf-8'
+  );
+  assert.ok(
+    gasSyncModalCode.includes('planFiles') || gasSyncModalCode.includes('planData.files'),
+    'GasSyncModal must extract files from planData'
+  );
+  assert.ok(
+    gasSyncModalCode.includes('files: chunkFiles') || gasSyncModalCode.includes('files:'),
+    'GasSyncModal must pass chunk files to fetchImages request'
+  );
+
+  console.log('  ✅ Issue #4: fetchImages scan skipping & backward compatibility verified');
 }
 
 console.log('🎉 All GAS backend & sync logic tests passed successfully!');

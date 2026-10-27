@@ -858,12 +858,29 @@ function handleGetImageSyncPlan(ss, payload) {
       }
     }
 
+    // neededItemIds 分のファイル情報 (Issue #4: fetchImages のフォルダ全体再走査を避ける)
+    const files = {};
+    for (let i = 0; i < neededItemIds.length; i++) {
+      const id = neededItemIds[i];
+      const info = itemMap[id];
+      if (info) {
+        files[id] = {
+          fileId: info.fileId,
+          thumbnailLink: info.thumbnailLink || null,
+          modifiedTime: info.modifiedTime,
+          mimeType: info.mimeType || 'image/jpeg',
+          size: typeof info.size === 'number' ? info.size : 0
+        };
+      }
+    }
+
     return createJsonResponse({
       ok: true,
       validItemIds: validItemIds,
       neededItemIds: neededItemIds,
       imagesLastUpdatedAt: latestTime,
-      warnings: warnings
+      warnings: warnings,
+      files: files
     });
   } catch (err) {
     return createJsonResponse({ ok: false, error: '画像フォルダ走査エラー: ' + err.toString() });
@@ -885,11 +902,41 @@ function handleFetchImages(ss, payload) {
   }
 
   try {
-    const scanResult = scanImageFolder(folderId);
-    const itemMap = scanResult.itemMap;
+    const providedFiles = (payload && (payload.files || payload.neededFiles)) || null;
+    let itemMap;
+    let warnings = [];
+
+    // Issue #4: 要求された itemIds の全件分について有効なファイル情報が揃っている場合のみ再走査をスキップ
+    const isObject = providedFiles && typeof providedFiles === 'object' && !Array.isArray(providedFiles);
+    let normalizedProvided = null;
+    if (isObject) {
+      normalizedProvided = {};
+      const keys = Object.keys(providedFiles);
+      for (let k = 0; k < keys.length; k++) {
+        const key = keys[k];
+        normalizedProvided[String(key).toUpperCase()] = providedFiles[key];
+      }
+    }
+
+    const hasCompleteFiles =
+      Boolean(normalizedProvided) &&
+      itemIds.length > 0 &&
+      itemIds.every(function (id) {
+        const info = normalizedProvided[String(id).toUpperCase()];
+        return info && info.fileId && typeof info.modifiedTime === 'number';
+      });
+
+    if (hasCompleteFiles) {
+      itemMap = normalizedProvided;
+    } else {
+      // 空・不足・不正な場合は、従来どおり scanImageFolder による走査にフォールバック (後方互換・欠落防止)
+      const scanResult = scanImageFolder(folderId);
+      itemMap = scanResult.itemMap;
+      warnings = scanResult.warnings;
+    }
+
     const images = {};
     const timestamps = {};
-    const warnings = [];
 
     const token = typeof ScriptApp !== 'undefined' ? ScriptApp.getOAuthToken() : '';
 

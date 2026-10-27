@@ -160,12 +160,21 @@ export interface GasSyncResponse {
 }
 
 // ----------------------------------------------------
-// Google ドライブ画像同期関連の型定義 (Phase 1〜2)
+// Google ドライブ画像同期関連の型定義 (Phase 1〜2, Issue #4)
 // ----------------------------------------------------
+
+export interface DriveImageFileInfo {
+  fileId: string;
+  thumbnailLink?: string | null;
+  modifiedTime: number;
+  mimeType?: string;
+  size?: number;
+}
 
 export interface GetImageSyncPlanRequest {
   action: 'getImageSyncPlan';
   token?: string;
+  imageFolderId?: string;
   localMeta: Record<string, number>; // { [itemId]: lastModifiedTimestamp }
 }
 
@@ -176,12 +185,15 @@ export interface GetImageSyncPlanResponse {
   neededItemIds: string[];           // 新規または更新された取得対象アイテムID
   imagesLastUpdatedAt: number;       // フォルダ内の最新更新タイムスタンプ
   warnings?: string[];               // 非対応形式 (HEIC等) の注意喚起警告 (指摘B)
+  files?: Record<string, DriveImageFileInfo>; // neededItemIds 分のファイル情報 (Issue #4: 再走査回避用)
 }
 
 export interface FetchImagesRequest {
   action: 'fetchImages';
   token?: string;
+  imageFolderId?: string;
   itemIds: string[];                 // チャンク指定された取得対象アイテムID (6〜8件)
+  files?: Record<string, DriveImageFileInfo>; // プランで取得したファイル情報（指定時はフォルダ再走査をスキップ）
 }
 
 export interface FetchImagesResponse {

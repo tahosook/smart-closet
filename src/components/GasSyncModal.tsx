@@ -34,6 +34,7 @@ import {
 import {
   GetImageSyncPlanResponse,
   FetchImagesResponse,
+  DriveImageFileInfo,
 } from '../types/closet';
 import GAS_SCRIPT_TEMPLATE from '../../gas/Code.gs?raw';
 
@@ -235,7 +236,13 @@ export const GasSyncModal: React.FC<GasSyncModalProps> = ({ isOpen, onClose }) =
       const planData: GetImageSyncPlanResponse = await planRes.json();
       if (!planData.ok) throw new Error(planData.error || 'プラン策定エラー');
 
-      const { validItemIds, neededItemIds, imagesLastUpdatedAt, warnings: planWarnings } = planData;
+      const {
+        validItemIds,
+        neededItemIds,
+        imagesLastUpdatedAt,
+        warnings: planWarnings,
+        files: planFiles,
+      } = planData;
       const allWarnings: string[] = [];
       if (planWarnings && planWarnings.length > 0) {
         allWarnings.push(...planWarnings);
@@ -257,6 +264,18 @@ export const GasSyncModal: React.FC<GasSyncModalProps> = ({ isOpen, onClose }) =
         const chunk = neededItemIds.slice(i, i + CHUNK_SIZE);
         setImageSyncProgress(`写真を取得中... (${fetchedCount}/${neededItemIds.length}枚)`);
 
+        // プランで受け取ったファイル情報をチャンクごとに抽出して引き渡す (Issue #4: フォルダ再走査のスキップ)
+        let chunkFiles: Record<string, DriveImageFileInfo> | undefined = undefined;
+        if (planFiles) {
+          chunkFiles = {};
+          for (const id of chunk) {
+            const fileInfo = planFiles[id] || planFiles[id.toUpperCase()];
+            if (fileInfo) {
+              chunkFiles[id.toUpperCase()] = fileInfo;
+            }
+          }
+        }
+
         const fetchRes = await fetch(webAppUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'text/plain;charset=utf-8' },
@@ -265,6 +284,7 @@ export const GasSyncModal: React.FC<GasSyncModalProps> = ({ isOpen, onClose }) =
             token: tokenInput.trim() || gasConfig.secretToken,
             imageFolderId: folderId,
             itemIds: chunk,
+            ...(chunkFiles ? { files: chunkFiles } : {}),
           }),
         });
 
