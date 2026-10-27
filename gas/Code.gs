@@ -906,15 +906,30 @@ function handleFetchImages(ss, payload) {
     let itemMap;
     let warnings = [];
 
-    // Issue #4: ファイル情報がリクエストに含まれている場合は scanImageFolder によるフォルダ全体の再走査をスキップ
-    if (providedFiles && typeof providedFiles === 'object' && !Array.isArray(providedFiles)) {
-      itemMap = {};
+    // Issue #4: 要求された itemIds の全件分について有効なファイル情報が揃っている場合のみ再走査をスキップ
+    const isObject = providedFiles && typeof providedFiles === 'object' && !Array.isArray(providedFiles);
+    let normalizedProvided = null;
+    if (isObject) {
+      normalizedProvided = {};
       const keys = Object.keys(providedFiles);
       for (let k = 0; k < keys.length; k++) {
         const key = keys[k];
-        itemMap[key.toUpperCase()] = providedFiles[key];
+        normalizedProvided[String(key).toUpperCase()] = providedFiles[key];
       }
+    }
+
+    const hasCompleteFiles =
+      Boolean(normalizedProvided) &&
+      itemIds.length > 0 &&
+      itemIds.every(function (id) {
+        const info = normalizedProvided[String(id).toUpperCase()];
+        return info && info.fileId && typeof info.modifiedTime === 'number';
+      });
+
+    if (hasCompleteFiles) {
+      itemMap = normalizedProvided;
     } else {
+      // 空・不足・不正な場合は、従来どおり scanImageFolder による走査にフォールバック (後方互換・欠落防止)
       const scanResult = scanImageFolder(folderId);
       itemMap = scanResult.itemMap;
       warnings = scanResult.warnings;

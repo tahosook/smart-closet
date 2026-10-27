@@ -3858,7 +3858,8 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
   assert.equal(totalFetchedImages, 18, 'All 18 images must be fetched across 3 chunks');
   assert.equal(folderScanCount, 1, 'Total scanImageFolder calls during full sync must be EXACTLY 1');
 
-  // 3. 後方互換性の検証 (files が渡されない古いクライアントまたは手動リクエスト時)
+  // 3. 後方互換性および不完全ファイル情報時のフォールバック検証
+  // (a) files が未指定の場合
   const legacyReq = {
     postData: {
       contents: JSON.stringify({
@@ -3881,6 +3882,107 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
     folderScanCount,
     2,
     'scanImageFolder must be invoked when files is omitted for backward compatibility'
+  );
+
+  // (b) 【ChatGPT レビュー指摘対応】files が一部不足している場合、静かにスキップせず scanImageFolder にフォールバックして全件取得できること
+  const partialFilesReq = {
+    postData: {
+      contents: JSON.stringify({
+        token,
+        action: 'fetchImages',
+        imageFolderId: 'folder-perf-123',
+        itemIds: ['S2', 'P2'],
+        // S2 のみファイル情報があり、P2 が欠落している場合
+        files: {
+          S2: planRes.files['S2'],
+        },
+      }),
+    },
+  };
+  context.mockPartialReq = partialFilesReq;
+  const partialRes = JSON.parse(vm.runInContext('doPost(mockPartialReq).getContent()', context));
+
+  assert.equal(partialRes.ok, true);
+  assert.ok(partialRes.images['S2'], 'S2 image must be fetched when files is partial');
+  assert.ok(partialRes.images['P2'], 'P2 image must be fetched via scanImageFolder fallback (never quietly dropped)');
+  // 不足していたため scanImageFolder が実行されてカウントが 3 に増加すること
+  assert.equal(
+    folderScanCount,
+    3,
+    'scanImageFolder must be invoked when files is incomplete for requested itemIds'
+  );
+
+  // (c) files が空オブジェクト {} の場合も scanImageFolder にフォールバックすること
+  const emptyFilesReq = {
+    postData: {
+      contents: JSON.stringify({
+        token,
+        action: 'fetchImages',
+        imageFolderId: 'folder-perf-123',
+        itemIds: ['S3'],
+        files: {},
+      }),
+    },
+  };
+  context.mockEmptyReq = emptyFilesReq;
+  const emptyRes = JSON.parse(vm.runInContext('doPost(mockEmptyReq).getContent()', context));
+  assert.equal(emptyRes.ok, true);
+  assert.ok(emptyRes.images['S3'], 'S3 image must be fetched via fallback when files is empty');
+  assert.equal(
+    folderScanCount,
+    4,
+    'scanImageFolder must be invoked when files is an empty object {}'
+  );
+
+  // (d) files 内のデータが不正（fileId 欠落など）の場合もフォールバックすること
+  const corruptFilesReq = {
+    postData: {
+      contents: JSON.stringify({
+        token,
+        action: 'fetchImages',
+        imageFolderId: 'folder-perf-123',
+        itemIds: ['S4'],
+        files: {
+          S4: { name: 'S4.jpg' }, // fileId と modifiedTime が欠落
+        },
+      }),
+    },
+  };
+  context.mockCorruptReq = corruptFilesReq;
+  const corruptRes = JSON.parse(vm.runInContext('doPost(mockCorruptReq).getContent()', context));
+  assert.equal(corruptRes.ok, true);
+  assert.ok(corruptRes.images['S4'], 'S4 image must be fetched via fallback when file info is corrupt');
+  assert.equal(
+    folderScanCount,
+    5,
+    'scanImageFolder must be invoked when file info lacks required fields'
+  );
+
+  // (e) 大文字小文字の差異があっても全件そろっていれば走査スキップされること
+  const mixedCaseReq = {
+    postData: {
+      contents: JSON.stringify({
+        token,
+        action: 'fetchImages',
+        imageFolderId: 'folder-perf-123',
+        itemIds: ['s5', 'P5'],
+        files: {
+          'S5': planRes.files['S5'],
+          'p5': planRes.files['P5'],
+        },
+      }),
+    },
+  };
+  context.mockMixedCaseReq = mixedCaseReq;
+  const mixedCaseRes = JSON.parse(vm.runInContext('doPost(mockMixedCaseReq).getContent()', context));
+  assert.equal(mixedCaseRes.ok, true);
+  assert.ok(mixedCaseRes.images['S5']);
+  assert.ok(mixedCaseRes.images['P5']);
+  // 全件有効に揃っているため走査はスキップされ、カウントは 5 のまま維持されること
+  assert.equal(
+    folderScanCount,
+    5,
+    'scanImageFolder must be skipped when all files are complete regardless of case'
   );
 
   // 4. クライアントコード（GasSyncModal.tsx）の静的整合性検証
