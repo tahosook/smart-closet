@@ -4003,15 +4003,19 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
 }
 
 // -------------------------------------------------------------
-// Test Case 28: 今朝画面（TodayView）「上下コーディネート詳細」モーダル内の1着全画面拡大表示
+// Test Case 28: 今朝画面（TodayView）「上下コーディネート詳細」モーダル内の1着全画面拡大表示（最大化＆左右スワイプ切替）
 // -------------------------------------------------------------
 {
   const todayCode = fs.readFileSync(path.join(projectRoot, 'src/components/TodayView.tsx'), 'utf-8');
 
-  // 1. 状態管理（singleZoomItem）の定義と初期化
+  // 1. 状態管理（singleZoomItem・zoomItemPair・タッチ管理）の定義と初期化
   assert.ok(
     todayCode.includes('const [singleZoomItem, setSingleZoomItem] = useState<ClosetItem | null>(null);'),
     'TodayView must define singleZoomItem state'
+  );
+  assert.ok(
+    todayCode.includes('touchStartRef') && todayCode.includes('didSwipeRef'),
+    'TodayView must define touch refs for swipe gesture tracking'
   );
 
   // 2. ペアモーダル内のシャツ写真・パンツ写真がそれぞれタップ可能（button）であり、singleZoomItem をセットすること
@@ -4036,26 +4040,57 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
     'Single item fullscreen zoom overlay must use z-[60] (above pair modal z-50)'
   );
 
-  // 4. 復帰動作の検証:
-  //    全画面オーバーレイを閉じる際（背景・画像タップまたは閉じるボタン）、setSingleZoomItem(null) のみを呼び出し
-  //    zoomItemPair は破棄せず保持していること（元のペアモーダルへ戻る）
+  // 4. 復帰動作とスワイプ/タップ非競合の検証:
+  //    - オーバーレイクリック時は didSwipeRef を判定し、スワイプ直後は閉じず、タップ時のみ setSingleZoomItem(null)
+  //    - 閉じるボタン（✕）は明示的に setSingleZoomItem(null)
+  //    - zoomItemPair は破棄せず保持していること（元のペアモーダルへ戻る）
   assert.ok(
-    todayCode.includes('onClick={() => setSingleZoomItem(null)}') &&
+    todayCode.includes('onClick={handleSingleZoomOverlayClick}') &&
     todayCode.includes('cursor-zoom-out'),
-    'Overlay must close singleZoomItem on background/image tap'
+    'Overlay must handle overlay click with swipe check and cursor-zoom-out'
+  );
+  assert.ok(
+    todayCode.includes('if (didSwipeRef.current)') && todayCode.includes('setSingleZoomItem(null)'),
+    'handleSingleZoomOverlayClick must respect didSwipeRef and close on tap'
   );
   assert.ok(
     todayCode.includes('title="拡大表示を閉じる"'),
     'Overlay must have an explicit close button with title'
   );
 
-  // 5. 表示内容・アスペクト比・フォールバックの検証:
-  //    - singleZoomItem.id と singleZoomItem.name がヘッダーに表示されること
-  //    - aspect-[3/4] と object-contain により 900x1200 の比率を保って最大表示されること
-  //    - ItemImage コンポーネントを使用し、写真なしアイテムでも SVG フォールバックで安全に表示されること
+  // 5. 左右スワイプ切替（シャツ⇔パンツ）の検証:
+  //    - SWIPE_THRESHOLD_PX と TAP_MOVE_LIMIT_PX によるスワイプ判定
+  //    - handleToggleSingleZoomItem によるペア内2着のトグル切替
+  //    - onTouchStart と onTouchEnd によるジェスチャー検知
   assert.ok(
-    todayCode.includes('singleZoomItem.id') && todayCode.includes('singleZoomItem.name'),
-    'Single zoom overlay must display item ID and name'
+    todayCode.includes('SWIPE_THRESHOLD_PX') && todayCode.includes('TAP_MOVE_LIMIT_PX'),
+    'TodayView must define swipe and tap distance constants'
+  );
+  assert.ok(
+    todayCode.includes('prev.id === zoomItemPair.shirt.id ? zoomItemPair.pants : zoomItemPair.shirt'),
+    'handleToggleSingleZoomItem must toggle between pair shirt and pants'
+  );
+  assert.ok(
+    todayCode.includes('onTouchStart={handleZoomTouchStart}') &&
+    todayCode.includes('onTouchEnd={handleZoomTouchEnd}'),
+    'Overlay must bind touch start and end handlers'
+  );
+
+  // 6. 表示最大化・アスペクト比・フォールバックの検証:
+  //    - 余白・枠を排し、flex-1 min-h-0 w-full h-full で画面領域を最大限利用
+  //    - 内側コンテナは一方向（w-full）から寸法を決め、aspect-[3/4] を有効化して3:4の箱を保証（w-full と h-full の同時指定によるアスペクト比無効化を防止）
+  //    - aspect-[3/4] と object-contain により 900x1200 の比率を保って最大表示
+  //    - ItemImage コンポーネントを使用し、写真なしアイテムでも SVG フォールバックで安全に表示
+  //    - singleZoomItem.id と singleZoomItem.name がヘッダーに連動表示されること
+  assert.ok(
+    todayCode.includes('flex-1 min-h-0 w-full h-full flex items-center justify-center overflow-hidden bg-black'),
+    'Single zoom overlay must maximize image area without card margins or padding'
+  );
+  assert.ok(
+    todayCode.includes('aspect-[3/4]') &&
+    todayCode.includes('max-w-[calc((100dvh-4rem)*0.75)]') &&
+    !todayCode.includes('aspect-[3/4] w-full h-full'),
+    'Inner container must size from one direction without simultaneous w-full h-full, preserving 3:4 box dimension'
   );
   assert.ok(
     todayCode.includes('aspect-[3/4]') && todayCode.includes('object-contain'),
@@ -4065,8 +4100,12 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
     todayCode.includes('<ItemImage') && todayCode.includes('item={singleZoomItem}'),
     'Single zoom overlay must render ItemImage for consistent photo & SVG fallback'
   );
+  assert.ok(
+    todayCode.includes('singleZoomItem.id') && todayCode.includes('singleZoomItem.name'),
+    'Single zoom overlay must display dynamic item ID and name'
+  );
 
-  // 6. タップターゲット 44x44px 以上と既存動作維持の検証:
+  // 7. タップターゲット 44x44px 以上と既存動作維持の検証:
   //    - 閉じるボタンに min-w-[44px] min-h-[44px] が設定されていること
   //    - ペアモーダルを閉じる際および「この組み合わせを着る」実行時に状態が安全にリセットされること
   //    - 「この組み合わせを着る」処理（handleSelectWear）が変更なく維持されていること
@@ -4079,14 +4118,14 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
     'Wear selection action must remain intact'
   );
 
-  // 7. SPECIFICATION.md のドキュメント整合性検証
+  // 8. SPECIFICATION.md のドキュメント整合性検証
   const specContent = fs.readFileSync(path.join(projectRoot, 'docs/SPECIFICATION.md'), 'utf-8');
   assert.ok(
-    specContent.includes('全画面拡大表示可能'),
-    'SPECIFICATION.md must document single-item fullscreen zoom in Tab 1'
+    specContent.includes('全画面拡大表示可能') && specContent.includes('左右スワイプでペアのシャツ⇔パンツを瞬時に切り替え'),
+    'SPECIFICATION.md must document maximized single-item fullscreen zoom and swipe toggle'
   );
 
-  console.log('  ✅ TodayView single garment fullscreen zoom, z-index layering & fallback safety verified');
+  console.log('  ✅ TodayView single garment maximized zoom & swipe pair toggle verified');
 }
 
 console.log('🎉 All GAS backend & sync logic tests passed successfully!');

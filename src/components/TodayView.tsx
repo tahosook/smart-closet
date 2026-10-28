@@ -43,6 +43,9 @@ function formatShirtMeasurements(m?: GarmentMeasurements): string | null {
   return parts.length > 0 ? parts.join(' / ') + 'cm' : null;
 }
 
+const SWIPE_THRESHOLD_PX = 40;
+const TAP_MOVE_LIMIT_PX = 10;
+
 export const TodayView: React.FC = () => {
   const {
     shirts,
@@ -64,6 +67,61 @@ export const TodayView: React.FC = () => {
     null
   );
   const [singleZoomItem, setSingleZoomItem] = useState<ClosetItem | null>(null);
+
+  const touchStartRef = useRef<{ x: number; y: number } | null>(null);
+  const didSwipeRef = useRef<boolean>(false);
+
+  const handleToggleSingleZoomItem = useCallback(() => {
+    if (!zoomItemPair) return;
+    setSingleZoomItem((prev) => {
+      if (!prev) return null;
+      return prev.id === zoomItemPair.shirt.id ? zoomItemPair.pants : zoomItemPair.shirt;
+    });
+  }, [zoomItemPair]);
+
+  const handleZoomTouchStart = (e: React.TouchEvent) => {
+    if (e.touches.length !== 1) {
+      touchStartRef.current = null;
+      didSwipeRef.current = true;
+      return;
+    }
+    const touch = e.touches[0];
+    touchStartRef.current = { x: touch.clientX, y: touch.clientY };
+    didSwipeRef.current = false;
+  };
+
+  const handleZoomTouchEnd = (e: React.TouchEvent) => {
+    if (!touchStartRef.current) return;
+    const start = touchStartRef.current;
+    touchStartRef.current = null;
+
+    const touch = e.changedTouches[0];
+    if (!touch) return;
+
+    const deltaX = touch.clientX - start.x;
+    const deltaY = touch.clientY - start.y;
+    const absX = Math.abs(deltaX);
+    const absY = Math.abs(deltaY);
+
+    if (absX >= SWIPE_THRESHOLD_PX && absX > absY) {
+      didSwipeRef.current = true;
+      handleToggleSingleZoomItem();
+      return;
+    }
+
+    if (absX > TAP_MOVE_LIMIT_PX || absY > TAP_MOVE_LIMIT_PX) {
+      didSwipeRef.current = true;
+      return;
+    }
+  };
+
+  const handleSingleZoomOverlayClick = () => {
+    if (didSwipeRef.current) {
+      didSwipeRef.current = false;
+      return;
+    }
+    setSingleZoomItem(null);
+  };
 
   const recommendationsRef = useRef<HTMLElement>(null);
   const shirtSectionRef = useRef<HTMLElement>(null);
@@ -794,14 +852,16 @@ export const TodayView: React.FC = () => {
       {/* Single Item Fullscreen Zoom Overlay (Above Pair Modal) */}
       {singleZoomItem && (
         <div
-          onClick={() => setSingleZoomItem(null)}
-          className="fixed inset-0 z-[60] flex flex-col bg-black/95 backdrop-blur-md animate-fade-in cursor-zoom-out select-none"
+          onClick={handleSingleZoomOverlayClick}
+          onTouchStart={handleZoomTouchStart}
+          onTouchEnd={handleZoomTouchEnd}
+          className="fixed inset-0 z-[60] flex flex-col bg-black animate-fade-in cursor-zoom-out select-none touch-pan-y"
           role="dialog"
           aria-modal="true"
           aria-label={`${singleZoomItem.id} ${singleZoomItem.name} の拡大表示`}
         >
-          {/* Top Bar: Item ID, Name & 44x44 Close Button */}
-          <div className="flex items-center justify-between gap-3 px-4 py-3 bg-slate-900/90 border-b border-slate-800 flex-shrink-0">
+          {/* Top Bar: Item ID, Name, Swipe Hint & 44x44 Close Button */}
+          <div className="flex items-center justify-between gap-3 px-4 py-2.5 bg-slate-900/95 border-b border-slate-800/80 flex-shrink-0 z-10">
             <div className="flex items-center gap-2 min-w-0">
               <span
                 className={`px-2 py-0.5 rounded-md text-xs font-bold flex-shrink-0 border ${
@@ -815,29 +875,38 @@ export const TodayView: React.FC = () => {
               <span className="text-sm sm:text-base font-bold text-white truncate">
                 {singleZoomItem.name}
               </span>
+              <span className="text-xs text-slate-400 hidden sm:inline flex-shrink-0">
+                (⇄ 左右スワイプで{singleZoomItem.category === 'shirt' ? 'パンツ' : 'シャツ'}に切替)
+              </span>
             </div>
 
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                setSingleZoomItem(null);
-              }}
-              className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-full bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white transition-colors flex-shrink-0"
-              title="拡大表示を閉じる"
-              aria-label="拡大表示を閉じる"
-            >
-              <X className="w-5 h-5" />
-            </button>
+            <div className="flex items-center gap-2 flex-shrink-0">
+              <span className="text-[11px] text-slate-400 sm:hidden">
+                ⇄ スワイプで切替
+              </span>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  didSwipeRef.current = false;
+                  setSingleZoomItem(null);
+                }}
+                className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-full bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white transition-colors flex-shrink-0"
+                title="拡大表示を閉じる"
+                aria-label="拡大表示を閉じる"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
           </div>
 
-          {/* Main Fullscreen Image Area (900x1200 / 3:4 aspect ratio preserved at max viewport fit) */}
-          <div className="flex-1 min-h-0 w-full flex items-center justify-center p-2 sm:p-4">
-            <div className="aspect-[3/4] w-full max-h-[calc(100dvh-5.5rem)] max-w-[min(96vw,calc((100dvh-5.5rem)*0.75))] rounded-2xl overflow-hidden bg-slate-950 border border-slate-800 shadow-2xl flex items-center justify-center">
+          {/* Main Fullscreen Image Area: Edge-to-edge maximizing screen space, 3:4 aspect ratio preserved */}
+          <div className="flex-1 min-h-0 w-full h-full flex items-center justify-center overflow-hidden bg-black">
+            <div className="aspect-[3/4] w-full max-w-[calc((100dvh-4rem)*0.75)] max-h-full flex items-center justify-center">
               <ItemImage
                 item={singleZoomItem}
                 showBadge={false}
-                className="w-full h-full bg-slate-950"
+                className="w-full h-full !rounded-none !bg-black"
                 imgClassName="w-full h-full object-contain"
               />
             </div>
