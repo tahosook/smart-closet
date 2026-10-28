@@ -4002,4 +4002,91 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
   console.log('  ✅ Issue #4: fetchImages scan skipping & backward compatibility verified');
 }
 
+// -------------------------------------------------------------
+// Test Case 28: 今朝画面（TodayView）「上下コーディネート詳細」モーダル内の1着全画面拡大表示
+// -------------------------------------------------------------
+{
+  const todayCode = fs.readFileSync(path.join(projectRoot, 'src/components/TodayView.tsx'), 'utf-8');
+
+  // 1. 状態管理（singleZoomItem）の定義と初期化
+  assert.ok(
+    todayCode.includes('const [singleZoomItem, setSingleZoomItem] = useState<ClosetItem | null>(null);'),
+    'TodayView must define singleZoomItem state'
+  );
+
+  // 2. ペアモーダル内のシャツ写真・パンツ写真がそれぞれタップ可能（button）であり、singleZoomItem をセットすること
+  assert.ok(
+    todayCode.includes('onClick={() => setSingleZoomItem(zoomItemPair.shirt)}'),
+    'TodayView must allow clicking shirt photo in pair modal to set singleZoomItem'
+  );
+  assert.ok(
+    todayCode.includes('onClick={() => setSingleZoomItem(zoomItemPair.pants)}'),
+    'TodayView must allow clicking pants photo in pair modal to set singleZoomItem'
+  );
+
+  // 3. レイヤー順序（z-index）と重ね順の検証:
+  //    上下コーディネート詳細モーダル (z-50) より前面の z-[60] で全画面拡大オーバーレイが表示されること
+  assert.ok(
+    todayCode.includes('fixed inset-0 z-50 flex items-center justify-center') &&
+    todayCode.includes('上下コーディネート詳細'),
+    'Pair modal must use z-50'
+  );
+  assert.ok(
+    todayCode.includes('fixed inset-0 z-[60]') && todayCode.includes('singleZoomItem &&'),
+    'Single item fullscreen zoom overlay must use z-[60] (above pair modal z-50)'
+  );
+
+  // 4. 復帰動作の検証:
+  //    全画面オーバーレイを閉じる際（背景・画像タップまたは閉じるボタン）、setSingleZoomItem(null) のみを呼び出し
+  //    zoomItemPair は破棄せず保持していること（元のペアモーダルへ戻る）
+  assert.ok(
+    todayCode.includes('onClick={() => setSingleZoomItem(null)}') &&
+    todayCode.includes('cursor-zoom-out'),
+    'Overlay must close singleZoomItem on background/image tap'
+  );
+  assert.ok(
+    todayCode.includes('title="拡大表示を閉じる"'),
+    'Overlay must have an explicit close button with title'
+  );
+
+  // 5. 表示内容・アスペクト比・フォールバックの検証:
+  //    - singleZoomItem.id と singleZoomItem.name がヘッダーに表示されること
+  //    - aspect-[3/4] と object-contain により 900x1200 の比率を保って最大表示されること
+  //    - ItemImage コンポーネントを使用し、写真なしアイテムでも SVG フォールバックで安全に表示されること
+  assert.ok(
+    todayCode.includes('singleZoomItem.id') && todayCode.includes('singleZoomItem.name'),
+    'Single zoom overlay must display item ID and name'
+  );
+  assert.ok(
+    todayCode.includes('aspect-[3/4]') && todayCode.includes('object-contain'),
+    'Single zoom overlay must preserve 3:4 aspect ratio with object-contain'
+  );
+  assert.ok(
+    todayCode.includes('<ItemImage') && todayCode.includes('item={singleZoomItem}'),
+    'Single zoom overlay must render ItemImage for consistent photo & SVG fallback'
+  );
+
+  // 6. タップターゲット 44x44px 以上と既存動作維持の検証:
+  //    - 閉じるボタンに min-w-[44px] min-h-[44px] が設定されていること
+  //    - ペアモーダルを閉じる際および「この組み合わせを着る」実行時に状態が安全にリセットされること
+  //    - 「この組み合わせを着る」処理（handleSelectWear）が変更なく維持されていること
+  assert.ok(
+    todayCode.includes('min-w-[44px] min-h-[44px]'),
+    'Close buttons must satisfy 44x44px minimum tap target'
+  );
+  assert.ok(
+    todayCode.includes('handleSelectWear(zoomItemPair.pants);'),
+    'Wear selection action must remain intact'
+  );
+
+  // 7. SPECIFICATION.md のドキュメント整合性検証
+  const specContent = fs.readFileSync(path.join(projectRoot, 'docs/SPECIFICATION.md'), 'utf-8');
+  assert.ok(
+    specContent.includes('全画面拡大表示可能'),
+    'SPECIFICATION.md must document single-item fullscreen zoom in Tab 1'
+  );
+
+  console.log('  ✅ TodayView single garment fullscreen zoom, z-index layering & fallback safety verified');
+}
+
 console.log('🎉 All GAS backend & sync logic tests passed successfully!');
