@@ -23,7 +23,8 @@ This file serves as the operational contract for AI agents (Antigravity, Codex, 
 - **UI & Logic Specs:** Consult [docs/SPECIFICATION.md](docs/SPECIFICATION.md) for view behaviors and scoring algorithms.
 - **Wardrobe & Styling Rules:** Consult [docs/STYLING_RULES.md](docs/STYLING_RULES.md) for 40s male color/pattern criteria and bias analysis.
 - **Wardrobe Addition Skill:** Follow [.agents/skills/manage-wardrobe/SKILL.md](.agents/skills/manage-wardrobe/SKILL.md) when adding/editing clothes.
-- **Infrastructure & Operations:** Consult [docs/OPERATIONS.md](docs/OPERATIONS.md) for Cloudflare Access, OAuth, and secret rotation.
+- **Infrastructure & Operations:** Consult [docs/OPERATIONS.md](docs/OPERATIONS.md) for Cloudflare Access, OAuth, secret rotation, and GAS redeployment.
+- **PR Review Arenas:** Repository PR reviews are conducted in the ChatGPT project `smart-closet` and the Grok project `smart-closet`.
 
 ## 3. Architecture Invariants & Absolute Constraints
 1. **Serverless Frontend & Human-in-the-Loop AI:**
@@ -31,7 +32,8 @@ This file serves as the operational contract for AI agents (Antigravity, Codex, 
    - Wardrobe additions and matrix recalculations use a Human-in-the-loop workflow: prompt generation -> user submits to Gemini -> imported JSON committed to `src/data/closet.json`.
 2. **Local-First & Optional GAS Cloud Synchronization:**
    - **0-Second Decision Rule:** Morning decisions, wear recording, and recommendations operate locally via `localStorage` and memory with **0ms latency**. UI is never blocked by network calls.
-   - **Background Sync:** Seamless multi-device sync with Google Apps Script (`gas/Code.gs`) Web App occurs strictly in the background (asynchronous simple request POST without blocking).
+   - **Manual-Only Sync:** Cloud sync with the Google Apps Script (`gas/Code.gs`) Web App is strictly manual—triggered only when the user explicitly presses "今すぐ同期" (no automatic or background sync exists).
+   - **GAS Deployment Constraint:** Changes to `gas/Code.gs` do not take effect in production until redeployed to the existing Web App deployment (keeping the deployment URL unchanged; see [docs/OPERATIONS.md](docs/OPERATIONS.md)). Any PR modifying `gas/Code.gs` must explicitly note this redeployment requirement in the PR description.
 3. **Single Source of Truth & LocalStorage Integration:**
    - Master data is `src/data/closet.json` in Git. User runtime state (`wearHistory`, emergency `wifeNgPairs`, custom imported data) is saved in browser `localStorage`.
    - Runtime wife NG pairs (`smart_closet_wife_ng`) must be merged into exported `closet.json` so that offline/backup data always preserves user decisions.
@@ -41,7 +43,7 @@ This file serves as the operational contract for AI agents (Antigravity, Codex, 
 
 ## 4. Essential Commands
 - `npm run dev`: Launch local development server
-- `npm run check`: Full verification pipeline (`validate-data` + `test-sync` + `build`)
+- `npm run check`: **Standard verification command** (`validate-data` + `test-sync` + `build`). Passing with **exit code 0 is mandatory** for all changes.
 - `npm run test-sync`: Run GAS backend, sync logic, and domain unit tests
 - `npm run validate-data`: Run integrity validator, privacy guard, and broken path check
 - `npm run build`: Type-check (`tsc -b`) and build for production (`vite build`)
@@ -59,3 +61,5 @@ This file serves as the operational contract for AI agents (Antigravity, Codex, 
 3. **Maintain Documentation Integrity:** When adding/renaming files or commands, keep doc paths in sync.
 4. **Run Full Verification:** Always run `npm run check` and ensure exit code 0.
 5. **Mobile Usability:** Keep mobile layout clean with tap targets at least 44x44px.
+6. **Testing Policy:** Permanent automated tests are restricted to logic (data validation, domain functions, and GAS handlers). Because the Node test harness can only verify UI behavior via source-string matching, do not add new UI source-string tests. If an existing UI string assertion breaks due to a harmless change, delete the assertion rather than contorting code or tests to make it pass. UI quality is assured via code review against the plan/PR checklist and manual device verification.
+7. **PR Etiquette:** Include a checklist of design conditions in every PR description (and explicitly note the GAS redeployment requirement whenever `gas/Code.gs` is modified). The implementer must never merge their own PR.
