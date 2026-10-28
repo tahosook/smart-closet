@@ -4078,12 +4078,19 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
 
   // 6. 表示最大化・アスペクト比・フォールバックの検証:
   //    - 余白・枠を排し、flex-1 min-h-0 w-full h-full で画面領域を最大限利用
+  //    - 内側コンテナは一方向（w-full）から寸法を決め、aspect-[3/4] を有効化して3:4の箱を保証（w-full と h-full の同時指定によるアスペクト比無効化を防止）
   //    - aspect-[3/4] と object-contain により 900x1200 の比率を保って最大表示
   //    - ItemImage コンポーネントを使用し、写真なしアイテムでも SVG フォールバックで安全に表示
   //    - singleZoomItem.id と singleZoomItem.name がヘッダーに連動表示されること
   assert.ok(
     todayCode.includes('flex-1 min-h-0 w-full h-full flex items-center justify-center overflow-hidden bg-black'),
     'Single zoom overlay must maximize image area without card margins or padding'
+  );
+  assert.ok(
+    todayCode.includes('aspect-[3/4]') &&
+    todayCode.includes('max-w-[calc((100dvh-4rem)*0.75)]') &&
+    !todayCode.includes('aspect-[3/4] w-full h-full'),
+    'Inner container must size from one direction without simultaneous w-full h-full, preserving 3:4 box dimension'
   );
   assert.ok(
     todayCode.includes('aspect-[3/4]') && todayCode.includes('object-contain'),

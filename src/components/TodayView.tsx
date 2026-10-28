@@ -902,7 +902,7 @@ export const TodayView: React.FC = () => {
 
           {/* Main Fullscreen Image Area: Edge-to-edge maximizing screen space, 3:4 aspect ratio preserved */}
           <div className="flex-1 min-h-0 w-full h-full flex items-center justify-center overflow-hidden bg-black">
-            <div className="aspect-[3/4] w-full h-full max-w-full max-h-full flex items-center justify-center">
+            <div className="aspect-[3/4] w-full max-w-[calc((100dvh-4rem)*0.75)] max-h-full flex items-center justify-center">
               <ItemImage
                 item={singleZoomItem}
                 showBadge={false}
