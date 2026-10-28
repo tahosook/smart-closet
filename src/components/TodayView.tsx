@@ -63,6 +63,7 @@ export const TodayView: React.FC = () => {
   const [zoomItemPair, setZoomItemPair] = useState<{ shirt: ClosetItem; pants: ClosetItem } | null>(
     null
   );
+  const [singleZoomItem, setSingleZoomItem] = useState<ClosetItem | null>(null);
 
   const recommendationsRef = useRef<HTMLElement>(null);
   const shirtSectionRef = useRef<HTMLElement>(null);
@@ -685,24 +686,42 @@ export const TodayView: React.FC = () => {
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md animate-fade-in">
           <div className="bg-slate-900 border border-slate-700 rounded-3xl max-w-sm w-full p-5 space-y-4 shadow-2xl relative">
             <button
-              onClick={() => setZoomItemPair(null)}
-              className="absolute top-4 right-4 p-1.5 text-slate-400 hover:text-white rounded-full bg-slate-800 transition-colors"
+              onClick={() => {
+                setZoomItemPair(null);
+                setSingleZoomItem(null);
+              }}
+              className="absolute top-4 right-4 min-w-[44px] min-h-[44px] flex items-center justify-center text-slate-400 hover:text-white rounded-full bg-slate-800 transition-colors"
+              title="閉じる"
+              aria-label="閉じる"
             >
               <X className="w-4 h-4" />
             </button>
 
             <div>
               <h3 className="text-sm font-bold text-white">上下コーディネート詳細</h3>
-              <p className="text-[11px] text-slate-400">色の相性とシルエットの確認</p>
+              <p className="text-[11px] text-slate-400">色の相性とシルエットの確認（写真をタップで全画面拡大）</p>
             </div>
 
             {/* Side-by-side large photo showcase */}
             <div className="grid grid-cols-2 gap-3 items-stretch">
               <div className="p-3 bg-slate-800/80 rounded-2xl border border-slate-700 flex flex-col items-center">
                 <div className="text-[10px] font-bold text-blue-400 mb-1">{zoomItemPair.shirt.id} (シャツ)</div>
-                <div className="w-full h-44 rounded-xl overflow-hidden bg-slate-950 mb-2">
-                  <ItemImage item={zoomItemPair.shirt} className="w-full h-full" />
-                </div>
+                <button
+                  type="button"
+                  onClick={() => setSingleZoomItem(zoomItemPair.shirt)}
+                  className="w-full h-44 rounded-xl overflow-hidden bg-slate-950 mb-2 relative group cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-500 text-left"
+                  title={`${zoomItemPair.shirt.id} ${zoomItemPair.shirt.name} を全画面で拡大`}
+                  aria-label={`${zoomItemPair.shirt.id} ${zoomItemPair.shirt.name} を全画面で拡大`}
+                >
+                  <ItemImage
+                    item={zoomItemPair.shirt}
+                    className="w-full h-full"
+                    imgClassName="object-contain transition-transform group-hover:scale-105"
+                  />
+                  <div className="absolute bottom-1.5 right-1.5 p-1 rounded-md bg-slate-900/80 text-slate-300 backdrop-blur-sm group-hover:text-white transition-colors">
+                    <Maximize2 className="w-3.5 h-3.5" />
+                  </div>
+                </button>
                 <div className="text-xs font-bold text-white text-center line-clamp-1">
                   {zoomItemPair.shirt.name}
                 </div>
@@ -722,9 +741,22 @@ export const TodayView: React.FC = () => {
 
               <div className="p-3 bg-slate-800/80 rounded-2xl border border-slate-700 flex flex-col items-center">
                 <div className="text-[10px] font-bold text-emerald-400 mb-1">{zoomItemPair.pants.id} (パンツ)</div>
-                <div className="w-full h-44 rounded-xl overflow-hidden bg-slate-950 mb-2">
-                  <ItemImage item={zoomItemPair.pants} className="w-full h-full" />
-                </div>
+                <button
+                  type="button"
+                  onClick={() => setSingleZoomItem(zoomItemPair.pants)}
+                  className="w-full h-44 rounded-xl overflow-hidden bg-slate-950 mb-2 relative group cursor-pointer focus:outline-none focus:ring-2 focus:ring-emerald-500 text-left"
+                  title={`${zoomItemPair.pants.id} ${zoomItemPair.pants.name} を全画面で拡大`}
+                  aria-label={`${zoomItemPair.pants.id} ${zoomItemPair.pants.name} を全画面で拡大`}
+                >
+                  <ItemImage
+                    item={zoomItemPair.pants}
+                    className="w-full h-full"
+                    imgClassName="object-contain transition-transform group-hover:scale-105"
+                  />
+                  <div className="absolute bottom-1.5 right-1.5 p-1 rounded-md bg-slate-900/80 text-slate-300 backdrop-blur-sm group-hover:text-white transition-colors">
+                    <Maximize2 className="w-3.5 h-3.5" />
+                  </div>
+                </button>
                 <div className="text-xs font-bold text-white text-center line-clamp-1">
                   {zoomItemPair.pants.name}
                 </div>
@@ -748,12 +780,67 @@ export const TodayView: React.FC = () => {
               onClick={() => {
                 handleSelectWear(zoomItemPair.pants);
                 setZoomItemPair(null);
+                setSingleZoomItem(null);
               }}
               className="w-full py-2.5 px-4 rounded-xl text-xs font-bold bg-blue-600 hover:bg-blue-500 text-white shadow-lg shadow-blue-900/40 flex items-center justify-center gap-1.5 transition-colors"
             >
               <CheckCircle2 className="w-4 h-4" />
               <span>この組み合わせを着る</span>
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* Single Item Fullscreen Zoom Overlay (Above Pair Modal) */}
+      {singleZoomItem && (
+        <div
+          onClick={() => setSingleZoomItem(null)}
+          className="fixed inset-0 z-[60] flex flex-col bg-black/95 backdrop-blur-md animate-fade-in cursor-zoom-out select-none"
+          role="dialog"
+          aria-modal="true"
+          aria-label={`${singleZoomItem.id} ${singleZoomItem.name} の拡大表示`}
+        >
+          {/* Top Bar: Item ID, Name & 44x44 Close Button */}
+          <div className="flex items-center justify-between gap-3 px-4 py-3 bg-slate-900/90 border-b border-slate-800 flex-shrink-0">
+            <div className="flex items-center gap-2 min-w-0">
+              <span
+                className={`px-2 py-0.5 rounded-md text-xs font-bold flex-shrink-0 border ${
+                  singleZoomItem.category === 'shirt'
+                    ? 'bg-blue-950/90 text-blue-300 border-blue-700/60'
+                    : 'bg-emerald-950/90 text-emerald-300 border-emerald-700/60'
+                }`}
+              >
+                {singleZoomItem.id}
+              </span>
+              <span className="text-sm sm:text-base font-bold text-white truncate">
+                {singleZoomItem.name}
+              </span>
+            </div>
+
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setSingleZoomItem(null);
+              }}
+              className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-full bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white transition-colors flex-shrink-0"
+              title="拡大表示を閉じる"
+              aria-label="拡大表示を閉じる"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+
+          {/* Main Fullscreen Image Area (900x1200 / 3:4 aspect ratio preserved at max viewport fit) */}
+          <div className="flex-1 min-h-0 w-full flex items-center justify-center p-2 sm:p-4">
+            <div className="aspect-[3/4] w-full max-h-[calc(100dvh-5.5rem)] max-w-[min(96vw,calc((100dvh-5.5rem)*0.75))] rounded-2xl overflow-hidden bg-slate-950 border border-slate-800 shadow-2xl flex items-center justify-center">
+              <ItemImage
+                item={singleZoomItem}
+                showBadge={false}
+                className="w-full h-full bg-slate-950"
+                imgClassName="w-full h-full object-contain"
+              />
+            </div>
           </div>
         </div>
       )}
