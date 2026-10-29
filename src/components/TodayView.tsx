@@ -51,6 +51,7 @@ export const TodayView: React.FC = () => {
     shirts,
     itemMap,
     todayRecord,
+    yesterdayWornPantsIds,
     getRecommendationsForShirt,
     recordWear,
     registerWifeNg,
@@ -221,6 +222,17 @@ export const TodayView: React.FC = () => {
   const { recommended, otherOk, ngList } = useMemo(
     () => getRecommendationsForShirt(selectedShirt.id, scene),
     [getRecommendationsForShirt, selectedShirt.id, scene]
+  );
+
+  // If today's chosen pants is in NG list for this shirt, auto-expand so user knows what's selected
+  const isSelectedPantsInNg = useMemo(
+    () =>
+      Boolean(
+        todayRecord &&
+          todayRecord.shirtId === selectedShirt.id &&
+          ngList.some((item) => item.pants.id === todayRecord.pantsId)
+      ),
+    [todayRecord, selectedShirt.id, ngList]
   );
 
   const topRecommendations = recommended.slice(0, 3);
@@ -679,58 +691,125 @@ export const TodayView: React.FC = () => {
         <div className="pt-2">
           <button
             onClick={() => setShowNgAccordion(!showNgAccordion)}
-            className="w-full py-2.5 px-3 rounded-xl bg-slate-900/80 hover:bg-slate-900 border border-rose-900/40 text-xs font-semibold text-rose-300 flex items-center justify-between"
+            className="w-full py-2.5 px-3 rounded-xl bg-slate-900/80 hover:bg-slate-900 border border-rose-900/40 text-xs font-semibold text-rose-300 flex items-center justify-between transition-colors"
           >
-            <div className="flex items-center gap-1.5">
-              <AlertTriangle className="w-4 h-4 text-rose-400" />
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <AlertTriangle className="w-4 h-4 text-rose-400 flex-shrink-0" />
               <span>🚫 このシャツのNGパンツ（{ngList.length}本）</span>
+              {isSelectedPantsInNg && (
+                <span className="text-[10px] bg-emerald-950/90 text-emerald-300 border border-emerald-700/60 px-1.5 py-0.5 rounded font-bold">
+                  本日着用中あり
+                </span>
+              )}
             </div>
-            {showNgAccordion ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+            {showNgAccordion || isSelectedPantsInNg ? (
+              <ChevronUp className="w-4 h-4 text-slate-400" />
+            ) : (
+              <ChevronDown className="w-4 h-4 text-slate-400" />
+            )}
           </button>
 
-          {showNgAccordion && (
+          {(showNgAccordion || isSelectedPantsInNg) && (
             <div className="space-y-2 mt-2">
               {ngList.length === 0 ? (
                 <div className="p-3 text-center text-xs text-slate-400 bg-slate-900/60 rounded-xl">
                   このシャツにはNGパンツはありません。すべてのパンツと合わせられます。
                 </div>
               ) : (
-                ngList.map(({ pants: p, reason, isWifeNg }) => (
-                  <div
-                    key={p.id}
-                    className="p-2.5 rounded-xl bg-slate-900/90 border border-rose-900/30 flex items-center justify-between opacity-80"
-                  >
-                    <div className="flex items-center gap-2.5 min-w-0">
-                      <div className="w-12 h-14 rounded-lg overflow-hidden bg-slate-950 flex-shrink-0 grayscale">
-                        <ItemImage item={p} showBadge={false} className="w-full h-full" />
+                ngList.map(({ pants: p, reason, isWifeNg }) => {
+                  const isTodayChosen =
+                    todayRecord?.shirtId === selectedShirt.id && todayRecord?.pantsId === p.id;
+                  const isYesterdayWorn = yesterdayWornPantsIds.has(p.id);
+
+                  return (
+                    <div
+                      key={p.id}
+                      className={`p-3 rounded-xl border transition-all space-y-2.5 ${
+                        isTodayChosen
+                          ? 'bg-slate-900/95 border-emerald-500/80 ring-1 ring-emerald-500/30'
+                          : 'bg-slate-900/90 border-rose-900/40'
+                      }`}
+                    >
+                      <div className="flex items-start gap-2.5 min-w-0">
+                        {/* Photo thumbnail with pair zoom preview (grayscale removed for accurate visual judgment) */}
+                        <button
+                          type="button"
+                          onClick={() => setZoomItemPair({ shirt: selectedShirt, pants: p })}
+                          className="w-12 h-16 rounded-lg overflow-hidden bg-slate-950 border border-slate-800 flex-shrink-0 cursor-pointer group relative"
+                          title="タップして上下拡大プレビュー"
+                        >
+                          <ItemImage
+                            item={p}
+                            showBadge={false}
+                            className="w-full h-full"
+                            imgClassName="object-contain transition-transform group-hover:scale-105"
+                          />
+                          <div className="absolute bottom-1 right-1 p-0.5 rounded bg-slate-900/80 text-slate-400">
+                            <Maximize2 className="w-2.5 h-2.5" />
+                          </div>
+                        </button>
+
+                        {/* Info area: ID, name, NG badge, cooling badge, color, reason */}
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="text-[10px] font-bold text-slate-400">{p.id}</span>
+                            <span className="text-xs font-bold text-slate-200 truncate">{p.name}</span>
+                            {isWifeNg ? (
+                              <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-rose-900/80 text-rose-200 border border-rose-700/60">
+                                🚨 奥様NG
+                              </span>
+                            ) : (
+                              <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-rose-950/90 text-rose-300 border border-rose-800/60">
+                                🚫 NG
+                              </span>
+                            )}
+                            {isYesterdayWorn && (
+                              <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-rose-950/70 text-rose-300 border border-rose-800/70">
+                                ⚠️ 昨日着用
+                              </span>
+                            )}
+                            {p.color && (
+                              <span className="px-1.5 py-0.5 rounded text-[9px] font-medium text-slate-300 bg-slate-900 border border-slate-700">
+                                🎨 {p.color}
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-[11px] text-rose-400/95 leading-snug line-clamp-2 mt-1">
+                            理由: {reason}
+                          </div>
+                        </div>
                       </div>
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-xs font-bold text-slate-300 truncate">{p.name}</span>
-                          {isWifeNg && (
-                            <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-rose-900/70 text-rose-200">
-                              奥様NG
-                            </span>
-                          )}
-                        </div>
-                        <div className="text-[10px] text-rose-400/90 truncate mt-0.5">
-                          理由: {reason}
-                        </div>
+
+                      {/* Action buttons (min-h-[44px] ensuring touch target rule) */}
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => handleSelectWear(p)}
+                          className={`flex-1 min-h-[44px] py-2.5 px-3 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all ${
+                            isTodayChosen
+                              ? 'bg-emerald-600 text-white shadow-md shadow-emerald-900/40'
+                              : 'bg-slate-800 hover:bg-blue-600 text-slate-100 hover:text-white border border-slate-700 hover:border-blue-500 active:scale-[0.98]'
+                          }`}
+                        >
+                          <CheckCircle2 className="w-4 h-4 flex-shrink-0" />
+                          <span>{isTodayChosen ? '本日着用中' : '✅ 今日これ着る'}</span>
+                        </button>
+
+                        {isWifeNg && (
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveWifeNg(p)}
+                            className="min-h-[44px] min-w-[44px] px-3 py-2.5 bg-slate-800/80 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700/80 rounded-xl transition-colors flex items-center justify-center gap-1 text-xs font-semibold flex-shrink-0 active:scale-[0.98]"
+                            title="奥様NGを解除"
+                          >
+                            <Undo2 className="w-3.5 h-3.5 flex-shrink-0" />
+                            <span>解除</span>
+                          </button>
+                        )}
                       </div>
                     </div>
-
-                    {isWifeNg && (
-                      <button
-                        onClick={() => handleRemoveWifeNg(p)}
-                        className="p-1.5 hover:bg-slate-800 text-slate-400 hover:text-white rounded-lg transition-colors flex items-center gap-1 text-[10px]"
-                        title="奥様NGを解除"
-                      >
-                        <Undo2 className="w-3.5 h-3.5" />
-                        <span>解除</span>
-                      </button>
-                    )}
-                  </div>
-                ))
+                  );
+                })
               )}
             </div>
           )}
