@@ -33,6 +33,9 @@ export const TravelPlannerView: React.FC = () => {
 
   // Auto-generate optimal 2 bottoms and shirt timeline
   const plan = useMemo(() => {
+    if (shirts.length === 0 || pants.length === 0) {
+      return { bottoms: [], days: [] };
+    }
     // 1. Filter viable versatile bottoms
     // Exclude single-shirt-dependent bottoms like P5, P10, P11
     const versatilePants = pants.filter((p) => {
@@ -137,6 +140,28 @@ export const TravelPlannerView: React.FC = () => {
       days: dayPlans,
     };
   }, [nights, purpose, seed, shirts, pants, isNgPair, daysCount]);
+
+  if (shirts.length === 0 || pants.length === 0) {
+    return (
+      <div className="space-y-6 pb-20">
+        <div className="p-4 bg-gradient-to-r from-slate-900 via-indigo-950/60 to-slate-900 border border-slate-700/80 rounded-2xl shadow-xl">
+          <div className="flex items-center gap-2 text-indigo-400 font-bold text-sm mb-1">
+            <Luggage className="w-4 h-4 text-indigo-400" />
+            <span>旅行パッキング (Travel Planner)</span>
+          </div>
+          <p className="text-xs text-slate-300 leading-relaxed">
+            最小限のボトムス（2本）を1日おきに交互着用し、日数分のシャツを着回すことで、荷物を極小化しながら奥様NGを100%回避します。
+          </p>
+        </div>
+        <div className="bg-slate-800/80 border border-slate-700/70 rounded-2xl p-6 text-center text-slate-400 space-y-2">
+          <p className="text-sm font-bold text-slate-300">現役のシャツまたはパンツがありません</p>
+          <p className="text-xs text-slate-400">
+            すべての服が「片付けた服」に入っているか、登録されていません。「マトリクス」の「片付けた服」から服を「出す」操作を行うと再開できます。
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6 pb-20">

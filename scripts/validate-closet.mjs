@@ -226,6 +226,10 @@ export function runValidation() {
         }
       }
     }
+
+    if (item.archived !== undefined && typeof item.archived !== 'boolean') {
+      errors.push(`[${item.id}] archived must be a boolean if present`);
+    }
   }
 
   // Check private photos in public/

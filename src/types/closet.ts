@@ -64,6 +64,7 @@ export interface ClosetItem {
   notes: string;
   color?: GarmentColor;
   measurements?: GarmentMeasurements;
+  archived?: boolean;
 }
 
 /**

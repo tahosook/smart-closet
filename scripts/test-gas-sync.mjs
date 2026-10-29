@@ -55,6 +55,8 @@ const {
   saveFailedDriveUploadsToStorage,
   loadFailedDriveUploadsFromStorage,
   processDriveRetryUploads,
+  isGarmentActive,
+  setGarmentArchived,
 } = closetDomain;
 
 const imageProcessorTsPath = path.join(projectRoot, 'src/utils/imageProcessor.ts');
@@ -4126,6 +4128,151 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
   );
 
   console.log('  ✅ TodayView single garment maximized zoom & swipe pair toggle verified');
+}
+
+{
+  // Test block: Wardrobe Archive ("片付ける" & "出す") domain logic, backward compatibility, and sync safety
+  const rawClosetJson = JSON.parse(fs.readFileSync(path.join(projectRoot, 'src/data/closet.json'), 'utf-8'));
+
+  // 1. Backward compatibility: Existing master garments have no archived flag (or false), and all are active
+  assert.equal(rawClosetJson.items.length, 24, 'Master closet.json has 24 items (S1-S9, P1-P15)');
+  for (const item of rawClosetJson.items) {
+    assert.ok(!item.archived, `Existing item ${item.id} must not be archived in master data`);
+    assert.equal(isGarmentActive(item), true, `Existing item ${item.id} must be active by default`);
+  }
+
+  // 2. Schema validation preserves valid archived boolean and rejects non-boolean values
+  const validatedMaster = validateClosetDataSchema(rawClosetJson);
+  assert.equal(validatedMaster.valid, true);
+  assert.equal(validatedMaster.data.items.length, 24);
+
+  const itemWithArchived = { ...rawClosetJson.items[0], archived: true };
+  const singleValidated = validateSingleClosetItem(itemWithArchived, rawClosetJson);
+  assert.equal(singleValidated.valid, true);
+  assert.equal(singleValidated.item.archived, true, 'validateSingleClosetItem must preserve archived: true');
+
+  const singleInvalid = validateSingleClosetItem({ ...rawClosetJson.items[0], archived: 'yes' }, rawClosetJson);
+  assert.equal(singleInvalid.valid, false);
+  assert.match(singleInvalid.error, /archived は真偽値である必要があります/);
+
+  const schemaInvalid = validateClosetDataSchema({
+    ...rawClosetJson,
+    items: rawClosetJson.items.map((item, idx) => (idx === 0 ? { ...item, archived: 123 } : item)),
+  });
+  assert.equal(schemaInvalid.valid, false);
+  assert.match(schemaInvalid.error, /archived は真偽値である必要があります/);
+
+  // 3. Deterministic archiving (setGarmentArchived with true)
+  const archivedState = setGarmentArchived(rawClosetJson, 'S1', true);
+  const archivedS1 = archivedState.items.find((i) => i.id === 'S1');
+  const unchangedP1 = archivedState.items.find((i) => i.id === 'P1');
+
+  assert.equal(archivedS1.archived, true, 'S1 must have archived: true');
+  assert.equal(isGarmentActive(archivedS1), false, 'isGarmentActive(archivedS1) must return false');
+  assert.equal(isGarmentActive(unchangedP1), true, 'P1 must remain active');
+  assert.ok(archivedState.updatedAt, 'updatedAt must be updated on archive action');
+  assert.equal(archivedS1.name, rawClosetJson.items[0].name, 'All item metadata must be preserved');
+  assert.deepEqual(archivedS1.officeRecommendIds, rawClosetJson.items[0].officeRecommendIds, 'Recommendations preserved');
+  assert.deepEqual(archivedS1.ngIds, rawClosetJson.items[0].ngIds, 'NG relations preserved');
+
+  // 4. Deterministic unarchiving / restoring (setGarmentArchived with false) & perfect reversibility
+  const restoredState = setGarmentArchived(archivedState, 'S1', false);
+  const restoredS1 = restoredState.items.find((i) => i.id === 'S1');
+  assert.equal(restoredS1.archived, undefined, 'Restored S1 must have archived cleaned up to undefined');
+  assert.equal(isGarmentActive(restoredS1), true, 'isGarmentActive(restoredS1) must return true');
+  assert.deepEqual(restoredS1, rawClosetJson.items[0], 'Restored item must be 100% identical to pre-archived item');
+
+  // 5. calculateRecommendationsForShirt: Archived shirt returns empty recommendations
+  const activePants = rawClosetJson.items.filter((i) => i.category === 'pants');
+  const itemMapArchivedS1 = new Map();
+  archivedState.items.forEach((item) => itemMapArchivedS1.set(item.id, item));
+  const recsForArchivedShirt = calculateRecommendationsForShirt('S1', 'office', itemMapArchivedS1, activePants, [], new Set());
+  assert.equal(recsForArchivedShirt.recommended.length, 0, 'Archived shirt must yield no recommendations');
+  assert.equal(recsForArchivedShirt.otherOk.length, 0, 'Archived shirt must yield no other recommendations');
+  assert.equal(recsForArchivedShirt.ngList.length, 0, 'Archived shirt must yield no ng recommendations');
+
+  // 6. calculateRecommendationsForShirt: Archived pants are completely excluded from recommendations
+  const stateWithArchivedP1 = setGarmentArchived(rawClosetJson, 'P1', true);
+  const itemMapWithArchivedP1 = new Map();
+  stateWithArchivedP1.items.forEach((item) => itemMapWithArchivedP1.set(item.id, item));
+  const activeShirt = rawClosetJson.items.find((i) => i.id === 'S2');
+  const allPantsIncludingArchived = stateWithArchivedP1.items.filter((i) => i.category === 'pants');
+  const recsWithArchivedPants = calculateRecommendationsForShirt(
+    activeShirt.id,
+    'office',
+    itemMapWithArchivedP1,
+    allPantsIncludingArchived,
+    [],
+    new Set()
+  );
+  const allRecommendedPantsIds = [
+    ...recsWithArchivedPants.recommended.map((r) => r.pants.id),
+    ...recsWithArchivedPants.otherOk.map((r) => r.pants.id),
+    ...recsWithArchivedPants.ngList.map((r) => r.pants.id),
+  ];
+  assert.ok(!allRecommendedPantsIds.includes('P1'), 'Archived pants P1 must not appear in any recommendation or NG list');
+
+  // 7. Wardrobe stats calculation (analyzeWardrobeStats): Excludes archived garments
+  const rawShirts = rawClosetJson.items.filter((i) => i.category === 'shirt');
+  const rawPants = rawClosetJson.items.filter((i) => i.category === 'pants');
+  const rawItemMap = new Map();
+  rawClosetJson.items.forEach((i) => rawItemMap.set(i.id, i));
+  const statsOriginal = analyzeWardrobeStats(rawShirts, rawPants, rawItemMap, []);
+
+  const stateWithArchivedS1andP1 = setGarmentArchived(stateWithArchivedP1, 'S1', true);
+  const activeShirtsFiltered = stateWithArchivedS1andP1.items.filter((i) => i.category === 'shirt' && isGarmentActive(i));
+  const activePantsFiltered = stateWithArchivedS1andP1.items.filter((i) => i.category === 'pants' && isGarmentActive(i));
+  const activeItemMap = new Map();
+  stateWithArchivedS1andP1.items.forEach((i) => activeItemMap.set(i.id, i));
+  const statsArchived = analyzeWardrobeStats(activeShirtsFiltered, activePantsFiltered, activeItemMap, []);
+
+  // Master has 9 shirts and 15 pants
+  // With S1 and P1 archived -> 8 shirts and 14 pants
+  assert.equal(statsOriginal.shirtStats.length, 9, 'Original active shirts must be 9');
+  assert.equal(statsOriginal.pantsStats.length, 15, 'Original active pants must be 15');
+  assert.equal(statsArchived.shirtStats.length, 8, 'Active shirts after archiving S1 must be 8');
+  assert.equal(statsArchived.pantsStats.length, 14, 'Active pants after archiving P1 must be 14');
+
+  // 8. getNextSequentialId: Preserves sequential numbering even when the highest ID is archived
+  const stateWithArchivedS9 = setGarmentArchived(rawClosetJson, 'S9', true);
+  const nextShirtId = getNextSequentialId(stateWithArchivedS9.items, 'shirt');
+  assert.equal(nextShirtId, 'S10', 'Archived S9 must not cause next sequential ID to roll back or collide');
+
+  // 9. LWW Reconciliation: archived state is preserved across sync
+  const clientData = {
+    items: archivedState.items,
+    updatedAt: 20000,
+  };
+  const serverOlderResponse = {
+    ok: true,
+    wearHistory: [],
+    wifeNgPairs: [],
+    customClosetData: {
+      items: rawClosetJson.items,
+      updatedAt: 10000,
+    },
+  };
+  const reconciledLocalWins = reconcileSyncResponse({
+    serverResponse: serverOlderResponse,
+    currentLocal: {
+      wearHistory: [],
+      wifeNgPairs: [],
+      closetData: clientData,
+      hasCustomData: true,
+      tombstones: { deletedWearMap: {}, deletedWifeNgMap: {} },
+    },
+    sentTombstones: { deletedWearMap: {}, deletedWifeNgMap: {} },
+    hasInFlightMutations: true,
+    hasInFlightCustomDataChange: false,
+    defaultClosetData: rawClosetJson,
+  });
+  assert.equal(
+    reconciledLocalWins.closetData.items.find((i) => i.id === 'S1').archived,
+    true,
+    'Client newer archived item must win LWW'
+  );
+
+  console.log('  ✅ Wardrobe Archive ("片付ける" & "出す") domain logic, backward compatibility, and sync safety verified');
 }
 
 console.log('🎉 All GAS backend & sync logic tests passed successfully!');

@@ -56,6 +56,7 @@ export const TodayView: React.FC = () => {
     recordWear,
     registerWifeNg,
     removeWifeNg,
+    archiveItem,
   } = useClosetStore();
 
   const [scene, setScene] = useState<SceneMode>('office');
@@ -127,10 +128,13 @@ export const TodayView: React.FC = () => {
   const recommendationsRef = useRef<HTMLElement>(null);
   const shirtSectionRef = useRef<HTMLElement>(null);
 
-  // Default selected shirt: today's recorded shirt, or first shirt
-  const [selectedShirtId, setSelectedShirtId] = useState<string>(
-    () => todayRecord?.shirtId || 'S1'
-  );
+  // Default selected shirt: today's recorded shirt (if active), or first active shirt
+  const [selectedShirtId, setSelectedShirtId] = useState<string>(() => {
+    if (todayRecord?.shirtId && shirts.some((s) => s.id === todayRecord.shirtId)) {
+      return todayRecord.shirtId;
+    }
+    return shirts[0]?.id || 'S1';
+  });
 
   const handleSelectShirt = (shirtId: string) => {
     setSelectedShirtId(shirtId);
@@ -178,13 +182,13 @@ export const TodayView: React.FC = () => {
   const handleWeatherLoaded = useCallback(
     (data: WeatherData) => {
       setSleeveCategory(data.recommendedCategory);
-      // 当日着用記録が既にある場合は、選んだシャツを上書きしない
-      if (todayRecord?.shirtId) {
+      // 当日着用記録が既にある場合で、そのシャツが片付けられていない場合は上書きしない
+      if (todayRecord?.shirtId && shirts.some((s) => s.id === todayRecord.shirtId)) {
         return;
       }
-      // If current selected shirt doesn't match weather, pick the first matching shirt
+      // If current selected shirt doesn't match weather or is not active, pick the first matching shirt
       const isCurrentMatching = isShirtMatching(selectedShirtId, data.recommendedCategory);
-      if (!isCurrentMatching) {
+      if (!isCurrentMatching || !shirts.some((s) => s.id === selectedShirtId)) {
         const firstMatch = shirts.find((s) => isShirtMatching(s.id, data.recommendedCategory));
         if (firstMatch) {
           setSelectedShirtId(firstMatch.id);
@@ -209,19 +213,19 @@ export const TodayView: React.FC = () => {
   }, [shirts, sleeveCategory, itemMap]);
 
   const selectedShirt = useMemo(
-    () => itemMap.get(selectedShirtId) || matchingShirts[0] || shirts[0],
-    [itemMap, selectedShirtId, matchingShirts, shirts]
+    () => shirts.find((s) => s.id === selectedShirtId) || matchingShirts[0] || shirts[0],
+    [selectedShirtId, matchingShirts, shirts]
   );
 
   // If selected shirt is in hidden shirts, auto-expand so user knows what's selected
   const isSelectedShirtHidden = useMemo(
-    () => hiddenShirts.some((s) => s.id === selectedShirt.id),
-    [hiddenShirts, selectedShirt.id]
+    () => (selectedShirt ? hiddenShirts.some((s) => s.id === selectedShirt.id) : false),
+    [hiddenShirts, selectedShirt]
   );
 
   const { recommended, otherOk, ngList } = useMemo(
-    () => getRecommendationsForShirt(selectedShirt.id, scene),
-    [getRecommendationsForShirt, selectedShirt.id, scene]
+    () => (selectedShirt ? getRecommendationsForShirt(selectedShirt.id, scene) : { recommended: [], otherOk: [], ngList: [] }),
+    [getRecommendationsForShirt, selectedShirt, scene]
   );
 
   // If today's chosen pants is in NG list for this shirt, auto-expand so user knows what's selected
@@ -260,6 +264,18 @@ export const TodayView: React.FC = () => {
     removeWifeNg(selectedShirt.id, pantsItem.id);
     showToast(`「${selectedShirt.name} × ${pantsItem.name}」の奥様NGを解除しました`);
   };
+
+  if (shirts.length === 0) {
+    return (
+      <div className="p-8 text-center bg-slate-900/80 border border-slate-800 rounded-2xl space-y-3">
+        <div className="text-3xl">👕</div>
+        <h3 className="text-base font-bold text-white">利用可能なシャツがありません</h3>
+        <p className="text-xs text-slate-400 leading-relaxed max-w-sm mx-auto">
+          すべてのシャツが「片付けた服」に入っているか、登録されていません。「全マトリクス」タブの「片付けた服」一覧から「出す」で戻すことができます。
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-2.5 lg:space-y-4 pb-20">
@@ -882,6 +898,19 @@ export const TodayView: React.FC = () => {
                     </span>
                   )}
                 </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    archiveItem(zoomItemPair.shirt.id);
+                    setZoomItemPair(null);
+                    setSingleZoomItem(null);
+                    showToast(`📦「${zoomItemPair.shirt.name}」を片付けました`);
+                  }}
+                  className="w-full min-h-[44px] mt-2.5 py-2 px-2.5 rounded-xl text-[11px] font-semibold bg-slate-700/60 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-600/60 flex items-center justify-center gap-1.5 transition-colors active:scale-95"
+                  title={`${zoomItemPair.shirt.name} を片付ける`}
+                >
+                  <span>📦 片付ける</span>
+                </button>
               </div>
 
               <div className="p-3 bg-slate-800/80 rounded-2xl border border-slate-700 flex flex-col items-center">
@@ -917,6 +946,19 @@ export const TodayView: React.FC = () => {
                     </span>
                   )}
                 </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    archiveItem(zoomItemPair.pants.id);
+                    setZoomItemPair(null);
+                    setSingleZoomItem(null);
+                    showToast(`📦「${zoomItemPair.pants.name}」を片付けました`);
+                  }}
+                  className="w-full min-h-[44px] mt-2.5 py-2 px-2.5 rounded-xl text-[11px] font-semibold bg-slate-700/60 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-600/60 flex items-center justify-center gap-1.5 transition-colors active:scale-95"
+                  title={`${zoomItemPair.pants.name} を片付ける`}
+                >
+                  <span>📦 片付ける</span>
+                </button>
               </div>
             </div>
 
