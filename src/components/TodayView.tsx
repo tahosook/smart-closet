@@ -56,7 +56,6 @@ export const TodayView: React.FC = () => {
     recordWear,
     registerWifeNg,
     removeWifeNg,
-    archiveItem,
   } = useClosetStore();
 
   const [scene, setScene] = useState<SceneMode>('office');
@@ -271,7 +270,7 @@ export const TodayView: React.FC = () => {
         <div className="text-3xl">👕</div>
         <h3 className="text-base font-bold text-white">利用可能なシャツがありません</h3>
         <p className="text-xs text-slate-400 leading-relaxed max-w-sm mx-auto">
-          すべてのシャツが「片付けた服」に入っているか、登録されていません。「全マトリクス」タブの「片付けた服」一覧から「出す」で戻すことができます。
+          すべてのシャツが「片付けた服」に入っているか、登録されていません。「服追加・AI」タブの「ワードローブ整理」セクションから「出す」で戻すことができます。
         </p>
       </div>
     );
@@ -755,12 +754,12 @@ export const TodayView: React.FC = () => {
                       }`}
                     >
                       <div className="flex items-start gap-2.5 min-w-0">
-                        {/* Photo thumbnail with pair zoom preview (grayscale removed for accurate visual judgment) */}
+                        {/* Photo thumbnail with pair zoom preview (tap to preview & wear) */}
                         <button
                           type="button"
                           onClick={() => setZoomItemPair({ shirt: selectedShirt, pants: p })}
                           className="w-12 h-16 rounded-lg overflow-hidden bg-slate-950 border border-slate-800 flex-shrink-0 cursor-pointer group relative"
-                          title="タップして上下拡大プレビュー"
+                          title="タップして上下拡大プレビュー・着用"
                         >
                           <ItemImage
                             item={p}
@@ -773,7 +772,7 @@ export const TodayView: React.FC = () => {
                           </div>
                         </button>
 
-                        {/* Info area: ID, name, NG badge, cooling badge, color, reason */}
+                        {/* Info area: ID, name, NG badge, cooling badge, color, today wear badge, reason */}
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-1.5 flex-wrap">
                             <span className="text-[10px] font-bold text-slate-400">{p.id}</span>
@@ -785,6 +784,12 @@ export const TodayView: React.FC = () => {
                             ) : (
                               <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-rose-950/90 text-rose-300 border border-rose-800/60">
                                 🚫 NG
+                              </span>
+                            )}
+                            {isTodayChosen && (
+                              <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-emerald-950/90 text-emerald-300 border border-emerald-700/60 flex items-center gap-1">
+                                <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+                                本日着用中
                               </span>
                             )}
                             {isYesterdayWorn && (
@@ -804,33 +809,20 @@ export const TodayView: React.FC = () => {
                         </div>
                       </div>
 
-                      {/* Action buttons (min-h-[44px] ensuring touch target rule) */}
-                      <div className="flex items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() => handleSelectWear(p)}
-                          className={`flex-1 min-h-[44px] py-2.5 px-3 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all ${
-                            isTodayChosen
-                              ? 'bg-emerald-600 text-white shadow-md shadow-emerald-900/40'
-                              : 'bg-slate-800 hover:bg-blue-600 text-slate-100 hover:text-white border border-slate-700 hover:border-blue-500 active:scale-[0.98]'
-                          }`}
-                        >
-                          <CheckCircle2 className="w-4 h-4 flex-shrink-0" />
-                          <span>{isTodayChosen ? '本日着用中' : '✅ 今日これ着る'}</span>
-                        </button>
-
-                        {isWifeNg && (
+                      {/* Action buttons (Only Wife NG removal button if applicable; wear action is in pair modal) */}
+                      {isWifeNg && (
+                        <div className="flex items-center justify-end pt-0.5">
                           <button
                             type="button"
                             onClick={() => handleRemoveWifeNg(p)}
-                            className="min-h-[44px] min-w-[44px] px-3 py-2.5 bg-slate-800/80 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700/80 rounded-xl transition-colors flex items-center justify-center gap-1 text-xs font-semibold flex-shrink-0 active:scale-[0.98]"
+                            className="min-h-[44px] min-w-[44px] px-3 py-2 bg-slate-800/80 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700/80 rounded-xl transition-colors flex items-center justify-center gap-1 text-xs font-semibold flex-shrink-0 active:scale-[0.98]"
                             title="奥様NGを解除"
                           >
                             <Undo2 className="w-3.5 h-3.5 flex-shrink-0" />
-                            <span>解除</span>
+                            <span>奥様NGを解除</span>
                           </button>
-                        )}
-                      </div>
+                        </div>
+                      )}
                     </div>
                   );
                 })
@@ -898,19 +890,6 @@ export const TodayView: React.FC = () => {
                     </span>
                   )}
                 </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    archiveItem(zoomItemPair.shirt.id);
-                    setZoomItemPair(null);
-                    setSingleZoomItem(null);
-                    showToast(`📦「${zoomItemPair.shirt.name}」を片付けました`);
-                  }}
-                  className="w-full min-h-[44px] mt-2.5 py-2 px-2.5 rounded-xl text-[11px] font-semibold bg-slate-700/60 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-600/60 flex items-center justify-center gap-1.5 transition-colors active:scale-95"
-                  title={`${zoomItemPair.shirt.name} を片付ける`}
-                >
-                  <span>📦 片付ける</span>
-                </button>
               </div>
 
               <div className="p-3 bg-slate-800/80 rounded-2xl border border-slate-700 flex flex-col items-center">
@@ -946,19 +925,6 @@ export const TodayView: React.FC = () => {
                     </span>
                   )}
                 </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    archiveItem(zoomItemPair.pants.id);
-                    setZoomItemPair(null);
-                    setSingleZoomItem(null);
-                    showToast(`📦「${zoomItemPair.pants.name}」を片付けました`);
-                  }}
-                  className="w-full min-h-[44px] mt-2.5 py-2 px-2.5 rounded-xl text-[11px] font-semibold bg-slate-700/60 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-600/60 flex items-center justify-center gap-1.5 transition-colors active:scale-95"
-                  title={`${zoomItemPair.pants.name} を片付ける`}
-                >
-                  <span>📦 片付ける</span>
-                </button>
               </div>
             </div>
 
