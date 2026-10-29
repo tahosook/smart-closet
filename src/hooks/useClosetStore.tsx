@@ -29,6 +29,7 @@ import {
   mergeClosetDataWithWifeNg,
   checkIsNgPair,
   calculateRecommendationsForShirt,
+  setGarmentArchived,
 } from '../utils/closetDomain';
 
 const STORAGE_KEYS = {
@@ -68,6 +69,9 @@ export interface ClosetStoreContextType {
   mergedClosetData: ClosetData;
   shirts: ClosetItem[];
   pants: ClosetItem[];
+  allShirts: ClosetItem[];
+  allPants: ClosetItem[];
+  archivedItems: ClosetItem[];
   itemMap: Map<string, ClosetItem>;
   wearHistory: WearRecord[];
   todayRecord: WearRecord | undefined;
@@ -88,6 +92,8 @@ export interface ClosetStoreContextType {
   clearAllWearHistory: () => void;
   registerWifeNg: (shirtId: string, pantsId: string, customReason?: string) => void;
   removeWifeNg: (shirtId: string, pantsId: string) => void;
+  archiveItem: (itemId: string) => void;
+  unarchiveItem: (itemId: string) => void;
   importCustomData: (jsonString: string) => {
     success: boolean;
     mode?: 'single' | 'full' | 'batch_color' | 'batch_garments';
@@ -247,11 +253,31 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   }, [closetData, wifeNgPairs]);
 
   const shirts = useMemo(
-    () => closetData.items.filter((item) => item.category === 'shirt'),
+    () => closetData.items.filter((item) => item.category === 'shirt' && !item.archived),
     [closetData]
   );
   const pants = useMemo(
+    () => closetData.items.filter((item) => item.category === 'pants' && !item.archived),
+    [closetData]
+  );
+  const allShirts = useMemo(
+    () => closetData.items.filter((item) => item.category === 'shirt'),
+    [closetData]
+  );
+  const allPants = useMemo(
     () => closetData.items.filter((item) => item.category === 'pants'),
+    [closetData]
+  );
+  const archivedItems = useMemo(
+    () =>
+      closetData.items
+        .filter((item) => Boolean(item.archived))
+        .sort((a, b) => {
+          if (a.category !== b.category) {
+            return a.category === 'shirt' ? -1 : 1;
+          }
+          return a.id.localeCompare(b.id, undefined, { numeric: true });
+        }),
     [closetData]
   );
 
@@ -761,9 +787,10 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const simulateYesterdayWear = useCallback(
     (pantsId: string) => {
       const yDate = getYesterdayString();
-      recordWear('S2', pantsId, 'office', yDate);
+      const defaultShirtId = shirts[0]?.id || 'S2';
+      recordWear(defaultShirtId, pantsId, 'office', yDate);
     },
-    [recordWear]
+    [recordWear, shirts]
   );
 
   const removeWearRecord = useCallback(
@@ -845,6 +872,68 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       stateRef.current.wifeNgPairs = updatedWifeNg;
       stateRef.current.tombstones = updatedTombstones;
       setWifeNgPairs(updatedWifeNg);
+      setTombstones(updatedTombstones);
+      triggerBackgroundPush();
+    },
+    [triggerBackgroundPush]
+  );
+
+  const archiveItem = useCallback(
+    (itemId: string) => {
+      const updated = setGarmentArchived(stateRef.current.closetData, itemId, true);
+      if (updated === stateRef.current.closetData) return;
+
+      mutationSeqRef.current++;
+      customDataSeqRef.current++;
+      const now = Math.max(
+        Date.now(),
+        (stateRef.current.closetData.updatedAt || 0) + 1,
+        (stateRef.current.tombstones.customClosetDataClearedAt || 0) + 1
+      );
+      const dataWithTimestamp: ClosetData = {
+        ...updated,
+        updatedAt: now,
+      };
+      localStorage.setItem(STORAGE_KEYS.CUSTOM_DATA, JSON.stringify(dataWithTimestamp));
+      stateRef.current.closetData = dataWithTimestamp;
+      const updatedTombstones: SyncTombstones = {
+        ...stateRef.current.tombstones,
+        clearCustomClosetData: false,
+        customClosetDataClearedAt: undefined,
+      };
+      stateRef.current.tombstones = updatedTombstones;
+      setClosetData(dataWithTimestamp);
+      setTombstones(updatedTombstones);
+      triggerBackgroundPush();
+    },
+    [triggerBackgroundPush]
+  );
+
+  const unarchiveItem = useCallback(
+    (itemId: string) => {
+      const updated = setGarmentArchived(stateRef.current.closetData, itemId, false);
+      if (updated === stateRef.current.closetData) return;
+
+      mutationSeqRef.current++;
+      customDataSeqRef.current++;
+      const now = Math.max(
+        Date.now(),
+        (stateRef.current.closetData.updatedAt || 0) + 1,
+        (stateRef.current.tombstones.customClosetDataClearedAt || 0) + 1
+      );
+      const dataWithTimestamp: ClosetData = {
+        ...updated,
+        updatedAt: now,
+      };
+      localStorage.setItem(STORAGE_KEYS.CUSTOM_DATA, JSON.stringify(dataWithTimestamp));
+      stateRef.current.closetData = dataWithTimestamp;
+      const updatedTombstones: SyncTombstones = {
+        ...stateRef.current.tombstones,
+        clearCustomClosetData: false,
+        customClosetDataClearedAt: undefined,
+      };
+      stateRef.current.tombstones = updatedTombstones;
+      setClosetData(dataWithTimestamp);
       setTombstones(updatedTombstones);
       triggerBackgroundPush();
     },
@@ -1058,6 +1147,9 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       mergedClosetData,
       shirts,
       pants,
+      allShirts,
+      allPants,
+      archivedItems,
       itemMap,
       wearHistory,
       todayRecord,
@@ -1074,6 +1166,8 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       clearAllWearHistory,
       registerWifeNg,
       removeWifeNg,
+      archiveItem,
+      unarchiveItem,
       importCustomData,
       importBatchGarments,
       triggerBackgroundPush,
@@ -1088,6 +1182,9 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       mergedClosetData,
       shirts,
       pants,
+      allShirts,
+      allPants,
+      archivedItems,
       itemMap,
       wearHistory,
       todayRecord,
@@ -1104,6 +1201,8 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       clearAllWearHistory,
       registerWifeNg,
       removeWifeNg,
+      archiveItem,
+      unarchiveItem,
       importCustomData,
       importBatchGarments,
       triggerBackgroundPush,

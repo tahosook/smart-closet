@@ -412,6 +412,10 @@ export function validateClosetDataSchema(data: unknown): {
       return { valid: false, error: `[${item.id}] の ngIds は文字列配列である必要があります。` };
     }
 
+    if (item.archived !== undefined && typeof item.archived !== 'boolean') {
+      return { valid: false, error: `[${item.id}] の archived は真偽値である必要があります。` };
+    }
+
     // color の正規化・検証（未設定やパレット外値でも読み込みを失敗させず、undefined として安全に保持）
     // 注意: 表示用の inferGarmentColor はここでは呼ばず、データ上は未確定 (undefined) のまま維持する
     const rawColor = item.color as unknown;
@@ -444,6 +448,7 @@ export function validateClosetDataSchema(data: unknown): {
       notes: item.notes,
       color: itemColor,
       ...(itemMeasurements ? { measurements: itemMeasurements } : {}),
+      ...(item.archived === true ? { archived: true } : {}),
     });
   }
 
@@ -614,7 +619,7 @@ export function calculateRecommendationsForShirt(
   ngList: { pants: ClosetItem; reason: string; isWifeNg: boolean }[];
 } {
   const shirt = itemMap.get(shirtId);
-  if (!shirt) {
+  if (!shirt || shirt.archived) {
     return { recommended: [], otherOk: [], ngList: [] };
   }
 
@@ -623,6 +628,7 @@ export function calculateRecommendationsForShirt(
   const ngList: { pants: ClosetItem; reason: string; isWifeNg: boolean }[] = [];
 
   pants.forEach((p) => {
+    if (p.archived) return;
     const ngCheck = checkIsNgPair(shirt.id, p.id, itemMap, wifeNgPairs);
     if (ngCheck.isNg) {
       ngList.push({
@@ -835,6 +841,10 @@ export function validateSingleClosetItem(
     return { valid: false, error: `[${candidate.id}] の ngIds は文字列配列である必要があります。` };
   }
 
+  if (candidate.archived !== undefined && typeof candidate.archived !== 'boolean') {
+    return { valid: false, error: `[${candidate.id}] の archived は真偽値である必要があります。` };
+  }
+
   // 参照先 ID の整合性検査（反対カテゴリのみを参照しているか、かつ既存データに存在するか）
   const targetCategory = candidate.category === 'shirt' ? 'pants' : 'shirt';
   const validTargetIds = new Set(
@@ -933,6 +943,7 @@ export function validateSingleClosetItem(
     notes: updatedNotes,
     ...(finalColor !== undefined ? { color: finalColor } : {}),
     ...(validatedMeasurements ? { measurements: validatedMeasurements } : {}),
+    ...(candidateItem.archived === true ? { archived: true } : {}),
   };
 
   return {
@@ -1187,6 +1198,50 @@ export function switchDraftItemCategory(
     ngIds: [],
     ngReason: 'なし',
     measurements: undefined,
+  };
+}
+
+/**
+ * 指定アイテムがアクティブ（片付けていない）かどうかを判定する純粋関数
+ */
+export function isGarmentActive(item: ClosetItem): boolean {
+  return !item.archived;
+}
+
+/**
+ * 指定されたアイテムの「片付ける（archived: true）」「出す（archived: undefined）」を切り替える純粋関数
+ * 対象アイテム以外のプロパティや相性配列、他アイテムのデータは1ビットも変更せず不変性を保証する。
+ */
+export function setGarmentArchived(
+  data: ClosetData,
+  itemId: string,
+  archived: boolean,
+  updatedAt?: number
+): ClosetData {
+  const normId = itemId.trim().toUpperCase();
+  let itemFound = false;
+
+  const updatedItems = data.items.map((item) => {
+    if (item.id.trim().toUpperCase() !== normId) {
+      return item;
+    }
+    itemFound = true;
+    if (archived) {
+      return { ...item, archived: true };
+    } else {
+      const { archived: _archived, ...rest } = item;
+      return rest;
+    }
+  });
+
+  if (!itemFound) {
+    return data;
+  }
+
+  return {
+    ...data,
+    items: updatedItems,
+    updatedAt: updatedAt !== undefined ? updatedAt : Date.now(),
   };
 }
 

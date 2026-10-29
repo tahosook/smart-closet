@@ -159,7 +159,8 @@ export const AiSyncView: React.FC = () => {
   const nextPantsId = getNextSequentialId(mergedClosetData.items, 'pants');
 
   // Count unconfirmed color garments
-  const unconfirmedColorCount = mergedClosetData.items.filter((item) => !item.color).length;
+  const activeItems = mergedClosetData.items.filter((item) => !item.archived);
+  const unconfirmedColorCount = activeItems.filter((item) => !item.color).length;
 
   // マウント時に専用下書き枠から復元（Geminiアプリ往復でのタブ再読み込み耐性）
   useEffect(() => {
@@ -528,26 +529,36 @@ export const AiSyncView: React.FC = () => {
 
   // プロンプトの生成とコピー（通常モード／まとめ撮りモード）
   const handleCopyPromptAndData = () => {
-    const allShirts = mergedClosetData.items.filter((item) => item.category === 'shirt');
-    const allPants = mergedClosetData.items.filter((item) => item.category === 'pants');
+    const activeShirts = mergedClosetData.items.filter(
+      (item) => item.category === 'shirt' && !item.archived
+    );
+    const activePants = mergedClosetData.items.filter(
+      (item) => item.category === 'pants' && !item.archived
+    );
 
-    const shirtsSummary = allShirts
+    const shirtsSummary = activeShirts
       .map(
         (s) =>
           `- [${s.id}] ${s.name}（色: ${s.color ?? '未設定'}、${s.seasonSleeve}、ドレス度${s.dressScore}、快適度${s.comfortScore}）: ${s.notes}`
       )
       .join('\n');
 
-    const pantsSummary = allPants
+    const pantsSummary = activePants
       .map(
         (p) =>
           `- [${p.id}] ${p.name}（色: ${p.color ?? '未設定'}、${p.seasonSleeve}、ドレス度${p.dressScore}、快適度${p.comfortScore}）: ${p.notes}`
       )
       .join('\n');
 
+    const activeShirtIdSet = new Set(activeShirts.map((s) => s.id));
+    const activePantsIdSet = new Set(activePants.map((p) => p.id));
+    const activeWifeNgPairs = wifeNgPairs.filter(
+      (ng) => activeShirtIdSet.has(ng.shirtId) && activePantsIdSet.has(ng.pantsId)
+    );
+
     const wifeNgSummary =
-      wifeNgPairs.length > 0
-        ? wifeNgPairs.map((ng) => `- ${ng.shirtId} × ${ng.pantsId}: ${ng.reason}`).join('\n')
+      activeWifeNgPairs.length > 0
+        ? activeWifeNgPairs.map((ng) => `- ${ng.shirtId} × ${ng.pantsId}: ${ng.reason}`).join('\n')
         : 'なし';
 
     // まとめ撮りモード専用プロンプトの生成
@@ -781,7 +792,7 @@ ${wifeNgSummary}
 
   // 既存服の色パレット一括相談プロンプトの生成とコピー
   const handleCopyBatchColorPrompt = () => {
-    const items = mergedClosetData.items;
+    const items = mergedClosetData.items.filter((item) => !item.archived);
     const itemsList = items
       .map(
         (item) =>
@@ -2584,7 +2595,7 @@ ${itemsList}
                       <span>既存服の色パレット一括相談</span>
                     </span>
                     <span className="text-[10px] text-slate-400 font-mono">
-                      全{mergedClosetData.items.length}着中 未確定 {unconfirmedColorCount}着
+                      現役{activeItems.length}着中 未確定 {unconfirmedColorCount}着
                     </span>
                   </div>
                   <p className="text-[11px] text-slate-400 leading-relaxed">
