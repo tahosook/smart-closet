@@ -21,6 +21,9 @@ import {
   Crop,
   Ruler,
   UploadCloud,
+  Archive,
+  Package,
+  Undo2,
 } from 'lucide-react';
 import { useClosetStore } from '../hooks/useClosetStore';
 import {
@@ -60,7 +63,7 @@ import {
   cropAndNormalizeGarmentImage,
   uploadImageToGas,
 } from '../utils/imageProcessor';
-import { getColorForPalette } from './ItemImage';
+import { ItemImage, getColorForPalette } from './ItemImage';
 
 const SHIRT_SLEEVE_PRESETS = [
   '長袖・通年',
@@ -95,10 +98,15 @@ export const AiSyncView: React.FC = () => {
     mergedClosetData,
     wifeNgPairs,
     gasConfig,
+    shirts,
+    pants,
+    archivedItems,
     importCustomData,
     importBatchGarments,
     triggerBackgroundPush,
     resetToDefaultData,
+    archiveItem,
+    unarchiveItem,
   } = useClosetStore();
 
   // Registration Mode ('single' or 'batch')
@@ -113,6 +121,7 @@ export const AiSyncView: React.FC = () => {
     message: string;
   } | null>(null);
   const [isBackupOpen, setIsBackupOpen] = useState(false);
+  const [isOrganizeOpen, setIsOrganizeOpen] = useState(false);
 
   // Photo state (Dedicated draft 1 slot)
   const [previewDataUrl, setPreviewDataUrl] = useState<string | null>(null);
@@ -2660,6 +2669,187 @@ ${itemsList}
               </div>
             )}
           </div>
+        </div>
+      </section>
+
+      {/* 登録手順とは独立した「ワードローブ整理」セクション */}
+      <section className="space-y-4 pt-6 border-t border-slate-800">
+        <div className="flex items-center justify-between px-1">
+          <h2 className="text-base font-bold text-white flex items-center gap-2">
+            <Archive className="w-5 h-5 text-amber-400" />
+            <span>📦 ワードローブ整理</span>
+          </h2>
+          <span className="text-xs font-mono font-bold text-amber-300 bg-amber-950/60 border border-amber-800/60 px-2.5 py-1 rounded-full">
+            {archivedItems.length}着 保管中
+          </span>
+        </div>
+
+        <p className="text-xs text-slate-400 px-1 leading-relaxed">
+          着なくなった服やオフシーズンの服を片付けることができます。片付けた服は、毎日の朝画面・相性マトリクス・パッキング計画から除外されます。
+        </p>
+
+        {/* 片付けた服一覧 */}
+        <div className="space-y-2.5">
+          <h3 className="text-xs font-bold text-slate-300 px-1 flex items-center gap-1.5">
+            <span>片付けた服</span>
+            <span className="text-[11px] font-mono text-slate-400 font-normal">（{archivedItems.length}着）</span>
+          </h3>
+
+          {archivedItems.length === 0 ? (
+            <div className="p-4 bg-slate-900/60 border border-slate-800 rounded-2xl text-center text-xs text-slate-400 leading-relaxed">
+              現在片付けた服はありません。着なくなった服は下の「現役の服から選んで片付ける」から仕舞うことができます。
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              {archivedItems.map((item) => (
+                <div
+                  key={item.id}
+                  className="p-3 bg-slate-900/90 border border-slate-800 rounded-2xl flex items-center justify-between gap-3 shadow-md"
+                >
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="w-14 h-18 rounded-xl overflow-hidden bg-slate-950 border border-slate-800 flex-shrink-0">
+                      <ItemImage item={item} showBadge={false} className="w-full h-full" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span
+                          className={`px-1.5 py-0.5 rounded text-[10px] font-bold font-mono ${
+                            item.category === 'shirt'
+                              ? 'bg-blue-950/80 text-blue-300 border border-blue-800/60'
+                              : 'bg-emerald-950/80 text-emerald-300 border border-emerald-800/60'
+                          }`}
+                        >
+                          {item.id}
+                        </span>
+                        <span className="text-xs font-bold text-white truncate">{item.name}</span>
+                        {item.color && (
+                          <span className="px-1.5 py-0.5 rounded text-[9px] font-medium text-slate-300 bg-slate-950 border border-slate-800">
+                            🎨 {item.color}
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-[10px] text-slate-400 mt-0.5">
+                        {item.category === 'shirt' ? 'シャツ' : 'パンツ'} • {item.seasonSleeve} • ドレス度 {item.dressScore.toFixed(1)}
+                      </div>
+                      <div className="text-[10px] text-slate-400 truncate mt-0.5">
+                        {item.notes || 'メモなし'}
+                      </div>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => unarchiveItem(item.id)}
+                    className="min-h-[44px] min-w-[56px] px-3 py-2 bg-emerald-950/80 hover:bg-emerald-900 text-emerald-300 border border-emerald-800/80 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 flex-shrink-0 active:scale-95 shadow-sm"
+                    title={`${item.name} を現役に復帰させる`}
+                  >
+                    <Undo2 className="w-4 h-4" />
+                    <span>出す</span>
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* 現役の服から選んで片付けるアコーディオン */}
+        <div className="pt-2">
+          <button
+            type="button"
+            onClick={() => setIsOrganizeOpen((prev) => !prev)}
+            className="w-full min-h-[44px] px-4 py-3 bg-slate-900/80 hover:bg-slate-900 border border-slate-800 hover:border-slate-700 rounded-2xl flex items-center justify-between text-xs font-bold text-slate-200 transition-colors"
+          >
+            <div className="flex items-center gap-2">
+              <Package className="w-4 h-4 text-amber-400" />
+              <span>現役の服から選んで片付ける（全{shirts.length + pants.length}着）</span>
+            </div>
+            {isOrganizeOpen ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
+          </button>
+
+          {isOrganizeOpen && (
+            <div className="mt-3 space-y-4 p-3 bg-slate-950/60 border border-slate-800/80 rounded-2xl">
+              {/* シャツ一覧 */}
+              <div className="space-y-2">
+                <div className="text-[11px] font-bold text-blue-400 px-1 flex items-center gap-1">
+                  <span>👔 シャツ・トップス（{shirts.length}着）</span>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {shirts.map((item) => (
+                    <div
+                      key={item.id}
+                      className="p-2.5 bg-slate-900/80 border border-slate-800 rounded-xl flex items-center justify-between gap-2.5"
+                    >
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <div className="w-10 h-13 rounded-lg overflow-hidden bg-slate-950 border border-slate-800 flex-shrink-0">
+                          <ItemImage item={item} showBadge={false} className="w-full h-full" />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-1.5">
+                            <span className="px-1.5 py-0.5 rounded text-[9px] font-bold font-mono bg-blue-950/80 text-blue-300 border border-blue-800/60">
+                              {item.id}
+                            </span>
+                            <span className="text-xs font-bold text-slate-200 truncate">{item.name}</span>
+                          </div>
+                          <div className="text-[10px] text-slate-400 mt-0.5 truncate">
+                            {item.color ? `🎨 ${item.color} · ` : ''}{item.seasonSleeve}
+                          </div>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => archiveItem(item.id)}
+                        className="min-h-[44px] px-2.5 py-1.5 bg-slate-800/80 hover:bg-slate-800 text-slate-300 hover:text-amber-300 border border-slate-700 rounded-lg text-xs font-semibold transition-all flex items-center gap-1 flex-shrink-0 active:scale-95"
+                        title={`${item.name} を片付ける`}
+                      >
+                        <Package className="w-3.5 h-3.5 text-amber-400" />
+                        <span>片付ける</span>
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* パンツ一覧 */}
+              <div className="space-y-2 pt-2 border-t border-slate-900">
+                <div className="text-[11px] font-bold text-emerald-400 px-1 flex items-center gap-1">
+                  <span>👖 パンツ・ボトムス（{pants.length}着）</span>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {pants.map((item) => (
+                    <div
+                      key={item.id}
+                      className="p-2.5 bg-slate-900/80 border border-slate-800 rounded-xl flex items-center justify-between gap-2.5"
+                    >
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <div className="w-10 h-13 rounded-lg overflow-hidden bg-slate-950 border border-slate-800 flex-shrink-0">
+                          <ItemImage item={item} showBadge={false} className="w-full h-full" />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-1.5">
+                            <span className="px-1.5 py-0.5 rounded text-[9px] font-bold font-mono bg-emerald-950/80 text-emerald-300 border border-emerald-800/60">
+                              {item.id}
+                            </span>
+                            <span className="text-xs font-bold text-slate-200 truncate">{item.name}</span>
+                          </div>
+                          <div className="text-[10px] text-slate-400 mt-0.5 truncate">
+                            {item.color ? `🎨 ${item.color} · ` : ''}{item.seasonSleeve}
+                          </div>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => archiveItem(item.id)}
+                        className="min-h-[44px] px-2.5 py-1.5 bg-slate-800/80 hover:bg-slate-800 text-slate-300 hover:text-amber-300 border border-slate-700 rounded-lg text-xs font-semibold transition-all flex items-center gap-1 flex-shrink-0 active:scale-95"
+                        title={`${item.name} を片付ける`}
+                      >
+                        <Package className="w-3.5 h-3.5 text-amber-400" />
+                        <span>片付ける</span>
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       </section>
     </div>

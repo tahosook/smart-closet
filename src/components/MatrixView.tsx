@@ -13,9 +13,6 @@ import {
   Building2,
   ShieldAlert,
   Sparkles,
-  Archive,
-  Package,
-  Undo2,
 } from 'lucide-react';
 import { ClosetItem } from '../types/closet';
 import { useClosetStore } from '../hooks/useClosetStore';
@@ -38,19 +35,15 @@ export const MatrixView: React.FC = () => {
     wifeNgPairs,
     shirts,
     pants,
-    archivedItems,
     itemMap,
     isNgPair,
     registerWifeNg,
     removeWifeNg,
-    archiveItem,
-    unarchiveItem,
   } = useClosetStore();
 
   const [activeFilter, setActiveFilter] = useState<MatrixFilter>('all');
   const [selectedFocusItem, setSelectedFocusItem] = useState<ClosetItem | null>(null);
   const [isTableExpanded, setIsTableExpanded] = useState(false);
-  const [isOrganizeOpen, setIsOrganizeOpen] = useState(false);
   const [selectedPair, setSelectedPair] = useState<{
     shirt: ClosetItem;
     pants: ClosetItem;
@@ -390,18 +383,6 @@ export const MatrixView: React.FC = () => {
                 {selectedFocusItem.notes || 'メモなし'}
               </div>
             </div>
-            <button
-              type="button"
-              onClick={() => {
-                archiveItem(selectedFocusItem.id);
-                setSelectedFocusItem(null);
-              }}
-              className="min-h-[44px] px-3 py-2 bg-slate-700/80 hover:bg-slate-700 text-slate-200 border border-slate-600 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 flex-shrink-0 active:scale-95"
-              title={`${selectedFocusItem.name} を片付ける`}
-            >
-              <Package className="w-4 h-4 text-amber-400" />
-              <span>片付ける</span>
-            </button>
           </div>
 
           <div className="space-y-1.5">
@@ -713,173 +694,6 @@ export const MatrixView: React.FC = () => {
         })()}
       </section>
 
-      {/* 第4層：片付けた服 ＆ ワードローブ整理セクション */}
-      <section className="space-y-3 pt-2">
-        <div className="flex items-center justify-between px-1">
-          <h3 className="text-sm font-bold text-white flex items-center gap-1.5">
-            <Archive className="w-4 h-4 text-amber-400" />
-            <span>📦 片付けた服</span>
-          </h3>
-          <span className="text-xs font-mono font-bold text-amber-300 bg-amber-950/60 border border-amber-800/60 px-2 py-0.5 rounded-full">
-            {archivedItems.length}着 保管中
-          </span>
-        </div>
-
-        {archivedItems.length === 0 ? (
-          <div className="p-4 bg-slate-900/60 border border-slate-800 rounded-2xl text-center text-xs text-slate-400 leading-relaxed">
-            現在片付けた服はありません。着なくなった服は下の「現役の服から片付ける」または各服の「片付ける」ボタンから仕舞うことができます。
-          </div>
-        ) : (
-          <div className="space-y-2.5">
-            <p className="text-[11px] text-slate-400 px-1">
-              通常のワードローブやおすすめ・マトリクスから外して仕舞ってある服です。「出す」を押すといつでも元の状態で復帰できます。
-            </p>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-              {archivedItems.map((item) => (
-                <div
-                  key={item.id}
-                  className="p-3 bg-slate-900/90 border border-slate-800 rounded-2xl flex items-center justify-between gap-3 shadow-md"
-                >
-                  <div className="flex items-center gap-3 min-w-0">
-                    <div className="w-14 h-18 rounded-xl overflow-hidden bg-slate-950 border border-slate-800 flex-shrink-0">
-                      <ItemImage item={item} showBadge={false} className="w-full h-full" />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        <span
-                          className={`px-1.5 py-0.5 rounded text-[10px] font-bold font-mono ${
-                            item.category === 'shirt'
-                              ? 'bg-blue-950/80 text-blue-300 border border-blue-800/60'
-                              : 'bg-emerald-950/80 text-emerald-300 border border-emerald-800/60'
-                          }`}
-                        >
-                          {item.id}
-                        </span>
-                        <span className="text-xs font-bold text-white truncate">{item.name}</span>
-                        {item.color && (
-                          <span className="px-1.5 py-0.5 rounded text-[9px] font-medium text-slate-300 bg-slate-950 border border-slate-800">
-                            🎨 {item.color}
-                          </span>
-                        )}
-                      </div>
-                      <div className="text-[10px] text-slate-400 mt-0.5">
-                        {item.category === 'shirt' ? 'シャツ' : 'パンツ'} • {item.seasonSleeve} • ドレス度 {item.dressScore.toFixed(1)}
-                      </div>
-                      <div className="text-[10px] text-slate-400 truncate mt-0.5">
-                        {item.notes || 'メモなし'}
-                      </div>
-                    </div>
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={() => unarchiveItem(item.id)}
-                    className="min-h-[44px] min-w-[56px] px-3 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold transition-all shadow-md active:scale-95 flex items-center justify-center gap-1 flex-shrink-0"
-                    title={`${item.name} をワードローブに戻す`}
-                  >
-                    <Undo2 className="w-3.5 h-3.5" />
-                    <span>出す</span>
-                  </button>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* 現役の服から片付けるアコーディオン */}
-        <div className="pt-1">
-          <button
-            type="button"
-            onClick={() => setIsOrganizeOpen(!isOrganizeOpen)}
-            className="w-full min-h-[44px] p-3 rounded-2xl bg-slate-900/60 hover:bg-slate-900 border border-slate-800 text-xs font-semibold text-slate-300 flex items-center justify-between transition-colors"
-          >
-            <div className="flex items-center gap-2">
-              <Package className="w-4 h-4 text-slate-400" />
-              <span>現役の服から選んで片付ける（全{shirts.length + pants.length}着）</span>
-            </div>
-            {isOrganizeOpen ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
-          </button>
-
-          {isOrganizeOpen && (
-            <div className="mt-2.5 p-3 bg-slate-900/90 border border-slate-800 rounded-2xl space-y-3 animate-fade-in">
-              <p className="text-[11px] text-slate-400">
-                着なくなったシャツやパンツの「片付ける」を押すと、判断面から外して上の「片付けた服」へ仕舞えます（可逆・いつでも出せます）。
-              </p>
-
-              {/* シャツ一覧 */}
-              <div className="space-y-1.5">
-                <span className="text-[11px] font-bold text-blue-400">👕 現役シャツ（{shirts.length}着）</span>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                  {shirts.map((shirt) => (
-                    <div
-                      key={shirt.id}
-                      className="p-2.5 bg-slate-950/80 border border-slate-800/80 rounded-xl flex items-center justify-between gap-2"
-                    >
-                      <div className="flex items-center gap-2 min-w-0">
-                        <div className="w-10 h-12 rounded-lg overflow-hidden bg-slate-900 flex-shrink-0">
-                          <ItemImage item={shirt} showBadge={false} className="w-full h-full" />
-                        </div>
-                        <div className="min-w-0">
-                          <div className="flex items-center gap-1">
-                            <span className="text-[10px] font-bold text-blue-400 font-mono">{shirt.id}</span>
-                            <span className="text-xs font-bold text-slate-200 truncate">{shirt.name}</span>
-                          </div>
-                          <div className="text-[10px] text-slate-400 truncate">{shirt.seasonSleeve}</div>
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => archiveItem(shirt.id)}
-                        className="min-h-[44px] min-w-[44px] px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 rounded-xl text-[11px] font-bold transition-colors flex-shrink-0 active:scale-95 flex items-center gap-1"
-                        title={`${shirt.name} を片付ける`}
-                      >
-                        <Package className="w-3.5 h-3.5 text-amber-400" />
-                        <span>片付ける</span>
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* パンツ一覧 */}
-              <div className="space-y-1.5 pt-2 border-t border-slate-800">
-                <span className="text-[11px] font-bold text-emerald-400">👖 現役パンツ（{pants.length}本）</span>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                  {pants.map((p) => (
-                    <div
-                      key={p.id}
-                      className="p-2.5 bg-slate-950/80 border border-slate-800/80 rounded-xl flex items-center justify-between gap-2"
-                    >
-                      <div className="flex items-center gap-2 min-w-0">
-                        <div className="w-10 h-12 rounded-lg overflow-hidden bg-slate-900 flex-shrink-0">
-                          <ItemImage item={p} showBadge={false} className="w-full h-full" />
-                        </div>
-                        <div className="min-w-0">
-                          <div className="flex items-center gap-1">
-                            <span className="text-[10px] font-bold text-emerald-400 font-mono">{p.id}</span>
-                            <span className="text-xs font-bold text-slate-200 truncate">{p.name}</span>
-                          </div>
-                          <div className="text-[10px] text-slate-400 truncate">{p.seasonSleeve}</div>
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => archiveItem(p.id)}
-                        className="min-h-[44px] min-w-[44px] px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 rounded-xl text-[11px] font-bold transition-colors flex-shrink-0 active:scale-95 flex items-center gap-1"
-                        title={`${p.name} を片付ける`}
-                      >
-                        <Package className="w-3.5 h-3.5 text-amber-400" />
-                        <span>片付ける</span>
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-      </section>
-
       {/* Selected Pair Preview Modal */}
       {selectedPair && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
@@ -956,32 +770,6 @@ export const MatrixView: React.FC = () => {
                         🚨 奥様NGに登録する（候補から除外）
                       </button>
                     )}
-                  </div>
-
-                  {/* Actions to archive individual garment in pair */}
-                  <div className="grid grid-cols-2 gap-2 pt-2 border-t border-slate-800">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        archiveItem(selectedPair.shirt.id);
-                        setSelectedPair(null);
-                      }}
-                      className="min-h-[44px] py-2 px-2.5 rounded-xl text-[11px] font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 flex items-center justify-center gap-1 transition-colors active:scale-95"
-                    >
-                      <Package className="w-3.5 h-3.5 text-amber-400" />
-                      <span>シャツを片付ける</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        archiveItem(selectedPair.pants.id);
-                        setSelectedPair(null);
-                      }}
-                      className="min-h-[44px] py-2 px-2.5 rounded-xl text-[11px] font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 flex items-center justify-center gap-1 transition-colors active:scale-95"
-                    >
-                      <Package className="w-3.5 h-3.5 text-amber-400" />
-                      <span>パンツを片付ける</span>
-                    </button>
                   </div>
                 </div>
               );
