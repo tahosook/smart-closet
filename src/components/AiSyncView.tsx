@@ -550,9 +550,15 @@ export const AiSyncView: React.FC = () => {
       )
       .join('\n');
 
+    const activeShirtIdSet = new Set(activeShirts.map((s) => s.id));
+    const activePantsIdSet = new Set(activePants.map((p) => p.id));
+    const activeWifeNgPairs = wifeNgPairs.filter(
+      (ng) => activeShirtIdSet.has(ng.shirtId) && activePantsIdSet.has(ng.pantsId)
+    );
+
     const wifeNgSummary =
-      wifeNgPairs.length > 0
-        ? wifeNgPairs.map((ng) => `- ${ng.shirtId} × ${ng.pantsId}: ${ng.reason}`).join('\n')
+      activeWifeNgPairs.length > 0
+        ? activeWifeNgPairs.map((ng) => `- ${ng.shirtId} × ${ng.pantsId}: ${ng.reason}`).join('\n')
         : 'なし';
 
     // まとめ撮りモード専用プロンプトの生成
