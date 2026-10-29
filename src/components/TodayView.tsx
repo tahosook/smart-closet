@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import {
   CheckCircle2,
   AlertTriangle,
@@ -234,6 +234,14 @@ export const TodayView: React.FC = () => {
       ),
     [todayRecord, selectedShirt.id, ngList]
   );
+
+  // Auto-expand NG accordion once when selected shirt's worn pants is in NG list,
+  // while allowing user to freely toggle (collapse/open) afterwards.
+  useEffect(() => {
+    if (isSelectedPantsInNg) {
+      setShowNgAccordion(true);
+    }
+  }, [isSelectedPantsInNg]);
 
   const topRecommendations = recommended.slice(0, 3);
   const remainingRecommendations = recommended.slice(3);
@@ -702,14 +710,14 @@ export const TodayView: React.FC = () => {
                 </span>
               )}
             </div>
-            {showNgAccordion || isSelectedPantsInNg ? (
+            {showNgAccordion ? (
               <ChevronUp className="w-4 h-4 text-slate-400" />
             ) : (
               <ChevronDown className="w-4 h-4 text-slate-400" />
             )}
           </button>
 
-          {(showNgAccordion || isSelectedPantsInNg) && (
+          {showNgAccordion && (
             <div className="space-y-2 mt-2">
               {ngList.length === 0 ? (
                 <div className="p-3 text-center text-xs text-slate-400 bg-slate-900/60 rounded-xl">
