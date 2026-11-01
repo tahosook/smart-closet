@@ -1920,6 +1920,9 @@ export function buildShoppingConsultationPrompt(
   const activePants = items.filter((item) => item.category === 'pants' && !item.archived);
   const archivedItems = items.filter((item) => Boolean(item.archived));
 
+  const activeShirtIdSet = new Set(activeShirts.map((s) => s.id));
+  const activePantsIdSet = new Set(activePants.map((p) => p.id));
+
   const formatMeasurementsSummary = (item: ClosetItem): string => {
     if (!item.measurements) return '';
     const m = item.measurements;
@@ -1943,9 +1946,16 @@ export function buildShoppingConsultationPrompt(
   const formatActiveItem = (item: ClosetItem): string => {
     const wearCount = wearCountMap.get(item.id) || 0;
     const measurementsStr = formatMeasurementsSummary(item);
-    const officeStr = item.officeRecommendIds.length > 0 ? item.officeRecommendIds.join(', ') : 'なし';
-    const remoteStr = item.remoteRecommendIds.length > 0 ? item.remoteRecommendIds.join(', ') : 'なし';
-    const ngStr = item.ngIds.length > 0 ? `${item.ngIds.join(', ')}（${item.ngReason || '相性NG'}）` : 'なし';
+
+    // 片付けた服（archived）のIDを相性行から除外
+    const validPeerSet = item.category === 'shirt' ? activePantsIdSet : activeShirtIdSet;
+    const filteredOffice = item.officeRecommendIds.filter((id) => validPeerSet.has(id));
+    const filteredRemote = item.remoteRecommendIds.filter((id) => validPeerSet.has(id));
+    const filteredNg = item.ngIds.filter((id) => validPeerSet.has(id));
+
+    const officeStr = filteredOffice.length > 0 ? filteredOffice.join(', ') : 'なし';
+    const remoteStr = filteredRemote.length > 0 ? filteredRemote.join(', ') : 'なし';
+    const ngStr = filteredNg.length > 0 ? `${filteredNg.join(', ')}（${item.ngReason || '相性NG'}）` : 'なし';
 
     return `- [${item.id}] ${item.name}（色: ${item.color ?? '未設定'}、${item.seasonSleeve}、ドレス度${item.dressScore}、快適度${item.comfortScore}、着用回数: ${wearCount}回${measurementsStr}）
   - 出社推奨: ${officeStr}
@@ -1965,8 +1975,6 @@ export function buildShoppingConsultationPrompt(
       : '（現在登録されている現役パンツはありません）';
 
   // 3. 現役アイテム間の登録済み奥様NGペア
-  const activeShirtIdSet = new Set(activeShirts.map((s) => s.id));
-  const activePantsIdSet = new Set(activePants.map((p) => p.id));
   const activeWifeNgPairs = wifeNgPairs.filter(
     (ng) => activeShirtIdSet.has(ng.shirtId) && activePantsIdSet.has(ng.pantsId)
   );

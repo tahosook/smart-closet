@@ -4359,6 +4359,13 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
   assert.equal(activeShirtSection.includes('[S8]'), false, 'Archived S8 must not be in active shirt section');
   assert.equal(activePantsSection.includes('[P12]'), false, 'Archived P12 must not be in active pants section');
 
+  // (a-2) archived アイテムの ID（P12, S8）が主データの相性行（出社推奨・リモート推奨・NG相手）から除外されていること
+  // S1 の出社推奨は元々 P3, P9, P12 だが、P12 が除外されて P3, P9 のみになること
+  assert.ok(activeShirtSection.includes('出社推奨: P3, P9'));
+  assert.equal(activeShirtSection.includes('P12'), false, 'Archived P12 must not appear in active shirt compatibility lines');
+  // P3 の NG相手は元々 S8 だが、S8 が除外されて「なし」になること
+  assert.equal(activePantsSection.includes('S8'), false, 'Archived S8 must not appear in active pants compatibility lines');
+
   // (b) 別枠セクションに P12 と S8 が含まれること
   const archivedSection = promptWithArchived.split('【参考・別枠】現在片付けている服')[1].split('### スタイリング絶対原則')[0];
   assert.ok(archivedSection.includes('[P12] オリーブグリーンチノパン'));
