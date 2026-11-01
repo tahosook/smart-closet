@@ -58,6 +58,7 @@ const {
   isGarmentActive,
   setGarmentArchived,
   buildShoppingConsultationPrompt,
+  copyTextToClipboard,
 } = closetDomain;
 
 const imageProcessorTsPath = path.join(projectRoot, 'src/utils/imageProcessor.ts');
@@ -4403,6 +4404,40 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
   assert.ok(promptMeasurements.includes('実寸: [ウエスト82cm, 股下72cm]'));
 
   console.log('  ✅ buildShoppingConsultationPrompt pure domain logic unit tests verified');
+}
+
+// -------------------------------------------------------------
+// Test Case 30: copyTextToClipboard pure logic tests
+// -------------------------------------------------------------
+{
+  let copiedData = null;
+  const mockSuccessClipboard = {
+    writeText: async (text) => {
+      copiedData = text;
+    },
+  };
+  const successRes = await copyTextToClipboard('test prompt content', mockSuccessClipboard);
+  assert.equal(successRes, true, 'copyTextToClipboard must return true on success');
+  assert.equal(copiedData, 'test prompt content', 'copyTextToClipboard must pass correct text to writeText');
+
+  const mockFailClipboard = {
+    writeText: async () => {
+      throw new Error('NotAllowedError: Permission denied');
+    },
+  };
+  const origConsoleError = console.error;
+  console.error = () => {};
+  const failRes = await copyTextToClipboard('test text', mockFailClipboard);
+  console.error = origConsoleError;
+  assert.equal(failRes, false, 'copyTextToClipboard must catch error and return false');
+
+  const noClipboardRes = await copyTextToClipboard('test text', undefined);
+  assert.equal(noClipboardRes, false, 'copyTextToClipboard must return false if clipboard is undefined');
+
+  const invalidClipboardRes = await copyTextToClipboard('test text', {});
+  assert.equal(invalidClipboardRes, false, 'copyTextToClipboard must return false if writeText is not a function');
+
+  console.log('  ✅ copyTextToClipboard pure logic unit tests verified');
 }
 
 console.log('🎉 All GAS backend & sync logic tests passed successfully!');

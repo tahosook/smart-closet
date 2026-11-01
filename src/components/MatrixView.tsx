@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useCallback } from 'react';
+import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import {
   Grid,
   X,
@@ -12,13 +12,19 @@ import {
   Sparkles,
   Copy,
   Check,
+  AlertCircle,
   FileText,
   ShieldCheck,
 } from 'lucide-react';
 import { ClosetItem } from '../types/closet';
 import { useClosetStore } from '../hooks/useClosetStore';
 import { ItemImage } from './ItemImage';
-import { analyzeWardrobeStats, buildShoppingConsultationPrompt } from '../utils/closetDomain';
+import {
+  analyzeWardrobeStats,
+  buildShoppingConsultationPrompt,
+  copyTextToClipboard,
+  CopyFeedbackStatus,
+} from '../utils/closetDomain';
 
 type MatrixFilter = 'all' | 'warning' | 'office' | 'long' | 'short';
 
@@ -54,7 +60,16 @@ export const MatrixView: React.FC = () => {
 
   // 買い足し相談用の任意メモとコピー状態
   const [consultationMemo, setConsultationMemo] = useState('');
-  const [copiedConsultPrompt, setCopiedConsultPrompt] = useState(false);
+  const [copiedConsultPromptStatus, setCopiedConsultPromptStatus] = useState<CopyFeedbackStatus>('idle');
+  const consultPromptTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (consultPromptTimerRef.current) {
+        clearTimeout(consultPromptTimerRef.current);
+      }
+    };
+  }, []);
 
   // ワードローブの健全性・偏り・穴の動的解析
   const stats = useMemo(
@@ -73,16 +88,22 @@ export const MatrixView: React.FC = () => {
     [stats]
   );
 
-  const handleCopyConsultationPrompt = useCallback(() => {
+  const handleCopyConsultationPrompt = useCallback(async () => {
     const promptText = buildShoppingConsultationPrompt({
       items: mergedClosetData.items,
       wifeNgPairs,
       wearHistory,
       userMemo: consultationMemo,
     });
-    navigator.clipboard.writeText(promptText);
-    setCopiedConsultPrompt(true);
-    setTimeout(() => setCopiedConsultPrompt(false), 3000);
+    const ok = await copyTextToClipboard(promptText);
+    if (consultPromptTimerRef.current) {
+      clearTimeout(consultPromptTimerRef.current);
+    }
+    setCopiedConsultPromptStatus(ok ? 'success' : 'error');
+    consultPromptTimerRef.current = setTimeout(() => {
+      setCopiedConsultPromptStatus('idle');
+      consultPromptTimerRef.current = null;
+    }, 3000);
   }, [mergedClosetData.items, wifeNgPairs, wearHistory, consultationMemo]);
 
   // 要注意アイテムの抽出
@@ -640,15 +661,22 @@ export const MatrixView: React.FC = () => {
             type="button"
             onClick={handleCopyConsultationPrompt}
             className={`w-full min-h-[44px] py-3 px-4 rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition-all shadow-lg ${
-              copiedConsultPrompt
+              copiedConsultPromptStatus === 'success'
                 ? 'bg-emerald-600 text-white'
+                : copiedConsultPromptStatus === 'error'
+                ? 'bg-rose-600 text-white'
                 : 'bg-blue-600 hover:bg-blue-500 text-white shadow-blue-900/40 active:scale-[0.98]'
             }`}
           >
-            {copiedConsultPrompt ? (
+            {copiedConsultPromptStatus === 'success' ? (
               <>
                 <Check className="w-4 h-4" />
                 <span>コピー完了！ Gemini に貼って相談してください</span>
+              </>
+            ) : copiedConsultPromptStatus === 'error' ? (
+              <>
+                <AlertCircle className="w-4 h-4" />
+                <span>コピーに失敗しました（もう一度お試しください）</span>
               </>
             ) : (
               <>

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   X,
   Cloud,
@@ -36,6 +36,7 @@ import {
   FetchImagesResponse,
   DriveImageFileInfo,
 } from '../types/closet';
+import { copyTextToClipboard, CopyFeedbackStatus } from '../utils/closetDomain';
 import GAS_SCRIPT_TEMPLATE from '../../gas/Code.gs?raw';
 
 interface GasSyncModalProps {
@@ -57,8 +58,17 @@ export const GasSyncModal: React.FC<GasSyncModalProps> = ({ isOpen, onClose }) =
   const [urlInput, setUrlInput] = useState(gasConfig.webAppUrl);
   const [tokenInput, setTokenInput] = useState(() => gasConfig.secretToken || '');
   const [autoSyncInput, setAutoSyncInput] = useState(gasConfig.autoSync);
-  const [copiedScript, setCopiedScript] = useState(false);
+  const [copiedScriptStatus, setCopiedScriptStatus] = useState<CopyFeedbackStatus>('idle');
   const [saveSuccess, setSaveSuccess] = useState(false);
+  const scriptTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (scriptTimerRef.current) {
+        clearTimeout(scriptTimerRef.current);
+      }
+    };
+  }, []);
 
   // 折りたたみ制御（未連携時は接続設定を初期展開、連携済時はすべて折りたたむ）
   const [isAdvancedOpen, setIsAdvancedOpen] = useState(false);
@@ -469,21 +479,23 @@ export const GasSyncModal: React.FC<GasSyncModalProps> = ({ isOpen, onClose }) =
   };
 
   const handleCopyScript = async () => {
-    try {
-      const finalToken = tokenInput.trim() || generateSecretToken();
-      if (!tokenInput.trim()) {
-        setTokenInput(finalToken);
-      }
-      const customizedScript = GAS_SCRIPT_TEMPLATE.replace(
-        '__SMART_CLOSET_SECRET_TOKEN__',
-        finalToken
-      );
-      await navigator.clipboard.writeText(customizedScript);
-      setCopiedScript(true);
-      setTimeout(() => setCopiedScript(false), 2500);
-    } catch (err) {
-      console.error('Failed to copy GAS script:', err);
+    const finalToken = tokenInput.trim() || generateSecretToken();
+    if (!tokenInput.trim()) {
+      setTokenInput(finalToken);
     }
+    const customizedScript = GAS_SCRIPT_TEMPLATE.replace(
+      '__SMART_CLOSET_SECRET_TOKEN__',
+      finalToken
+    );
+    const ok = await copyTextToClipboard(customizedScript);
+    if (scriptTimerRef.current) {
+      clearTimeout(scriptTimerRef.current);
+    }
+    setCopiedScriptStatus(ok ? 'success' : 'error');
+    scriptTimerRef.current = setTimeout(() => {
+      setCopiedScriptStatus('idle');
+      scriptTimerRef.current = null;
+    }, 3000);
   };
 
   const handleManualPull = async () => {
@@ -963,12 +975,23 @@ export const GasSyncModal: React.FC<GasSyncModalProps> = ({ isOpen, onClose }) =
                       <button
                         type="button"
                         onClick={handleCopyScript}
-                        className="min-h-[44px] py-1.5 px-3 bg-blue-600/30 hover:bg-blue-600 text-blue-200 hover:text-white rounded-xl text-[11px] font-bold transition-all flex items-center gap-1.5 border border-blue-500/40"
+                        className={`min-h-[44px] py-1.5 px-3 rounded-xl text-[11px] font-bold transition-all flex items-center gap-1.5 border ${
+                          copiedScriptStatus === 'success'
+                            ? 'bg-blue-600/30 text-blue-200 border-blue-500/40'
+                            : copiedScriptStatus === 'error'
+                            ? 'bg-rose-950/60 border-rose-700/60 text-rose-200'
+                            : 'bg-blue-600/30 hover:bg-blue-600 text-blue-200 hover:text-white border-blue-500/40'
+                        }`}
                       >
-                        {copiedScript ? (
+                        {copiedScriptStatus === 'success' ? (
                           <>
                             <Check className="w-3.5 h-3.5 text-emerald-300" />
                             <span>コピーしました！</span>
+                          </>
+                        ) : copiedScriptStatus === 'error' ? (
+                          <>
+                            <AlertTriangle className="w-3.5 h-3.5 text-rose-300" />
+                            <span>コピー失敗</span>
                           </>
                         ) : (
                           <>
