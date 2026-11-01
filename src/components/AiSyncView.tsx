@@ -50,6 +50,8 @@ import {
   assignSequentialIdsForBatch,
   validateSingleClosetItem,
   parseSyncInputJson,
+  copyTextToClipboard,
+  CopyFeedbackStatus,
 } from '../utils/closetDomain';
 import {
   saveDraftImage,
@@ -112,9 +114,37 @@ export const AiSyncView: React.FC = () => {
   // Registration Mode ('single' or 'batch')
   const [registrationMode, setRegistrationMode] = useState<'single' | 'batch'>('single');
 
-  const [copiedPrompt, setCopiedPrompt] = useState(false);
-  const [copiedBatchPrompt, setCopiedBatchPrompt] = useState(false);
-  const [copiedJson, setCopiedJson] = useState(false);
+  const [copiedPromptStatus, setCopiedPromptStatus] = useState<CopyFeedbackStatus>('idle');
+  const [copiedBatchPromptStatus, setCopiedBatchPromptStatus] = useState<CopyFeedbackStatus>('idle');
+  const [copiedJsonStatus, setCopiedJsonStatus] = useState<CopyFeedbackStatus>('idle');
+
+  const promptTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const batchPromptTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const jsonTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const triggerCopyFeedback = (
+    setter: React.Dispatch<React.SetStateAction<CopyFeedbackStatus>>,
+    timerRef: React.MutableRefObject<ReturnType<typeof setTimeout> | null>,
+    isSuccess: boolean
+  ) => {
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+    }
+    setter(isSuccess ? 'success' : 'error');
+    timerRef.current = setTimeout(() => {
+      setter('idle');
+      timerRef.current = null;
+    }, 3000);
+  };
+
+  useEffect(() => {
+    return () => {
+      if (promptTimerRef.current) clearTimeout(promptTimerRef.current);
+      if (batchPromptTimerRef.current) clearTimeout(batchPromptTimerRef.current);
+      if (jsonTimerRef.current) clearTimeout(jsonTimerRef.current);
+    };
+  }, []);
+
   const [jsonInput, setJsonInput] = useState('');
   const [importStatus, setImportStatus] = useState<{
     type: 'success' | 'error';
@@ -537,7 +567,7 @@ export const AiSyncView: React.FC = () => {
   };
 
   // プロンプトの生成とコピー（通常モード／まとめ撮りモード）
-  const handleCopyPromptAndData = () => {
+  const handleCopyPromptAndData = async () => {
     const activeShirts = mergedClosetData.items.filter(
       (item) => item.category === 'shirt' && !item.archived
     );
@@ -673,9 +703,8 @@ ${wifeNgSummary}
 - A4用紙が確認できない場合、measurements は null としてください。
 - 出力形式: 説明文や前置きは一切含めず、上記スキーマを満たす単一の有効なJSONコードブロック（\`\`\`json ... \`\`\`）のみを出力してください。`;
 
-      navigator.clipboard.writeText(promptText);
-      setCopiedPrompt(true);
-      setTimeout(() => setCopiedPrompt(false), 3000);
+      const ok = await copyTextToClipboard(promptText);
+      triggerCopyFeedback(setCopiedPromptStatus, promptTimerRef, ok);
       return;
     }
 
@@ -794,13 +823,12 @@ ${wifeNgSummary}
 - A4用紙が確認できない場合、measurements は null としてください。
 - 出力形式: 説明文や前置きは一切含めず、上記スキーマを満たす単一の有効なJSONコードブロック（\`\`\`json ... \`\`\`）のみを出力してください。`;
 
-    navigator.clipboard.writeText(promptText);
-    setCopiedPrompt(true);
-    setTimeout(() => setCopiedPrompt(false), 3000);
+    const ok = await copyTextToClipboard(promptText);
+    triggerCopyFeedback(setCopiedPromptStatus, promptTimerRef, ok);
   };
 
   // 既存服の色パレット一括相談プロンプトの生成とコピー
-  const handleCopyBatchColorPrompt = () => {
+  const handleCopyBatchColorPrompt = async () => {
     const items = mergedClosetData.items.filter((item) => !item.archived);
     const itemsList = items
       .map(
@@ -837,9 +865,8 @@ ${itemsList}
 }
 \`\`\``;
 
-    navigator.clipboard.writeText(promptText);
-    setCopiedBatchPrompt(true);
-    setTimeout(() => setCopiedBatchPrompt(false), 3000);
+    const ok = await copyTextToClipboard(promptText);
+    triggerCopyFeedback(setCopiedBatchPromptStatus, batchPromptTimerRef, ok);
   };
 
   // Step 3: JSON適用・自動マージ・写真の本保存・下書き消去・GASアップロード連動
@@ -1196,10 +1223,9 @@ ${itemsList}
     URL.revokeObjectURL(url);
   };
 
-  const handleCopyMergedJson = () => {
-    navigator.clipboard.writeText(JSON.stringify(mergedClosetData, null, 2));
-    setCopiedJson(true);
-    setTimeout(() => setCopiedJson(false), 3000);
+  const handleCopyMergedJson = async () => {
+    const ok = await copyTextToClipboard(JSON.stringify(mergedClosetData, null, 2));
+    triggerCopyFeedback(setCopiedJsonStatus, jsonTimerRef, ok);
   };
 
   const handleReset = () => {
@@ -1573,15 +1599,22 @@ ${itemsList}
           <button
             onClick={handleCopyPromptAndData}
             className={`w-full min-h-[44px] py-3 px-4 rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition-all shadow-lg ${
-              copiedPrompt
+              copiedPromptStatus === 'success'
                 ? 'bg-emerald-600 text-white'
+                : copiedPromptStatus === 'error'
+                ? 'bg-rose-600 text-white'
                 : 'bg-blue-600 hover:bg-blue-500 text-white shadow-blue-900/40 active:scale-[0.98]'
             }`}
           >
-            {copiedPrompt ? (
+            {copiedPromptStatus === 'success' ? (
               <>
                 <Check className="w-4 h-4" />
                 <span>コピー完了！ Gemini に写真と一緒に貼ってください</span>
+              </>
+            ) : copiedPromptStatus === 'error' ? (
+              <>
+                <AlertCircle className="w-4 h-4" />
+                <span>コピーに失敗しました（もう一度お試しください）</span>
               </>
             ) : (
               <>
@@ -2615,12 +2648,23 @@ ${itemsList}
                   <button
                     type="button"
                     onClick={handleCopyBatchColorPrompt}
-                    className="w-full min-h-[44px] py-2.5 px-3 rounded-xl text-xs font-bold bg-amber-600 hover:bg-amber-500 text-white shadow-md shadow-amber-950 flex items-center justify-center gap-1.5 transition-all"
+                    className={`w-full min-h-[44px] py-2.5 px-3 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all shadow-md ${
+                      copiedBatchPromptStatus === 'success'
+                        ? 'bg-emerald-600 text-white'
+                        : copiedBatchPromptStatus === 'error'
+                        ? 'bg-rose-600 text-white'
+                        : 'bg-amber-600 hover:bg-amber-500 text-white shadow-amber-950'
+                    }`}
                   >
-                    {copiedBatchPrompt ? (
+                    {copiedBatchPromptStatus === 'success' ? (
                       <>
                         <Check className="w-4 h-4" />
                         <span>コピー完了！ Gemini に貼って相談してください</span>
+                      </>
+                    ) : copiedBatchPromptStatus === 'error' ? (
+                      <>
+                        <AlertCircle className="w-4 h-4" />
+                        <span>コピーに失敗しました（もう一度お試しください）</span>
                       </>
                     ) : (
                       <>
@@ -2649,11 +2693,29 @@ ${itemsList}
                   <button
                     type="button"
                     onClick={handleCopyMergedJson}
-                    className="flex-1 min-h-[44px] py-2 px-3 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 flex items-center justify-center gap-1.5 transition-colors border border-slate-700"
+                    className={`flex-1 min-h-[44px] py-2 px-3 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors border ${
+                      copiedJsonStatus === 'error'
+                        ? 'bg-rose-950/60 border-rose-800/80 text-rose-300'
+                        : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700'
+                    }`}
                     title="マージ済みJSONをクリップボードにコピー"
                   >
-                    {copiedJson ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
-                    <span>{copiedJson ? 'コピー済' : 'JSONコピー'}</span>
+                    {copiedJsonStatus === 'success' ? (
+                      <>
+                        <Check className="w-4 h-4 text-emerald-400" />
+                        <span>コピー済</span>
+                      </>
+                    ) : copiedJsonStatus === 'error' ? (
+                      <>
+                        <AlertCircle className="w-4 h-4 text-rose-400" />
+                        <span>コピー失敗</span>
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="w-4 h-4" />
+                        <span>JSONコピー</span>
+                      </>
+                    )}
                   </button>
 
                   <button

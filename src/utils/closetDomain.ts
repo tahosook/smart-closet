@@ -2055,3 +2055,31 @@ ${archivedList}
 3. **対話形式での対応**:
    - 一度の回答で完結させる必要はありません。まずは優先度の高い提案を行い、こちらの質問（予算、具体的なブランド/ショップの傾向、季節の切り替えなど）や条件変更に対話で応じてください。`;
 }
+
+/**
+ * クリップボードコピー結果のフィードバック状態
+ */
+export type CopyFeedbackStatus = 'idle' | 'success' | 'error';
+
+/**
+ * クリップボードへのテキスト書き込みと成否判定を行う純粋非同期ヘルパー関数
+ * navigator.clipboard.writeText が成功した場合のみ true を返し、
+ * 権限拒否、非対応環境、例外発生時は false を返す（呼び出し元へ例外を漏らさない）。
+ */
+export async function copyTextToClipboard(
+  text: string,
+  clipboard: { writeText?: (data: string) => Promise<void> } | undefined =
+    typeof navigator !== 'undefined' ? navigator.clipboard : undefined
+): Promise<boolean> {
+  if (!clipboard || typeof clipboard.writeText !== 'function') {
+    return false;
+  }
+  try {
+    await clipboard.writeText(text);
+    return true;
+  } catch (err) {
+    console.error('Clipboard copy failed:', err);
+    return false;
+  }
+}
+
