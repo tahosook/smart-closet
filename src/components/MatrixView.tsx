@@ -1,10 +1,7 @@
 import React, { useState, useMemo, useCallback } from 'react';
 import {
   Grid,
-  AlertTriangle,
-  Lightbulb,
   X,
-  TrendingUp,
   ShoppingBag,
   Filter,
   ChevronDown,
@@ -13,11 +10,15 @@ import {
   Building2,
   ShieldAlert,
   Sparkles,
+  Copy,
+  Check,
+  FileText,
+  ShieldCheck,
 } from 'lucide-react';
 import { ClosetItem } from '../types/closet';
 import { useClosetStore } from '../hooks/useClosetStore';
 import { ItemImage } from './ItemImage';
-import { analyzeWardrobeStats, getNextSequentialId } from '../utils/closetDomain';
+import { analyzeWardrobeStats, buildShoppingConsultationPrompt } from '../utils/closetDomain';
 
 type MatrixFilter = 'all' | 'warning' | 'office' | 'long' | 'short';
 
@@ -35,7 +36,9 @@ export const MatrixView: React.FC = () => {
     wifeNgPairs,
     shirts,
     pants,
+    archivedItems,
     itemMap,
+    wearHistory,
     isNgPair,
     registerWifeNg,
     removeWifeNg,
@@ -49,6 +52,10 @@ export const MatrixView: React.FC = () => {
     pants: ClosetItem;
   } | null>(null);
 
+  // 買い足し相談用の任意メモとコピー状態
+  const [consultationMemo, setConsultationMemo] = useState('');
+  const [copiedConsultPrompt, setCopiedConsultPrompt] = useState(false);
+
   // ワードローブの健全性・偏り・穴の動的解析
   const stats = useMemo(
     () => analyzeWardrobeStats(shirts, pants, itemMap, wifeNgPairs),
@@ -56,8 +63,6 @@ export const MatrixView: React.FC = () => {
   );
 
   const totalCombinations = shirts.length * pants.length;
-  const officeAcePants = stats.officeAcePants;
-  const nextPantsId = getNextSequentialId(mergedClosetData.items, 'pants');
 
   const totalOfficePairs = useMemo(
     () => stats.shirtStats.reduce((acc, s) => acc + s.officeRecommendIds.length, 0),
@@ -67,6 +72,18 @@ export const MatrixView: React.FC = () => {
     () => stats.shirtStats.reduce((acc, s) => acc + s.ngIds.length, 0),
     [stats]
   );
+
+  const handleCopyConsultationPrompt = useCallback(() => {
+    const promptText = buildShoppingConsultationPrompt({
+      items: mergedClosetData.items,
+      wifeNgPairs,
+      wearHistory,
+      userMemo: consultationMemo,
+    });
+    navigator.clipboard.writeText(promptText);
+    setCopiedConsultPrompt(true);
+    setTimeout(() => setCopiedConsultPrompt(false), 3000);
+  }, [mergedClosetData.items, wifeNgPairs, wearHistory, consultationMemo]);
 
   // 要注意アイテムの抽出
   const lowOfficeShirts = useMemo(
@@ -568,130 +585,84 @@ export const MatrixView: React.FC = () => {
         )}
       </section>
 
-      {/* ワードローブ偏り分析＆買い足しレコメンド */}
-      <section className="space-y-4">
-        <h3 className="text-sm font-bold text-white flex items-center gap-1.5 px-1">
-          <TrendingUp className="w-4 h-4 text-emerald-400" />
-          <span>ワードローブ偏り分析＆買い足しレコメンド</span>
-        </h3>
+      {/* ワードローブ買い足し相談（Gemini スタイリスト対話） */}
+      <section className="space-y-3">
+        <div className="flex items-center justify-between px-1">
+          <h3 className="text-sm font-bold text-white flex items-center gap-1.5">
+            <ShoppingBag className="w-4 h-4 text-emerald-400" />
+            <span>ワードローブ買い足し相談 (Gemini スタイリスト対話)</span>
+          </h3>
+          <div className="flex items-center gap-1.5">
+            <span className="text-[10px] bg-slate-800 text-slate-300 border border-slate-700 px-2 py-0.5 rounded-full font-mono">
+              現役 {shirts.length + pants.length}着
+            </span>
+            {archivedItems.length > 0 && (
+              <span className="text-[10px] bg-amber-950/80 text-amber-300 border border-amber-800/60 px-2 py-0.5 rounded-full font-mono font-bold">
+                保管中 {archivedItems.length}着
+              </span>
+            )}
+          </div>
+        </div>
 
-        {/* Bias Insights Cards */}
-        {(() => {
-          const s1Item = shirts.find((s) => s.id === 'S1');
-          const isOfficePair = (shirt: ClosetItem, p: ClosetItem) => {
-            if (isNgPair(shirt.id, p.id).isNg) return false;
-            return (
-              shirt.officeRecommendIds.includes(p.id) ||
-              p.officeRecommendIds.includes(shirt.id)
-            );
-          };
+        <div className="p-4 bg-slate-800/80 border border-slate-700/70 rounded-2xl shadow-xl space-y-3">
+          <p className="text-xs text-slate-300 leading-relaxed">
+            手持ちの現役ワードローブ全データ（相性・着用実績・奥様NG）と片付けた服（別枠）を埋め込んだ相談プロンプトを生成します。
+            コピーして Gemini に貼り付けるだけで、手持ち服を活かせる買い足し候補や、買う代わりに片付けた服を出す提案を対話形式で自由に相談できます。
+          </p>
 
-          const s1CompatibleOfficePants = s1Item
-            ? officeAcePants.filter((p) => isOfficePair(s1Item, p))
-            : [];
-          const blackOfficeSlacks = pants.find((p) => p.name.includes('黒') && p.dressScore >= 3.5);
-          const blackSlacksCompatibleShirts = blackOfficeSlacks
-            ? shirts.filter((s) => isOfficePair(s, blackOfficeSlacks))
-            : [];
-          const isUniversalHub =
-            Boolean(blackOfficeSlacks && blackSlacksCompatibleShirts.length === shirts.length);
+          {/* 任意の1行相談メモ入力欄 */}
+          <div>
+            <label className="text-[11px] font-bold text-slate-300 mb-1 flex items-center gap-1">
+              <FileText className="w-3.5 h-3.5 text-indigo-400" />
+              <span>相談したい条件・悩み（任意・1行）</span>
+            </label>
+            <input
+              type="text"
+              value={consultationMemo}
+              onChange={(e) => setConsultationMemo(e.target.value)}
+              placeholder="例: 出社用のパンツを増やしたい、S1に合う服が欲しい、夏物を探している 等（空欄でもOK）"
+              className="w-full min-h-[44px] p-2.5 rounded-xl bg-slate-900 border border-slate-700 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
+            />
+          </div>
 
-          return (
-            <div className="space-y-3">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <div className="p-4 bg-slate-800/80 border border-slate-700/70 rounded-2xl space-y-2">
-                  <div className="text-xs font-bold text-amber-300 flex items-center gap-1.5">
-                    <Lightbulb className="w-4 h-4 text-amber-400" />
-                    <span>出社エース（ドレス度3.5以上）: 現在 {officeAcePants.length} 本</span>
-                  </div>
-                  <p className="text-xs text-slate-300 leading-relaxed">
-                    パンツ全{pants.length}本中、安心感のある出社スラックスは{' '}
-                    <strong>{officeAcePants.map((p) => `${p.id}（${p.name.slice(0, 7)}）`).join('、')}</strong> の計{officeAcePants.length}本です。
-                    {officeAcePants.length <= 4
-                      ? ' 週3回以上の出社が続くと冷却期間（連続着用回避）がタイトになりやすいため、着回しハブの強化が推奨されます。'
-                      : ' 出社スラックス層がバランスよく揃っており、冷却期間を保ちながらローテーション可能です。'}
-                  </p>
-                </div>
-
-                <div className="p-4 bg-slate-800/80 border border-slate-700/70 rounded-2xl space-y-2">
-                  <div className="text-xs font-bold text-sky-300 flex items-center gap-1.5">
-                    <AlertTriangle className="w-4 h-4 text-sky-400" />
-                    <span>S1（濃インディゴ）の出社パートナー: {s1CompatibleOfficePants.length} 本</span>
-                  </div>
-                  <p className="text-xs text-slate-300 leading-relaxed">
-                    S1は濃いネイビーのため、ネイビー系パンツと合わせると「作業着見え」で奥様NGになります。
-                    現在出社で合わせられるパンツは{' '}
-                    <strong>
-                      {s1CompatibleOfficePants.length > 0
-                        ? s1CompatibleOfficePants.map((p) => p.id).join('、')
-                        : 'なし'}
-                    </strong>{' '}
-                    （計{s1CompatibleOfficePants.length}本）です。黒スラックスなどの導入でさらに着回しが広がります。
-                  </p>
-                </div>
-              </div>
-
-              {/* Recommended Buy Items or Congratulatory Card */}
-              {blackOfficeSlacks ? (
-                <div className="p-4 bg-gradient-to-r from-emerald-950/70 via-slate-900 to-teal-950/70 border border-emerald-600/50 rounded-2xl shadow-xl space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-emerald-300 uppercase tracking-wider flex items-center gap-1.5">
-                      <ShoppingBag className="w-4 h-4 text-emerald-400" />
-                      <span>
-                        {isUniversalHub
-                          ? '【導入完了】万能出社ハブ（黒スラックス）稼働中'
-                          : '【導入済み】出社対応黒スラックス登録済み'}
-                      </span>
-                    </span>
-                    <span className="text-[10px] bg-emerald-600 text-white font-bold px-2 py-0.5 rounded-full">
-                      {isUniversalHub
-                        ? '全シャツ出社対応 ★★★★★'
-                        : `出社対応: ${blackSlacksCompatibleShirts.length}/${shirts.length}`}
-                    </span>
-                  </div>
-                  <div className="p-3 bg-slate-900/90 rounded-xl border border-slate-700/60 space-y-1.5">
-                    <h4 className="text-sm font-bold text-white flex items-center gap-2">
-                      <span>{blackOfficeSlacks.name}</span>
-                      <span className="text-xs text-emerald-400 font-mono">({blackOfficeSlacks.id})</span>
-                    </h4>
-                    <p className="text-xs text-slate-300 leading-relaxed">
-                      {isUniversalHub
-                        ? `手持ちに黒スラックスが登録されており、S1（濃インディゴ）をはじめ全${shirts.length}着のシャツと出社コーデが可能な万能ハブとして稼働しています。`
-                        : `手持ちに黒スラックスが登録されており、現在全${shirts.length}着中 ${blackSlacksCompatibleShirts.length}着（${blackSlacksCompatibleShirts.map((s) => s.id).join('、')}）と出社コーデが可能です。`}
-                    </p>
-                  </div>
-                </div>
-              ) : (
-                <div className="p-4 bg-gradient-to-r from-slate-900 to-blue-950/80 border border-blue-600/50 rounded-2xl shadow-xl space-y-3">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-blue-300 uppercase tracking-wider flex items-center gap-1.5">
-                      <ShoppingBag className="w-4 h-4 text-blue-400" />
-                      <span>【最優先】買い足すべき救世主アイテム</span>
-                    </span>
-                    <span className="text-[10px] bg-blue-600 text-white font-bold px-2 py-0.5 rounded-full">
-                      投資対効果 ★★★★★
-                    </span>
-                  </div>
-
-                  <div className="p-3 bg-slate-900/90 rounded-xl border border-slate-700/60 space-y-2">
-                    <div className="flex items-center justify-between">
-                      <h4 className="text-sm font-bold text-white">
-                        黒テーパードスラックス（通年・ドレス度4.5）
-                      </h4>
-                      <span className="text-xs text-slate-400 font-mono">{nextPantsId}候補</span>
-                    </div>
-                    <p className="text-xs text-slate-300 leading-relaxed">
-                      現在出社できる黒スラックスが未導入です。「出社できる黒スラックス」を1本導入するだけで、S1（濃インディゴ）をはじめ、白シャツ全種、サックス、生成りまで <strong>全シャツの出社コーデが即座に解禁</strong> されます。
-                    </p>
-                    <div className="text-[11px] text-blue-400 font-medium pt-1">
-                      おすすめ仕様: ノータック〜ワンタック、ポリエステル混紡でシワになりにくく自宅洗濯可能なもの。
-                    </div>
-                  </div>
-                </div>
-              )}
+          {/* 奥様NG反映通知バッジ */}
+          {wifeNgPairs.length > 0 && (
+            <div className="p-2.5 bg-rose-950/40 border border-rose-800/40 rounded-xl flex items-center gap-2 text-[11px] text-rose-300">
+              <ShieldCheck className="w-4 h-4 flex-shrink-0 text-rose-400" />
+              <span>
+                登録済みの<strong>奥様NG（{wifeNgPairs.length}件）</strong>も注意喚起（おすすめ除外対象）としてプロンプトに含めます。
+              </span>
             </div>
-          );
-        })()}
+          )}
+
+          {/* プロンプトコピーボタン */}
+          <button
+            type="button"
+            onClick={handleCopyConsultationPrompt}
+            className={`w-full min-h-[44px] py-3 px-4 rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition-all shadow-lg ${
+              copiedConsultPrompt
+                ? 'bg-emerald-600 text-white'
+                : 'bg-blue-600 hover:bg-blue-500 text-white shadow-blue-900/40 active:scale-[0.98]'
+            }`}
+          >
+            {copiedConsultPrompt ? (
+              <>
+                <Check className="w-4 h-4" />
+                <span>コピー完了！ Gemini に貼って相談してください</span>
+              </>
+            ) : (
+              <>
+                <Copy className="w-4 h-4" />
+                <span>📋 買い足し相談用プロンプトをコピー</span>
+              </>
+            )}
+          </button>
+
+          {/* 購入後の案内 */}
+          <div className="p-2.5 bg-blue-950/40 border border-blue-800/40 rounded-xl text-[11px] text-blue-300 leading-relaxed">
+            💡 相談して新しい服を購入した後は、「服追加・AI」タブから写真（＋A4用紙）を選んで登録できます。
+          </div>
+        </div>
       </section>
 
       {/* Selected Pair Preview Modal */}

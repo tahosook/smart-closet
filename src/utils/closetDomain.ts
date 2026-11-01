@@ -3,6 +3,7 @@ import type {
   ClosetData,
   ClosetItem,
   SceneMode,
+  WearRecord,
   WifeNgPair,
   RecommendationResult,
   ItemCompatibilityStats,
@@ -1878,4 +1879,179 @@ export async function processDriveRetryUploads(
     missingImageItemIds,
     readErrorItemIds,
   };
+}
+
+/**
+ * 買い足し相談プロンプト生成の入力型
+ */
+export interface ShoppingConsultationPromptInput {
+  items: ClosetItem[];
+  wifeNgPairs: WifeNgPair[];
+  wearHistory?: WearRecord[];
+  userMemo?: string;
+}
+
+/**
+ * Gemini 買い足し相談用の対話プロンプトを生成する純粋関数
+ * - 現役アイテム（!archived）を主データとして属性・相性・着用回数を埋め込む
+ * - 片付けた服（archived）は相談のベースには含めず別枠で記載し、「出す」提案や重複購入防止に活用できるようにする
+ * - 奥様NG・相性NGは着用禁止ではなく「ダメ出し回避のための注意喚起（おすすめ除外対象）」として正確に伝える
+ * - 新しい集計・計算ロジックは作らず、既存のアイテム属性と wearHistory の単純カウントのみを出力する
+ * - 人間が読みやすい対話形式（自然言語）での回答を指示する
+ */
+export function buildShoppingConsultationPrompt(
+  input: ShoppingConsultationPromptInput
+): string {
+  const { items, wifeNgPairs, wearHistory = [], userMemo = '' } = input;
+
+  // 1. 各アイテムの着用回数を集計（既存の wearHistory から単純カウント）
+  const wearCountMap = new Map<string, number>();
+  for (const record of wearHistory) {
+    if (record.shirtId) {
+      wearCountMap.set(record.shirtId, (wearCountMap.get(record.shirtId) || 0) + 1);
+    }
+    if (record.pantsId) {
+      wearCountMap.set(record.pantsId, (wearCountMap.get(record.pantsId) || 0) + 1);
+    }
+  }
+
+  // 2. 現役アイテムと片付けた服を分離
+  const activeShirts = items.filter((item) => item.category === 'shirt' && !item.archived);
+  const activePants = items.filter((item) => item.category === 'pants' && !item.archived);
+  const archivedItems = items.filter((item) => Boolean(item.archived));
+
+  const activeShirtIdSet = new Set(activeShirts.map((s) => s.id));
+  const activePantsIdSet = new Set(activePants.map((p) => p.id));
+
+  const formatMeasurementsSummary = (item: ClosetItem): string => {
+    if (!item.measurements) return '';
+    const m = item.measurements;
+    if (item.category === 'shirt') {
+      const parts: string[] = [];
+      if (m.bodyLength !== undefined) parts.push(`着丈${m.bodyLength}cm`);
+      if (m.chestWidth !== undefined) parts.push(`身幅${m.chestWidth}cm`);
+      if (m.shoulderWidth !== undefined) parts.push(`肩幅${m.shoulderWidth}cm`);
+      if (m.sleeveLength !== undefined) parts.push(`袖丈${m.sleeveLength}cm`);
+      return parts.length > 0 ? `、実寸: [${parts.join(', ')}]` : '';
+    } else {
+      const parts: string[] = [];
+      if (m.waist !== undefined) parts.push(`ウエスト${m.waist}cm`);
+      if (m.inseam !== undefined) parts.push(`股下${m.inseam}cm`);
+      if (m.totalLength !== undefined) parts.push(`総丈${m.totalLength}cm`);
+      if (m.hemWidth !== undefined) parts.push(`裾幅${m.hemWidth}cm`);
+      return parts.length > 0 ? `、実寸: [${parts.join(', ')}]` : '';
+    }
+  };
+
+  const formatActiveItem = (item: ClosetItem): string => {
+    const wearCount = wearCountMap.get(item.id) || 0;
+    const measurementsStr = formatMeasurementsSummary(item);
+
+    // 片付けた服（archived）のIDを相性行から除外
+    const validPeerSet = item.category === 'shirt' ? activePantsIdSet : activeShirtIdSet;
+    const filteredOffice = item.officeRecommendIds.filter((id) => validPeerSet.has(id));
+    const filteredRemote = item.remoteRecommendIds.filter((id) => validPeerSet.has(id));
+    const filteredNg = item.ngIds.filter((id) => validPeerSet.has(id));
+
+    const officeStr = filteredOffice.length > 0 ? filteredOffice.join(', ') : 'なし';
+    const remoteStr = filteredRemote.length > 0 ? filteredRemote.join(', ') : 'なし';
+    const ngStr = filteredNg.length > 0 ? `${filteredNg.join(', ')}（${item.ngReason || '相性NG'}）` : 'なし';
+
+    return `- [${item.id}] ${item.name}（色: ${item.color ?? '未設定'}、${item.seasonSleeve}、ドレス度${item.dressScore}、快適度${item.comfortScore}、着用回数: ${wearCount}回${measurementsStr}）
+  - 出社推奨: ${officeStr}
+  - リモート推奨: ${remoteStr}
+  - NG相手: ${ngStr}
+  - メモ: ${item.notes || 'なし'}`;
+  };
+
+  const activeShirtsList =
+    activeShirts.length > 0
+      ? activeShirts.map(formatActiveItem).join('\n')
+      : '（現在登録されている現役シャツはありません）';
+
+  const activePantsList =
+    activePants.length > 0
+      ? activePants.map(formatActiveItem).join('\n')
+      : '（現在登録されている現役パンツはありません）';
+
+  // 3. 現役アイテム間の登録済み奥様NGペア
+  const activeWifeNgPairs = wifeNgPairs.filter(
+    (ng) => activeShirtIdSet.has(ng.shirtId) && activePantsIdSet.has(ng.pantsId)
+  );
+
+  const wifeNgList =
+    activeWifeNgPairs.length > 0
+      ? activeWifeNgPairs
+          .map((ng) => `- ${ng.shirtId} × ${ng.pantsId}: ${ng.reason || '奥様NG指定'}`)
+          .join('\n')
+      : 'なし';
+
+  // 4. 片付けた服のフォーマット
+  const archivedList =
+    archivedItems.length > 0
+      ? archivedItems
+          .map((item) => {
+            const wearCount = wearCountMap.get(item.id) || 0;
+            const catName = item.category === 'shirt' ? 'シャツ' : 'パンツ';
+            return `- [${item.id}] ${item.name}（${catName}、色: ${item.color ?? '未設定'}、${item.seasonSleeve}、ドレス度${item.dressScore}、快適度${item.comfortScore}、過去着用回数: ${wearCount}回）: ${item.notes || 'メモなし'}`;
+          })
+          .join('\n')
+      : 'なし';
+
+  const userMemoSection = userMemo.trim()
+    ? userMemo.trim()
+    : '特になし（現在のワードローブの相性・着用状況から、おすすめの買い足し候補や片付けた服の活用を提案してください）';
+
+  return `あなたは40代後半男性（オフィス出社・リモートワーク併用）専属のプロスタイリストAIです。
+以下は現在の私のクローゼット（スマートクローゼット）に登録されている服の全データです。
+私のワードローブの組み合わせ相性・着用回数・奥様NG情報・片付けている服を把握したうえで、新しく買い足すべき服について【対話形式】で相談に乗ってください。
+※JSONコードではなく、人間が読みやすい自然言語の対話形式でアドバイスしてください。
+
+### 相談者のプロフィール＆利用環境
+- 40代後半男性、ハイブリッド勤務（週2〜3日出社、残りはリモートワーク）。
+- 目標: 「妻からのファッションダメ出し（NG）」を100%回避し、毎朝ストレスなく清潔感ある着こなしができること。
+- 出社時は清潔感・きれいめ（ドレス度3.0以上、特にスラックス）を重視。
+- リモートワーク時は快適さ・リラックス感を重視。
+
+### 相談したい条件・悩み（ユーザーメモ）
+${userMemoSection}
+
+### 【主データ】現在着用している現役ワードローブ一覧
+※相性の相手ID、着用実績（着用回数）、NG相手が記載されています。
+
+【シャツ・トップス（全${activeShirts.length}着）】
+${activeShirtsList}
+
+【パンツ・ボトムス（全${activePants.length}着）】
+${activePantsList}
+
+### 【注意喚起】登録済みの奥様NGペア（全${activeWifeNgPairs.length}件）
+※過去に妻から実際にダメ出しされた組み合わせです。おすすめから除外する注意喚起として扱ってください。
+${wifeNgList}
+
+### 【参考・別枠】現在片付けている服（保管中・全${archivedItems.length}着）
+※片付けた服は現在の現役ローテーション（主データ）には含めていません。
+${archivedList}
+
+### スタイリング絶対原則（奥様ダメ出し回避ルール）
+1. **同系色・濃紺同士の禁止**: 上下ともに濃紺・インディゴになる組み合わせ（例: 濃紺シャツ × 濃紺パンツ）は作業着・パジャマに見えるためNG。
+2. **淡青×青デニムの禁止**: サックス（淡青）にブルーデニム（ブルー）を合わせると全身が水色で繋がり休日のおじさん感が出るためNG。
+3. **淡色×淡色の膨張禁止**: 生成りシャツに淡いグレージュやライトグレーのパンツを合わせると輪郭がぼやけて膨張して見えるためNG。
+4. **柄×柄の完全禁止**: チェック・ストライプ・小紋柄シャツと柄パンツはNG。柄パンツは白無地シャツで消化すること。
+5. **TPO分離と出社スウェット除外**:
+   - 出社時: パンツのドレス度3.5以上を優先。スウェット・ジョガー系（ドレス度3.0未満）は出社候補から除外。
+   - リモート時: 快適度4.0以上を優先。
+6. **NG判定の位置づけ**:
+   - Wife NG や相性NGは、服の着用自体の絶対禁止ではなく「奥様からのダメ出しを回避するための注意喚起（おすすめ候補からの除外対象）」です。買い足し提案では、手持ち服とNG衝突を起こしにくく、着回し相手の少ない服や着用回数の少ない服を救済できるアイテムを優先してください。
+
+### AIへの回答・相談指示
+1. **買い足し候補の提案**:
+   - 優先して買い足すべきアイテムのカテゴリ、色、素材感、シルエット、仕様の目安（例: ノータック〜ワンタック、ポリエステル混紡、ドレス度など）。
+   - それを導入することで、手持ちのどの服と新しくコーデが組めるようになるか（特に着用回数が少ない服や相棒が不足している服の救済）。
+   - 逆に避けるべきアイテム（手持ち服とNG衝突しやすい色・柄・素材など）。
+2. **片付けた服の活用提案（重要）**:
+   - 新しく購入しなくても、現在片付けている服の中に適したものがある場合は、「新しく買うより、片付けている [ID] 〇〇 を出す方がよい」と提案してください。
+   - また、片付けている服とほぼ同一のアイテムを重複して買い足し提案することは避けてください。
+3. **対話形式での対応**:
+   - 一度の回答で完結させる必要はありません。まずは優先度の高い提案を行い、こちらの質問（予算、具体的なブランド/ショップの傾向、季節の切り替えなど）や条件変更に対話で応じてください。`;
 }
