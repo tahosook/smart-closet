@@ -57,6 +57,7 @@ const {
   processDriveRetryUploads,
   isGarmentActive,
   setGarmentArchived,
+  buildShoppingConsultationPrompt,
 } = closetDomain;
 
 const imageProcessorTsPath = path.join(projectRoot, 'src/utils/imageProcessor.ts');
@@ -4273,6 +4274,128 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
   );
 
   console.log('  ✅ Wardrobe Archive ("片付ける" & "出す") domain logic, backward compatibility, and sync safety verified');
+}
+
+// -------------------------------------------------------------
+// Test Case 29: buildShoppingConsultationPrompt のロジック単体テスト
+// -------------------------------------------------------------
+{
+  const rawClosetJson = JSON.parse(fs.readFileSync(path.join(projectRoot, 'src/data/closet.json'), 'utf-8'));
+
+  // 1. 基本動作（履歴あり・メモ指定時）のプロンプト生成テスト
+  const mockWearHistory = [
+    { id: 'w1', date: '2026-10-30', shirtId: 'S1', pantsId: 'P3', scene: 'office', timestamp: 1000 },
+    { id: 'w2', date: '2026-10-31', shirtId: 'S1', pantsId: 'P9', scene: 'office', timestamp: 2000 },
+    { id: 'w3', date: '2026-11-01', shirtId: 'S2', pantsId: 'P8', scene: 'office', timestamp: 3000 },
+  ];
+
+  const mockWifeNgs = [
+    { shirtId: 'S2', pantsId: 'P8', reason: '色合いが重たい', createdAt: '2026-10-25' },
+    { shirtId: 'S1', pantsId: 'P12', reason: 'シルエットがアンバランス', createdAt: '2026-10-26' },
+  ];
+
+  const userMemo = '出社で使えるスラックスのバリエーションを増やしたいです。';
+
+  const promptWithHistory = buildShoppingConsultationPrompt({
+    items: rawClosetJson.items,
+    wifeNgPairs: mockWifeNgs,
+    wearHistory: mockWearHistory,
+    userMemo,
+  });
+
+  // (a) スタイリストAIの役割・対話形式指示・プロフィール
+  assert.ok(promptWithHistory.includes('40代後半男性（オフィス出社・リモートワーク併用）専属のプロスタイリストAI'));
+  assert.ok(promptWithHistory.includes('JSONコードではなく、人間が読みやすい自然言語の対話形式'));
+  assert.ok(promptWithHistory.includes(userMemo), 'User memo must be embedded');
+
+  // (b) 現役全アイテムの含有と着用回数の正確性
+  // S1 は 2回、S2 は 1回、S3 は 0回
+  assert.ok(promptWithHistory.includes('[S1] 濃インディゴ無地長袖シャツ'));
+  assert.ok(promptWithHistory.includes('着用回数: 2回'));
+  assert.ok(promptWithHistory.includes('[S2] 白無地長袖シャツ（紺ボタン）'));
+  assert.ok(promptWithHistory.includes('着用回数: 1回'));
+  assert.ok(promptWithHistory.includes('[S3] サックスシャンブレー長袖シャツ'));
+  assert.ok(promptWithHistory.includes('着用回数: 0回'));
+
+  // P3 は 1回、P9 は 1回、P8 は 1回、P1 は 0回
+  assert.ok(promptWithHistory.includes('[P3] グレージュチノトラウザー'));
+  assert.ok(promptWithHistory.includes('[P8] 濃紺スリムテーパードスラックス'));
+  assert.ok(promptWithHistory.includes('[P1] 濃紺ステッチベイカーパンツ'));
+
+  // (c) 相性情報の含有（出社推奨、リモート推奨、NG相手と理由）
+  assert.ok(promptWithHistory.includes('出社推奨: P3, P9, P12'));
+  assert.ok(promptWithHistory.includes('NG相手: P1, P5, P6, P8, P11（上下同系色の濃紺になり、作業着・パジャマ見えするため）'));
+
+  // (d) 奥様NGの注意喚起
+  assert.ok(promptWithHistory.includes('S2 × P8: 色合いが重たい'));
+  assert.ok(promptWithHistory.includes('S1 × P12: シルエットがアンバランス'));
+  assert.ok(promptWithHistory.includes('おすすめから除外する注意喚起として扱ってください'));
+
+  // (e) 片付けた服が0着の場合
+  assert.ok(promptWithHistory.includes('【参考・別枠】現在片付けている服（保管中・全0着）'));
+  assert.ok(promptWithHistory.includes('なし'));
+
+  // 2. 片付けた服（archived: true）の分離と「出す」提案指示の検証
+  const itemsWithArchived = rawClosetJson.items.map((item) => {
+    if (item.id === 'P12') {
+      return { ...item, archived: true };
+    }
+    if (item.id === 'S8') {
+      return { ...item, archived: true };
+    }
+    return item;
+  });
+
+  const promptWithArchived = buildShoppingConsultationPrompt({
+    items: itemsWithArchived,
+    wifeNgPairs: mockWifeNgs,
+    wearHistory: mockWearHistory,
+    userMemo: '',
+  });
+
+  // (a) P12 と S8 が主データ（現役一覧）に含まれないこと
+  const activeShirtSection = promptWithArchived.split('【シャツ・トップス')[1].split('【パンツ・ボトムス')[0];
+  const activePantsSection = promptWithArchived.split('【パンツ・ボトムス')[1].split('【注意喚起】')[0];
+  assert.equal(activeShirtSection.includes('[S8]'), false, 'Archived S8 must not be in active shirt section');
+  assert.equal(activePantsSection.includes('[P12]'), false, 'Archived P12 must not be in active pants section');
+
+  // (b) 別枠セクションに P12 と S8 が含まれること
+  const archivedSection = promptWithArchived.split('【参考・別枠】現在片付けている服')[1].split('### スタイリング絶対原則')[0];
+  assert.ok(archivedSection.includes('[P12] オリーブグリーンチノパン'));
+  assert.ok(archivedSection.includes('[S8] 生成りワーク長袖シャツ'));
+  assert.ok(archivedSection.includes('保管中・全2着'));
+
+  // (c) 片付けた服に関する指示（「買うより、片付けた服を出す方がよい」）が含まれること
+  assert.ok(promptWithArchived.includes('「新しく買うより、片付けている [ID] 〇〇 を出す方がよい」と提案してください'));
+  assert.ok(promptWithArchived.includes('片付けている服とほぼ同一のアイテムを重複して買い足し提案することは避けてください'));
+
+  // (d) 片付けた服に紐づく奥様NG（S1 × P12）が現役奥様NG一覧に混入しないこと
+  const wifeNgSection = promptWithArchived.split('【注意喚起】登録済みの奥様NGペア')[1].split('【参考・別枠】')[0];
+  assert.ok(wifeNgSection.includes('S2 × P8'), 'Active wife NG pair must be included');
+  assert.equal(wifeNgSection.includes('S1 × P12'), false, 'Wife NG involving archived P12 must not be in active wife NG list');
+
+  // (e) ユーザーメモ未指定時のデフォルト文言
+  assert.ok(promptWithArchived.includes('特になし（現在のワードローブの相性・着用状況から、おすすめの買い足し候補や片付けた服の活用を提案してください）'));
+
+  // 3. 寸法（measurements）付きアイテムのフォーマット検証
+  const itemsWithMeasurements = [
+    {
+      ...rawClosetJson.items[0],
+      measurements: { bodyLength: 72, chestWidth: 54 },
+    },
+    {
+      ...rawClosetJson.items[9], // P1
+      measurements: { waist: 82, inseam: 72 },
+    },
+  ];
+  const promptMeasurements = buildShoppingConsultationPrompt({
+    items: itemsWithMeasurements,
+    wifeNgPairs: [],
+  });
+  assert.ok(promptMeasurements.includes('実寸: [着丈72cm, 身幅54cm]'));
+  assert.ok(promptMeasurements.includes('実寸: [ウエスト82cm, 股下72cm]'));
+
+  console.log('  ✅ buildShoppingConsultationPrompt pure domain logic unit tests verified');
 }
 
 console.log('🎉 All GAS backend & sync logic tests passed successfully!');
