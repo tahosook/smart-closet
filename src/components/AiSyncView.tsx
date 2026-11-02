@@ -2,8 +2,6 @@ import React, { useState, useRef, useEffect } from 'react';
 import {
   Copy,
   Check,
-  Download,
-  RotateCcw,
   Sparkles,
   Camera,
   FileCode,
@@ -21,9 +19,7 @@ import {
   Crop,
   Ruler,
   UploadCloud,
-  Archive,
-  Package,
-  Undo2,
+  ShoppingBag,
 } from 'lucide-react';
 import { useClosetStore } from '../hooks/useClosetStore';
 import {
@@ -52,6 +48,7 @@ import {
   parseSyncInputJson,
   copyTextToClipboard,
   CopyFeedbackStatus,
+  buildShoppingConsultationPrompt,
 } from '../utils/closetDomain';
 import {
   saveDraftImage,
@@ -65,7 +62,7 @@ import {
   cropAndNormalizeGarmentImage,
   uploadImageToGas,
 } from '../utils/imageProcessor';
-import { ItemImage, getColorForPalette } from './ItemImage';
+import { getColorForPalette } from './ItemImage';
 
 const SHIRT_SLEEVE_PRESETS = [
   '長袖・通年',
@@ -102,13 +99,10 @@ export const AiSyncView: React.FC = () => {
     gasConfig,
     shirts,
     pants,
-    archivedItems,
+    wearHistory,
     importCustomData,
     importBatchGarments,
     triggerBackgroundPush,
-    resetToDefaultData,
-    archiveItem,
-    unarchiveItem,
   } = useClosetStore();
 
   // Registration Mode ('single' or 'batch')
@@ -116,11 +110,11 @@ export const AiSyncView: React.FC = () => {
 
   const [copiedPromptStatus, setCopiedPromptStatus] = useState<CopyFeedbackStatus>('idle');
   const [copiedBatchPromptStatus, setCopiedBatchPromptStatus] = useState<CopyFeedbackStatus>('idle');
-  const [copiedJsonStatus, setCopiedJsonStatus] = useState<CopyFeedbackStatus>('idle');
+  const [copiedConsultPromptStatus, setCopiedConsultPromptStatus] = useState<CopyFeedbackStatus>('idle');
 
   const promptTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const batchPromptTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const jsonTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const consultPromptTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const triggerCopyFeedback = (
     setter: React.Dispatch<React.SetStateAction<CopyFeedbackStatus>>,
@@ -141,7 +135,7 @@ export const AiSyncView: React.FC = () => {
     return () => {
       if (promptTimerRef.current) clearTimeout(promptTimerRef.current);
       if (batchPromptTimerRef.current) clearTimeout(batchPromptTimerRef.current);
-      if (jsonTimerRef.current) clearTimeout(jsonTimerRef.current);
+      if (consultPromptTimerRef.current) clearTimeout(consultPromptTimerRef.current);
     };
   }, []);
 
@@ -150,8 +144,9 @@ export const AiSyncView: React.FC = () => {
     type: 'success' | 'error';
     message: string;
   } | null>(null);
-  const [isBackupOpen, setIsBackupOpen] = useState(false);
-  const [isOrganizeOpen, setIsOrganizeOpen] = useState(false);
+
+  // 買い足し相談用の任意メモ
+  const [consultationMemo, setConsultationMemo] = useState('');
 
   // Photo state (Dedicated draft 1 slot)
   const [previewDataUrl, setPreviewDataUrl] = useState<string | null>(null);
@@ -827,6 +822,18 @@ ${wifeNgSummary}
     triggerCopyFeedback(setCopiedPromptStatus, promptTimerRef, ok);
   };
 
+  // ワードローブ買い足し相談プロンプトの生成とコピー
+  const handleCopyConsultationPrompt = async () => {
+    const promptText = buildShoppingConsultationPrompt({
+      items: mergedClosetData.items,
+      wifeNgPairs,
+      wearHistory,
+      userMemo: consultationMemo,
+    });
+    const ok = await copyTextToClipboard(promptText);
+    triggerCopyFeedback(setCopiedConsultPromptStatus, consultPromptTimerRef, ok);
+  };
+
   // 既存服の色パレット一括相談プロンプトの生成とコピー
   const handleCopyBatchColorPrompt = async () => {
     const items = mergedClosetData.items.filter((item) => !item.archived);
@@ -1211,44 +1218,13 @@ ${itemsList}
     }
   };
 
-  const handleDownloadJson = () => {
-    const blob = new Blob([JSON.stringify(mergedClosetData, null, 2)], {
-      type: 'application/json',
-    });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'closet.json';
-    a.click();
-    URL.revokeObjectURL(url);
-  };
-
-  const handleCopyMergedJson = async () => {
-    const ok = await copyTextToClipboard(JSON.stringify(mergedClosetData, null, 2));
-    triggerCopyFeedback(setCopiedJsonStatus, jsonTimerRef, ok);
-  };
-
-  const handleReset = () => {
-    if (window.confirm('初期マスターデータ（全24着）に戻しますか？')) {
-      resetToDefaultData();
-      setFailedDriveUploads([]);
-      if (typeof window !== 'undefined' && window.localStorage) {
-        saveFailedDriveUploadsToStorage(window.localStorage, []);
-      }
-      setImportStatus({
-        type: 'success',
-        message: '初期マスターデータにリセットしました。',
-      });
-    }
-  };
-
   return (
     <div className="space-y-6 pb-20">
       {/* Header card */}
       <div className="p-4 bg-gradient-to-r from-blue-950/70 via-slate-900 to-indigo-950/70 border border-blue-800/50 rounded-2xl shadow-xl">
         <div className="flex items-center gap-2 text-blue-400 font-bold text-sm mb-1">
           <Sparkles className="w-4 h-4 text-blue-400" />
-          <span>服の追加・AIおまかせ登録 (Add & AI Sync)</span>
+          <span>服の追加・AI相談 (Add & AI Sync)</span>
         </div>
         <p className="text-xs text-slate-300 leading-relaxed">
           新しい服の写真を選ぶだけで、Gemini が種別・A4参照の色パレット・寸法・名前・切り抜き範囲・既存服との相性を全自動判定します。事前の種別選択や名前入力は不要です。
@@ -2604,314 +2580,145 @@ ${itemsList}
               <span>💾 JSONを適用して自動マージ・保存</span>
             </button>
           )}
-
-          {/* Collapsible Backup, Reset & Batch Color Consult Section */}
-          <div className="pt-2 border-t border-slate-800">
-            <button
-              type="button"
-              onClick={() => setIsBackupOpen(!isBackupOpen)}
-              className="w-full min-h-[44px] py-2 px-3 rounded-xl bg-slate-900/60 hover:bg-slate-800 text-slate-400 hover:text-slate-300 flex items-center justify-between text-xs transition-colors border border-slate-800/80"
-            >
-              <span className="font-semibold text-slate-300 flex items-center gap-1.5">
-                <span>📦 バックアップ・復旧（色一括相談・ファイル保存・初期データに戻す）</span>
-                {unconfirmedColorCount > 0 && (
-                  <span className="px-1.5 py-0.2 rounded text-[10px] bg-amber-950 text-amber-300 border border-amber-800 font-bold font-mono">
-                    未確定 {unconfirmedColorCount}着
-                  </span>
-                )}
-              </span>
-              {isBackupOpen ? (
-                <ChevronUp className="w-4 h-4 text-slate-400" />
-              ) : (
-                <ChevronDown className="w-4 h-4 text-slate-400" />
-              )}
-            </button>
-
-            {isBackupOpen && (
-              <div className="p-3 mt-2 bg-slate-900/80 rounded-xl border border-slate-800 space-y-3">
-                {/* Batch Color Consultation Section */}
-                <div className="p-3 bg-slate-950/80 rounded-xl border border-slate-800 space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-amber-300 flex items-center gap-1.5">
-                      <Palette className="w-4 h-4 text-amber-400" />
-                      <span>既存服の色パレット一括相談</span>
-                    </span>
-                    <span className="text-[10px] text-slate-400 font-mono">
-                      現役{activeItems.length}着中 未確定 {unconfirmedColorCount}着
-                    </span>
-                  </div>
-                  <p className="text-[11px] text-slate-400 leading-relaxed">
-                    全アイテムの情報と12色パレット基準を Gemini に相談するプロンプトです。Geminiから返ってきた
-                    <code>&#123; "colorUpdates": [...] &#125;</code>
-                    を上のStep 3に貼り付けるだけで、名前を変えずに全着の色のみを一括確定できます。
-                  </p>
-                  <button
-                    type="button"
-                    onClick={handleCopyBatchColorPrompt}
-                    className={`w-full min-h-[44px] py-2.5 px-3 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all shadow-md ${
-                      copiedBatchPromptStatus === 'success'
-                        ? 'bg-emerald-600 text-white'
-                        : copiedBatchPromptStatus === 'error'
-                        ? 'bg-rose-600 text-white'
-                        : 'bg-amber-600 hover:bg-amber-500 text-white shadow-amber-950'
-                    }`}
-                  >
-                    {copiedBatchPromptStatus === 'success' ? (
-                      <>
-                        <Check className="w-4 h-4" />
-                        <span>コピー完了！ Gemini に貼って相談してください</span>
-                      </>
-                    ) : copiedBatchPromptStatus === 'error' ? (
-                      <>
-                        <AlertCircle className="w-4 h-4" />
-                        <span>コピーに失敗しました（もう一度お試しください）</span>
-                      </>
-                    ) : (
-                      <>
-                        <Copy className="w-4 h-4" />
-                        <span>🎨 既存服の色パレット一括相談プロンプトをコピー</span>
-                      </>
-                    )}
-                  </button>
-                </div>
-
-                <p className="text-[11px] text-slate-400">
-                  通常は上の保存ボタンだけで完了します。ファイルの直接管理や初期化を行う場合のみ使用します。
-                </p>
-
-                <div className="flex flex-col sm:flex-row gap-2">
-                  <button
-                    type="button"
-                    onClick={handleDownloadJson}
-                    className="flex-1 min-h-[44px] py-2 px-3 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 flex items-center justify-center gap-1.5 transition-colors border border-slate-700"
-                    title="マージ済み最新JSONをダウンロード（src/data/closet.json差し替え用）"
-                  >
-                    <Download className="w-4 h-4 text-blue-400" />
-                    <span>JSON保存</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={handleCopyMergedJson}
-                    className={`flex-1 min-h-[44px] py-2 px-3 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors border ${
-                      copiedJsonStatus === 'error'
-                        ? 'bg-rose-950/60 border-rose-800/80 text-rose-300'
-                        : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700'
-                    }`}
-                    title="マージ済みJSONをクリップボードにコピー"
-                  >
-                    {copiedJsonStatus === 'success' ? (
-                      <>
-                        <Check className="w-4 h-4 text-emerald-400" />
-                        <span>コピー済</span>
-                      </>
-                    ) : copiedJsonStatus === 'error' ? (
-                      <>
-                        <AlertCircle className="w-4 h-4 text-rose-400" />
-                        <span>コピー失敗</span>
-                      </>
-                    ) : (
-                      <>
-                        <Copy className="w-4 h-4" />
-                        <span>JSONコピー</span>
-                      </>
-                    )}
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={handleReset}
-                    className="min-h-[44px] py-2 px-3 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-rose-950/60 text-rose-300 hover:text-rose-200 border border-slate-700 hover:border-rose-800/80 flex items-center justify-center gap-1.5 transition-colors"
-                    title="初期データに戻す"
-                  >
-                    <RotateCcw className="w-3.5 h-3.5 text-rose-400" />
-                    <span>初期データに戻す</span>
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
         </div>
       </section>
 
-      {/* 登録手順とは独立した「ワードローブ整理」セクション */}
+      {/* 常設セクション: Gemini スタイリスト相談 */}
       <section className="space-y-4 pt-6 border-t border-slate-800">
         <div className="flex items-center justify-between px-1">
           <h2 className="text-base font-bold text-white flex items-center gap-2">
-            <Archive className="w-5 h-5 text-amber-400" />
-            <span>📦 ワードローブ整理</span>
+            <Sparkles className="w-5 h-5 text-indigo-400" />
+            <span>💬 Gemini スタイリスト相談</span>
           </h2>
-          <span className="text-xs font-mono font-bold text-amber-300 bg-amber-950/60 border border-amber-800/60 px-2.5 py-1 rounded-full">
-            {archivedItems.length}着 保管中
-          </span>
         </div>
 
         <p className="text-xs text-slate-400 px-1 leading-relaxed">
-          着なくなった服やオフシーズンの服を片付けることができます。片付けた服は、毎日の朝画面・相性マトリクス・パッキング計画から除外されます。
+          現在のワードローブの相性・着用実績・奥様NG傾向をもとに、Geminiに買い足し候補や色の判定を依頼するプロンプトを生成します。
         </p>
 
-        {/* 片付けた服一覧 */}
-        <div className="space-y-2.5">
-          <h3 className="text-xs font-bold text-slate-300 px-1 flex items-center gap-1.5">
-            <span>片付けた服</span>
-            <span className="text-[11px] font-mono text-slate-400 font-normal">（{archivedItems.length}着）</span>
-          </h3>
-
-          {archivedItems.length === 0 ? (
-            <div className="p-4 bg-slate-900/60 border border-slate-800 rounded-2xl text-center text-xs text-slate-400 leading-relaxed">
-              現在片付けた服はありません。着なくなった服は下の「現役の服から選んで片付ける」から仕舞うことができます。
+        <div className="space-y-4">
+          {/* 1. ワードローブ買い足し相談 */}
+          <div className="p-4 bg-slate-900/90 border border-slate-800 rounded-2xl space-y-3 shadow-md">
+            <div className="flex items-center justify-between">
+              <span className="text-sm font-bold text-blue-300 flex items-center gap-2">
+                <ShoppingBag className="w-4 h-4 text-blue-400" />
+                <span>🛍️ ワードローブ買い足し相談</span>
+              </span>
+              <span className="text-[10px] text-slate-400 font-mono">
+                現役{activeItems.length}着（シャツ{shirts.length}・パンツ{pants.length}）
+              </span>
             </div>
-          ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-              {archivedItems.map((item) => (
-                <div
-                  key={item.id}
-                  className="p-3 bg-slate-900/90 border border-slate-800 rounded-2xl flex items-center justify-between gap-3 shadow-md"
-                >
-                  <div className="flex items-center gap-3 min-w-0">
-                    <div className="w-14 h-18 rounded-xl overflow-hidden bg-slate-950 border border-slate-800 flex-shrink-0">
-                      <ItemImage item={item} showBadge={false} className="w-full h-full" />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        <span
-                          className={`px-1.5 py-0.5 rounded text-[10px] font-bold font-mono ${
-                            item.category === 'shirt'
-                              ? 'bg-blue-950/80 text-blue-300 border border-blue-800/60'
-                              : 'bg-emerald-950/80 text-emerald-300 border border-emerald-800/60'
-                          }`}
-                        >
-                          {item.id}
-                        </span>
-                        <span className="text-xs font-bold text-white truncate">{item.name}</span>
-                        {item.color && (
-                          <span className="px-1.5 py-0.5 rounded text-[9px] font-medium text-slate-300 bg-slate-950 border border-slate-800">
-                            🎨 {item.color}
-                          </span>
-                        )}
-                      </div>
-                      <div className="text-[10px] text-slate-400 mt-0.5">
-                        {item.category === 'shirt' ? 'シャツ' : 'パンツ'} • {item.seasonSleeve} • ドレス度 {item.dressScore.toFixed(1)}
-                      </div>
-                      <div className="text-[10px] text-slate-400 truncate mt-0.5">
-                        {item.notes || 'メモなし'}
-                      </div>
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => unarchiveItem(item.id)}
-                    className="min-h-[44px] min-w-[56px] px-3 py-2 bg-emerald-950/80 hover:bg-emerald-900 text-emerald-300 border border-emerald-800/80 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 flex-shrink-0 active:scale-95 shadow-sm"
-                    title={`${item.name} を現役に復帰させる`}
-                  >
-                    <Undo2 className="w-4 h-4" />
-                    <span>出す</span>
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
 
-        {/* 現役の服から選んで片付けるアコーディオン */}
-        <div className="pt-2">
-          <button
-            type="button"
-            onClick={() => setIsOrganizeOpen((prev) => !prev)}
-            className="w-full min-h-[44px] px-4 py-3 bg-slate-900/80 hover:bg-slate-900 border border-slate-800 hover:border-slate-700 rounded-2xl flex items-center justify-between text-xs font-bold text-slate-200 transition-colors"
-          >
-            <div className="flex items-center gap-2">
-              <Package className="w-4 h-4 text-amber-400" />
-              <span>現役の服から選んで片付ける（全{shirts.length + pants.length}着）</span>
-            </div>
-            {isOrganizeOpen ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
-          </button>
+            <p className="text-[11px] text-slate-400 leading-relaxed">
+              手持ちの服や相性の死角、着用実績をふまえ、ワードローブに最も合い活躍するアイテムの買い足し候補（色・形・理由）を Gemini に提案してもらうプロンプトです。
+            </p>
 
-          {isOrganizeOpen && (
-            <div className="mt-3 space-y-4 p-3 bg-slate-950/60 border border-slate-800/80 rounded-2xl">
-              {/* シャツ一覧 */}
-              <div className="space-y-2">
-                <div className="text-[11px] font-bold text-blue-400 px-1 flex items-center gap-1">
-                  <span>👔 シャツ・トップス（{shirts.length}着）</span>
-                </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                  {shirts.map((item) => (
-                    <div
-                      key={item.id}
-                      className="p-2.5 bg-slate-900/80 border border-slate-800 rounded-xl flex items-center justify-between gap-2.5"
-                    >
-                      <div className="flex items-center gap-2.5 min-w-0">
-                        <div className="w-10 h-13 rounded-lg overflow-hidden bg-slate-950 border border-slate-800 flex-shrink-0">
-                          <ItemImage item={item} showBadge={false} className="w-full h-full" />
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-1.5">
-                            <span className="px-1.5 py-0.5 rounded text-[9px] font-bold font-mono bg-blue-950/80 text-blue-300 border border-blue-800/60">
-                              {item.id}
-                            </span>
-                            <span className="text-xs font-bold text-slate-200 truncate">{item.name}</span>
-                          </div>
-                          <div className="text-[10px] text-slate-400 mt-0.5 truncate">
-                            {item.color ? `🎨 ${item.color} · ` : ''}{item.seasonSleeve}
-                          </div>
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => archiveItem(item.id)}
-                        className="min-h-[44px] px-2.5 py-1.5 bg-slate-800/80 hover:bg-slate-800 text-slate-300 hover:text-amber-300 border border-slate-700 rounded-lg text-xs font-semibold transition-all flex items-center gap-1 flex-shrink-0 active:scale-95"
-                        title={`${item.name} を片付ける`}
-                      >
-                        <Package className="w-3.5 h-3.5 text-amber-400" />
-                        <span>片付ける</span>
-                      </button>
-                    </div>
-                  ))}
-                </div>
+            <div className="space-y-1.5">
+              <label className="text-[11px] font-bold text-slate-300 flex items-center gap-1">
+                <FileText className="w-3.5 h-3.5 text-indigo-400" />
+                <span>相談したい条件・悩み（任意・1行）</span>
+              </label>
+              <input
+                type="text"
+                value={consultationMemo}
+                onChange={(e) => setConsultationMemo(e.target.value)}
+                placeholder="例: 出社用のパンツを増やしたい、S1に合う服が欲しい、夏物を探している 等（空欄でもOK）"
+                className="w-full min-h-[44px] p-2.5 rounded-xl bg-slate-950 border border-slate-700 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
+              />
+            </div>
+
+            {wifeNgPairs.length > 0 && (
+              <div className="p-2.5 bg-rose-950/40 border border-rose-800/40 rounded-xl flex items-center gap-2 text-[11px] text-rose-300">
+                <ShieldCheck className="w-4 h-4 flex-shrink-0 text-rose-400" />
+                <span>
+                  登録済みの<strong>奥様NG（{wifeNgPairs.length}件）</strong>も注意喚起（おすすめ除外対象）としてプロンプトに含めます。
+                </span>
               </div>
+            )}
 
-              {/* パンツ一覧 */}
-              <div className="space-y-2 pt-2 border-t border-slate-900">
-                <div className="text-[11px] font-bold text-emerald-400 px-1 flex items-center gap-1">
-                  <span>👖 パンツ・ボトムス（{pants.length}着）</span>
-                </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                  {pants.map((item) => (
-                    <div
-                      key={item.id}
-                      className="p-2.5 bg-slate-900/80 border border-slate-800 rounded-xl flex items-center justify-between gap-2.5"
-                    >
-                      <div className="flex items-center gap-2.5 min-w-0">
-                        <div className="w-10 h-13 rounded-lg overflow-hidden bg-slate-950 border border-slate-800 flex-shrink-0">
-                          <ItemImage item={item} showBadge={false} className="w-full h-full" />
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-1.5">
-                            <span className="px-1.5 py-0.5 rounded text-[9px] font-bold font-mono bg-emerald-950/80 text-emerald-300 border border-emerald-800/60">
-                              {item.id}
-                            </span>
-                            <span className="text-xs font-bold text-slate-200 truncate">{item.name}</span>
-                          </div>
-                          <div className="text-[10px] text-slate-400 mt-0.5 truncate">
-                            {item.color ? `🎨 ${item.color} · ` : ''}{item.seasonSleeve}
-                          </div>
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => archiveItem(item.id)}
-                        className="min-h-[44px] px-2.5 py-1.5 bg-slate-800/80 hover:bg-slate-800 text-slate-300 hover:text-amber-300 border border-slate-700 rounded-lg text-xs font-semibold transition-all flex items-center gap-1 flex-shrink-0 active:scale-95"
-                        title={`${item.name} を片付ける`}
-                      >
-                        <Package className="w-3.5 h-3.5 text-amber-400" />
-                        <span>片付ける</span>
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              </div>
+            <button
+              type="button"
+              onClick={handleCopyConsultationPrompt}
+              className={`w-full min-h-[44px] py-3 px-4 rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition-all shadow-lg ${
+                copiedConsultPromptStatus === 'success'
+                  ? 'bg-emerald-600 text-white'
+                  : copiedConsultPromptStatus === 'error'
+                  ? 'bg-rose-600 text-white'
+                  : 'bg-blue-600 hover:bg-blue-500 text-white shadow-blue-900/40 active:scale-[0.98]'
+              }`}
+            >
+              {copiedConsultPromptStatus === 'success' ? (
+                <>
+                  <Check className="w-4 h-4" />
+                  <span>コピー完了！ Gemini に貼って相談してください</span>
+                </>
+              ) : copiedConsultPromptStatus === 'error' ? (
+                <>
+                  <AlertCircle className="w-4 h-4" />
+                  <span>コピーに失敗しました（もう一度お試しください）</span>
+                </>
+              ) : (
+                <>
+                  <Copy className="w-4 h-4" />
+                  <span>📋 買い足し相談用プロンプトをコピー</span>
+                </>
+              )}
+            </button>
+          </div>
+
+          {/* 2. 既存服の色パレット一括相談 */}
+          <div className="p-4 bg-slate-900/90 border border-slate-800 rounded-2xl space-y-3 shadow-md">
+            <div className="flex items-center justify-between">
+              <span className="text-sm font-bold text-amber-300 flex items-center gap-2">
+                <Palette className="w-4 h-4 text-amber-400" />
+                <span>🎨 既存服の色パレット一括相談</span>
+              </span>
+              {unconfirmedColorCount > 0 ? (
+                <span className="px-2 py-0.5 rounded text-[10px] bg-amber-950 text-amber-300 border border-amber-800 font-bold font-mono">
+                  未確定 {unconfirmedColorCount}着
+                </span>
+              ) : (
+                <span className="text-[10px] text-slate-400 font-mono">
+                  全{activeItems.length}着 確定済み
+                </span>
+              )}
             </div>
-          )}
+
+            <p className="text-[11px] text-slate-400 leading-relaxed">
+              全アイテムの情報と12色パレット基準を Gemini に相談するプロンプトです。Geminiから返ってきた
+              <code className="text-amber-300"> &#123; "colorUpdates": [...] &#125; </code>
+              を上のStep 3に貼り付けるだけで、名前を変えずに全着の色のみを一括確定できます。
+            </p>
+
+            <button
+              type="button"
+              onClick={handleCopyBatchColorPrompt}
+              className={`w-full min-h-[44px] py-2.5 px-3 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all shadow-md ${
+                copiedBatchPromptStatus === 'success'
+                  ? 'bg-emerald-600 text-white'
+                  : copiedBatchPromptStatus === 'error'
+                  ? 'bg-rose-600 text-white'
+                  : 'bg-amber-600 hover:bg-amber-500 text-white shadow-amber-950 active:scale-[0.98]'
+              }`}
+            >
+              {copiedBatchPromptStatus === 'success' ? (
+                <>
+                  <Check className="w-4 h-4" />
+                  <span>コピー完了！ Gemini に貼って相談してください</span>
+                </>
+              ) : copiedBatchPromptStatus === 'error' ? (
+                <>
+                  <AlertCircle className="w-4 h-4" />
+                  <span>コピーに失敗しました（もう一度お試しください）</span>
+                </>
+              ) : (
+                <>
+                  <Copy className="w-4 h-4" />
+                  <span>🎨 既存服の色パレット一括相談プロンプトをコピー</span>
+                </>
+              )}
+            </button>
+          </div>
         </div>
       </section>
     </div>

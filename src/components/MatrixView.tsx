@@ -1,8 +1,7 @@
-import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
+import React, { useState, useMemo, useCallback, useRef } from 'react';
 import {
   Grid,
   X,
-  ShoppingBag,
   Filter,
   ChevronDown,
   ChevronUp,
@@ -10,21 +9,11 @@ import {
   Building2,
   ShieldAlert,
   Sparkles,
-  Copy,
-  Check,
-  AlertCircle,
-  FileText,
-  ShieldCheck,
 } from 'lucide-react';
 import { ClosetItem } from '../types/closet';
 import { useClosetStore } from '../hooks/useClosetStore';
 import { ItemImage } from './ItemImage';
-import {
-  analyzeWardrobeStats,
-  buildShoppingConsultationPrompt,
-  copyTextToClipboard,
-  CopyFeedbackStatus,
-} from '../utils/closetDomain';
+import { analyzeWardrobeStats } from '../utils/closetDomain';
 
 type MatrixFilter = 'all' | 'warning' | 'office' | 'long' | 'short';
 
@@ -38,13 +27,10 @@ const FILTER_OPTIONS: { id: MatrixFilter; label: string }[] = [
 
 export const MatrixView: React.FC = () => {
   const {
-    mergedClosetData,
     wifeNgPairs,
     shirts,
     pants,
-    archivedItems,
     itemMap,
-    wearHistory,
     isNgPair,
     registerWifeNg,
     removeWifeNg,
@@ -52,23 +38,24 @@ export const MatrixView: React.FC = () => {
 
   const [activeFilter, setActiveFilter] = useState<MatrixFilter>('all');
   const [selectedFocusItem, setSelectedFocusItem] = useState<ClosetItem | null>(null);
-  const [isTableExpanded, setIsTableExpanded] = useState(false);
+  const [isTableExpanded, setIsTableExpanded] = useState(true);
   const [selectedPair, setSelectedPair] = useState<{
     shirt: ClosetItem;
     pants: ClosetItem;
   } | null>(null);
 
-  // 買い足し相談用の任意メモとコピー状態
-  const [consultationMemo, setConsultationMemo] = useState('');
-  const [copiedConsultPromptStatus, setCopiedConsultPromptStatus] = useState<CopyFeedbackStatus>('idle');
-  const consultPromptTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const focusSectionRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    return () => {
-      if (consultPromptTimerRef.current) {
-        clearTimeout(consultPromptTimerRef.current);
+  const handleSelectFocusItem = useCallback((item: ClosetItem) => {
+    setSelectedFocusItem((prev) => {
+      if (prev?.id === item.id) {
+        return null;
       }
-    };
+      setTimeout(() => {
+        focusSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }, 50);
+      return item;
+    });
   }, []);
 
   // ワードローブの健全性・偏り・穴の動的解析
@@ -87,24 +74,6 @@ export const MatrixView: React.FC = () => {
     () => stats.shirtStats.reduce((acc, s) => acc + s.ngIds.length, 0),
     [stats]
   );
-
-  const handleCopyConsultationPrompt = useCallback(async () => {
-    const promptText = buildShoppingConsultationPrompt({
-      items: mergedClosetData.items,
-      wifeNgPairs,
-      wearHistory,
-      userMemo: consultationMemo,
-    });
-    const ok = await copyTextToClipboard(promptText);
-    if (consultPromptTimerRef.current) {
-      clearTimeout(consultPromptTimerRef.current);
-    }
-    setCopiedConsultPromptStatus(ok ? 'success' : 'error');
-    consultPromptTimerRef.current = setTimeout(() => {
-      setCopiedConsultPromptStatus('idle');
-      consultPromptTimerRef.current = null;
-    }, 3000);
-  }, [mergedClosetData.items, wifeNgPairs, wearHistory, consultationMemo]);
 
   // 要注意アイテムの抽出
   const lowOfficeShirts = useMemo(
@@ -222,7 +191,7 @@ export const MatrixView: React.FC = () => {
         return (order[a.status.symbol] || 99) - (order[b.status.symbol] || 99);
       });
     }
-  }, [selectedFocusItem, shirts, pants, wifeNgPairs, isNgPair, getCellStatus]);
+  }, [selectedFocusItem, shirts, pants, isNgPair, getCellStatus]);
 
   return (
     <div className="space-y-6 pb-20">
@@ -230,11 +199,11 @@ export const MatrixView: React.FC = () => {
       <div className="p-4 bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 border border-slate-700/80 rounded-2xl shadow-xl">
         <div className="flex items-center gap-2 text-blue-400 font-bold text-sm mb-1">
           <Grid className="w-4 h-4 text-blue-400" />
-          <span>全マトリクス一覧 (Matrix & Insights)</span>
+          <span>相性マトリクス (Matrix & Insights)</span>
         </div>
         <p className="text-xs text-slate-300 leading-relaxed">
           全{shirts.length}シャツ × {pants.length}パンツ（計{totalCombinations}通りの組み合わせ）の相性を網羅。
-          ワードローブの死角・穴を発見し、1着ごとの詳細や奥様NGの切り替えが可能です。
+          服をタップして相手一覧をドリルダウン確認したり、組み合わせをタップして奥様NGを切り替えできます。
         </p>
       </div>
 
@@ -283,13 +252,14 @@ export const MatrixView: React.FC = () => {
                   </span>
                 </div>
                 <p className="text-[11px] text-slate-300 leading-relaxed">
-                  出社可能なパンツが限られており、平日のローテーションで詰まりやすい服です（タップして相性を確認）。
+                  出社可能なパンツが限られており、平日のローテーションで詰まりやすい服です（タップして相手一覧を確認）。
                 </p>
                 <div className="flex flex-wrap gap-1.5 pt-1">
                   {lowOfficeShirts.map(({ item, officeRecommendIds }) => (
                     <button
                       key={item.id}
-                      onClick={() => setSelectedFocusItem(item)}
+                      type="button"
+                      onClick={() => handleSelectFocusItem(item)}
                       className={`min-h-[44px] px-2.5 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all ${
                         selectedFocusItem?.id === item.id
                           ? 'bg-amber-500 text-slate-950 shadow-md ring-2 ring-amber-300'
@@ -301,7 +271,7 @@ export const MatrixView: React.FC = () => {
                         {item.name}
                       </span>
                       <span className="text-[10px] bg-amber-950/80 text-amber-300 px-1.5 py-0.5 rounded font-mono">
-                        ◎{officeRecommendIds.length}
+                        出社◎ {officeRecommendIds.length}着
                       </span>
                     </button>
                   ))}
@@ -327,7 +297,8 @@ export const MatrixView: React.FC = () => {
                   {lowOfficePants.map(({ item, officeRecommendIds }) => (
                     <button
                       key={item.id}
-                      onClick={() => setSelectedFocusItem(item)}
+                      type="button"
+                      onClick={() => handleSelectFocusItem(item)}
                       className={`min-h-[44px] px-2.5 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all ${
                         selectedFocusItem?.id === item.id
                           ? 'bg-amber-500 text-slate-950 shadow-md ring-2 ring-amber-300'
@@ -339,7 +310,7 @@ export const MatrixView: React.FC = () => {
                         {item.name}
                       </span>
                       <span className="text-[10px] bg-amber-950/80 text-amber-300 px-1.5 py-0.5 rounded font-mono">
-                        ◎{officeRecommendIds.length}
+                        出社◎ {officeRecommendIds.length}着
                       </span>
                     </button>
                   ))}
@@ -359,29 +330,26 @@ export const MatrixView: React.FC = () => {
                   </span>
                 </div>
                 <div className="flex flex-wrap gap-1.5 pt-1">
-                  {highNgItems.map(({ item, ngIds }) => {
-                    const totalOpposite = item.category === 'shirt' ? pants.length : shirts.length;
-                    const ngRatio = (ngIds.length / (totalOpposite || 1)) * 100;
-                    return (
-                      <button
-                        key={item.id}
-                        onClick={() => setSelectedFocusItem(item)}
-                        className={`min-h-[44px] px-2.5 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all ${
-                          selectedFocusItem?.id === item.id
-                            ? 'bg-rose-500 text-white shadow-md ring-2 ring-rose-300'
-                            : 'bg-slate-800/90 text-rose-200 border border-rose-700/60 hover:bg-slate-700'
-                        }`}
-                      >
-                        <span>{item.id}</span>
-                        <span className="text-[10px] font-normal opacity-80 truncate max-w-[80px]">
-                          {item.name}
-                        </span>
-                        <span className="text-[10px] bg-rose-950/80 text-rose-300 px-1.5 py-0.5 rounded font-mono">
-                          NG{ngIds.length} ({ngRatio.toFixed(0)}%)
-                        </span>
-                      </button>
-                    );
-                  })}
+                  {highNgItems.map(({ item, ngIds }) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => handleSelectFocusItem(item)}
+                      className={`min-h-[44px] px-2.5 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all ${
+                        selectedFocusItem?.id === item.id
+                          ? 'bg-rose-500 text-white shadow-md ring-2 ring-rose-300'
+                          : 'bg-slate-800/90 text-rose-200 border border-rose-700/60 hover:bg-slate-700'
+                      }`}
+                    >
+                      <span>{item.id}</span>
+                      <span className="text-[10px] font-normal opacity-80 truncate max-w-[80px]">
+                        {item.name}
+                      </span>
+                      <span className="text-[10px] bg-rose-950/80 text-rose-300 px-1.5 py-0.5 rounded font-mono">
+                        NG {ngIds.length}着
+                      </span>
+                    </button>
+                  ))}
                 </div>
               </div>
             )}
@@ -391,7 +359,10 @@ export const MatrixView: React.FC = () => {
 
       {/* 第2層：アイテム別ドリルダウン表示（1着フォーカスビュー） */}
       {selectedFocusItem && (
-        <section className="p-4 bg-slate-900/95 border-2 border-blue-500/80 rounded-2xl shadow-2xl space-y-3 animate-fade-in">
+        <section
+          ref={focusSectionRef}
+          className="p-4 bg-slate-900/95 border-2 border-blue-500/80 rounded-2xl shadow-2xl space-y-3 animate-fade-in scroll-mt-20"
+        >
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <Focus className="w-4 h-4 text-blue-400" />
@@ -400,6 +371,7 @@ export const MatrixView: React.FC = () => {
               </h3>
             </div>
             <button
+              type="button"
               onClick={() => setSelectedFocusItem(null)}
               className="min-h-[44px] min-w-[44px] flex items-center justify-center text-slate-400 hover:text-white rounded-lg bg-slate-800/60 hover:bg-slate-700 transition-colors"
               title="フォーカス解除"
@@ -426,7 +398,7 @@ export const MatrixView: React.FC = () => {
           <div className="space-y-1.5">
             <div className="text-[11px] font-bold text-slate-300 flex items-center justify-between">
               <span>{selectedFocusItem.category === 'shirt' ? '合わせられるパンツ一覧' : '合わせられるシャツ一覧'}</span>
-              <span className="text-[10px] text-slate-400">タップで詳細・奥様NG切替</span>
+              <span className="text-[10px] text-slate-400">タップで相性詳細・奥様NG切替</span>
             </div>
 
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
@@ -437,6 +409,7 @@ export const MatrixView: React.FC = () => {
                 return (
                   <button
                     key={partner.id}
+                    type="button"
                     onClick={() => setSelectedPair({ shirt: shirtObj, pants: pantsObj })}
                     className={`min-h-[44px] p-2 rounded-xl border text-left flex items-center gap-2 transition-transform active:scale-95 ${status.bg}`}
                   >
@@ -458,57 +431,11 @@ export const MatrixView: React.FC = () => {
         </section>
       )}
 
-      {/* 統一フィルターバー */}
-      <section className="space-y-2">
-        <div className="flex items-center gap-1.5 text-xs font-bold text-slate-300 px-1">
-          <Filter className="w-3.5 h-3.5 text-blue-400" />
-          <span>表示フィルター</span>
-        </div>
-        <div className="flex flex-wrap gap-1.5">
-          {FILTER_OPTIONS.map((opt) => (
-            <button
-              key={opt.id}
-              onClick={() => setActiveFilter(opt.id)}
-              className={`min-h-[44px] px-3 py-2 rounded-xl text-xs font-bold transition-all ${
-                activeFilter === opt.id
-                  ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/40 ring-1 ring-blue-400'
-                  : 'bg-slate-800/80 text-slate-300 hover:bg-slate-750 hover:text-white border border-slate-700/60'
-              }`}
-            >
-              {opt.label}
-            </button>
-          ))}
-        </div>
-      </section>
-
-      {/* 記号の見方（凡例） */}
-      <div className="flex items-center gap-2 flex-wrap text-xs bg-slate-800/70 p-3 rounded-xl border border-slate-700/60">
-        <span className="flex items-center gap-1 text-blue-300 font-semibold">
-          <span className="w-5 h-5 rounded bg-blue-900/80 flex items-center justify-center font-bold">◎</span>
-          出社推奨
-        </span>
-        <span className="flex items-center gap-1 text-emerald-300 font-semibold">
-          <span className="w-5 h-5 rounded bg-emerald-900/80 flex items-center justify-center font-bold">○</span>
-          リモート推奨
-        </span>
-        <span className="flex items-center gap-1 text-slate-400">
-          <span className="w-5 h-5 rounded bg-slate-800 flex items-center justify-center">△</span>
-          着用可
-        </span>
-        <span className="flex items-center gap-1 text-rose-300 font-semibold">
-          <span className="w-5 h-5 rounded bg-rose-950 flex items-center justify-center font-bold">🚨</span>
-          奥様NG
-        </span>
-        <span className="flex items-center gap-1 text-slate-500">
-          <span className="w-5 h-5 rounded bg-slate-900 flex items-center justify-center">×</span>
-          絶対NG
-        </span>
-      </div>
-
-      {/* 第3層：全体マトリックス表（高密度表＋モバイル折りたたみアコーディオン） */}
+      {/* 第3層：全体マトリックス表（高密度表＋フィルター＋折りたたみ） */}
       <section className="bg-slate-850 border border-slate-700/80 rounded-2xl shadow-xl overflow-hidden">
         {/* モバイル向け折りたたみトグルボタン */}
         <button
+          type="button"
           onClick={() => setIsTableExpanded(!isTableExpanded)}
           className="w-full min-h-[44px] p-3.5 bg-slate-800 hover:bg-slate-750 flex items-center justify-between text-left transition-colors border-b border-slate-700/60"
         >
@@ -528,76 +455,143 @@ export const MatrixView: React.FC = () => {
         </button>
 
         {isTableExpanded && (
-          <div className="p-2.5 overflow-hidden animate-fade-in">
+          <div className="p-3 space-y-3 animate-fade-in">
+            {/* 統一フィルターバー（表の上部に内包） */}
+            <div className="space-y-1.5">
+              <div className="flex items-center gap-1.5 text-xs font-bold text-slate-300">
+                <Filter className="w-3.5 h-3.5 text-blue-400" />
+                <span>表示フィルター</span>
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {FILTER_OPTIONS.map((opt) => (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    onClick={() => setActiveFilter(opt.id)}
+                    className={`min-h-[44px] px-3 py-2 rounded-xl text-xs font-bold transition-all ${
+                      activeFilter === opt.id
+                        ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/40 ring-1 ring-blue-400'
+                        : 'bg-slate-800/80 text-slate-300 hover:bg-slate-750 hover:text-white border border-slate-700/60'
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* 記号の見方（凡例：タップ不可のフラットなテキスト表記） */}
+            <div className="flex items-center gap-3 flex-wrap text-[11px] text-slate-400 bg-slate-900/60 px-3 py-2 rounded-xl border border-slate-800">
+              <span className="font-semibold text-slate-300">凡例:</span>
+              <span className="text-blue-300 font-semibold">◎ 出社推奨</span>
+              <span className="text-emerald-300 font-semibold">○ リモート推奨</span>
+              <span className="text-slate-400">△ 着用可</span>
+              <span className="text-rose-300 font-semibold">🚨 奥様NG</span>
+              <span className="text-slate-500">× 絶対NG</span>
+              <span className="text-[10px] text-slate-500 ml-auto">※各セルをタップで相性詳細</span>
+            </div>
+
+            {/* テーブル本体 */}
             {filteredShirts.length === 0 || filteredPants.length === 0 ? (
               <div className="py-8 text-center text-xs text-slate-400">
                 該当するアイテムがありません。フィルター条件を変更してください。
               </div>
             ) : (
-              <div className="overflow-x-auto no-scrollbar">
+              <div className="overflow-x-auto no-scrollbar pt-1">
                 <table className="w-full text-center border-collapse">
                   <thead>
                     <tr>
                       <th className="sticky left-0 z-20 bg-slate-900 p-2 text-[10px] text-slate-400 border border-slate-700/60 min-w-[70px]">
                         シャツ＼パンツ
                       </th>
-                      {filteredPants.map((p) => (
-                        <th
-                          key={p.id}
-                          className="p-1.5 min-w-[52px] bg-slate-900/90 border border-slate-700/60 text-[10px] text-slate-300"
-                        >
-                          <div className="w-10 h-10 mx-auto rounded overflow-hidden bg-slate-950 mb-1">
-                            <ItemImage item={p} showBadge={false} className="w-full h-full" />
-                          </div>
-                          <button
-                            onClick={() => setSelectedFocusItem(p)}
-                            className="font-bold text-slate-200 hover:text-blue-400 block mx-auto underline-offset-2 hover:underline"
-                            title={`${p.name} にフォーカス`}
+                      {filteredPants.map((p) => {
+                        const isFocus = selectedFocusItem?.id === p.id;
+                        return (
+                          <th
+                            key={p.id}
+                            className={`p-1 min-w-[56px] border border-slate-700/60 text-[10px] transition-colors ${
+                              isFocus ? 'bg-blue-950/90 ring-2 ring-blue-400' : 'bg-slate-900/90'
+                            }`}
                           >
-                            {p.id}
-                          </button>
-                        </th>
-                      ))}
+                            <button
+                              type="button"
+                              onClick={() => handleSelectFocusItem(p)}
+                              className="w-full min-h-[44px] flex flex-col items-center justify-center p-1 rounded-lg hover:bg-slate-800 transition-colors group"
+                              title={`${p.name} にフォーカス`}
+                            >
+                              <div className="w-10 h-10 rounded overflow-hidden bg-slate-950 mb-1 flex-shrink-0">
+                                <ItemImage item={p} showBadge={false} className="w-full h-full" />
+                              </div>
+                              <span
+                                className={`font-bold block text-center leading-tight transition-colors ${
+                                  isFocus ? 'text-blue-400' : 'text-slate-300 group-hover:text-blue-400'
+                                }`}
+                              >
+                                {p.id}
+                              </span>
+                            </button>
+                          </th>
+                        );
+                      })}
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredShirts.map((shirt) => (
-                      <tr key={shirt.id}>
-                        {/* Sticky Shirt header column */}
-                        <th className="sticky left-0 z-10 bg-slate-900/95 p-1.5 text-left border border-slate-700/60 shadow-md">
-                          <button
-                            onClick={() => setSelectedFocusItem(shirt)}
-                            className="flex items-center gap-1.5 text-left w-full hover:opacity-80 transition-opacity"
-                            title={`${shirt.name} にフォーカス`}
+                    {filteredShirts.map((shirt) => {
+                      const isFocusShirt = selectedFocusItem?.id === shirt.id;
+                      return (
+                        <tr key={shirt.id}>
+                          {/* Sticky Shirt header column */}
+                          <th
+                            className={`sticky left-0 z-10 p-1 text-left border border-slate-700/60 shadow-md transition-colors ${
+                              isFocusShirt ? 'bg-blue-950 ring-2 ring-blue-400' : 'bg-slate-900/95'
+                            }`}
                           >
-                            <div className="w-8 h-8 rounded overflow-hidden bg-slate-950 flex-shrink-0">
-                              <ItemImage item={shirt} showBadge={false} className="w-full h-full" />
-                            </div>
-                            <div className="min-w-0">
-                              <span className="text-[10px] font-bold text-blue-400 block">{shirt.id}</span>
-                              <span className="text-[9px] text-slate-300 truncate block max-w-[60px]">
-                                {shirt.name.slice(0, 5)}
-                              </span>
-                            </div>
-                          </button>
-                        </th>
-
-                        {/* Matrix Cells */}
-                        {filteredPants.map((p) => {
-                          const status = getCellStatus(shirt, p);
-                          return (
-                            <td
-                              key={p.id}
-                              onClick={() => setSelectedPair({ shirt, pants: p })}
-                              className={`p-2 min-w-[44px] min-h-[44px] border border-slate-700/40 cursor-pointer transition-transform hover:scale-110 active:scale-95 ${status.bg}`}
-                              title={`${shirt.name} × ${p.name}: ${status.label}`}
+                            <button
+                              type="button"
+                              onClick={() => handleSelectFocusItem(shirt)}
+                              className="flex items-center gap-1.5 text-left w-full min-h-[44px] p-1 rounded-lg hover:bg-slate-800 transition-colors group"
+                              title={`${shirt.name} にフォーカス`}
                             >
-                              <span className="text-xs font-bold leading-none">{status.symbol}</span>
-                            </td>
-                          );
-                        })}
-                      </tr>
-                    ))}
+                              <div className="w-8 h-8 rounded overflow-hidden bg-slate-950 flex-shrink-0">
+                                <ItemImage item={shirt} showBadge={false} className="w-full h-full" />
+                              </div>
+                              <div className="min-w-0">
+                                <span
+                                  className={`text-[10px] font-bold block ${
+                                    isFocusShirt ? 'text-blue-300' : 'text-blue-400 group-hover:text-blue-300'
+                                  }`}
+                                >
+                                  {shirt.id}
+                                </span>
+                                <span className="text-[9px] text-slate-300 truncate block max-w-[60px]">
+                                  {shirt.name.slice(0, 5)}
+                                </span>
+                              </div>
+                            </button>
+                          </th>
+
+                          {/* Matrix Cells */}
+                          {filteredPants.map((p) => {
+                            const status = getCellStatus(shirt, p);
+                            return (
+                              <td
+                                key={p.id}
+                                className="p-0 border border-slate-700/40"
+                              >
+                                <button
+                                  type="button"
+                                  onClick={() => setSelectedPair({ shirt, pants: p })}
+                                  className={`w-full h-full min-w-[44px] min-h-[44px] p-2 flex items-center justify-center transition-transform hover:scale-105 active:scale-95 ${status.bg}`}
+                                  title={`${shirt.name} × ${p.name}: ${status.label}（タップで詳細）`}
+                                >
+                                  <span className="text-xs font-bold leading-none">{status.symbol}</span>
+                                </button>
+                              </td>
+                            );
+                          })}
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -606,100 +600,24 @@ export const MatrixView: React.FC = () => {
         )}
       </section>
 
-      {/* ワードローブ買い足し相談（Gemini スタイリスト対話） */}
-      <section className="space-y-3">
-        <div className="flex items-center justify-between px-1">
-          <h3 className="text-sm font-bold text-white flex items-center gap-1.5">
-            <ShoppingBag className="w-4 h-4 text-emerald-400" />
-            <span>ワードローブ買い足し相談 (Gemini スタイリスト対話)</span>
-          </h3>
-          <div className="flex items-center gap-1.5">
-            <span className="text-[10px] bg-slate-800 text-slate-300 border border-slate-700 px-2 py-0.5 rounded-full font-mono">
-              現役 {shirts.length + pants.length}着
-            </span>
-            {archivedItems.length > 0 && (
-              <span className="text-[10px] bg-amber-950/80 text-amber-300 border border-amber-800/60 px-2 py-0.5 rounded-full font-mono font-bold">
-                保管中 {archivedItems.length}着
-              </span>
-            )}
-          </div>
-        </div>
-
-        <div className="p-4 bg-slate-800/80 border border-slate-700/70 rounded-2xl shadow-xl space-y-3">
-          <p className="text-xs text-slate-300 leading-relaxed">
-            手持ちの現役ワードローブ全データ（相性・着用実績・奥様NG）と片付けた服（別枠）を埋め込んだ相談プロンプトを生成します。
-            コピーして Gemini に貼り付けるだけで、手持ち服を活かせる買い足し候補や、買う代わりに片付けた服を出す提案を対話形式で自由に相談できます。
-          </p>
-
-          {/* 任意の1行相談メモ入力欄 */}
-          <div>
-            <label className="text-[11px] font-bold text-slate-300 mb-1 flex items-center gap-1">
-              <FileText className="w-3.5 h-3.5 text-indigo-400" />
-              <span>相談したい条件・悩み（任意・1行）</span>
-            </label>
-            <input
-              type="text"
-              value={consultationMemo}
-              onChange={(e) => setConsultationMemo(e.target.value)}
-              placeholder="例: 出社用のパンツを増やしたい、S1に合う服が欲しい、夏物を探している 等（空欄でもOK）"
-              className="w-full min-h-[44px] p-2.5 rounded-xl bg-slate-900 border border-slate-700 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
-            />
-          </div>
-
-          {/* 奥様NG反映通知バッジ */}
-          {wifeNgPairs.length > 0 && (
-            <div className="p-2.5 bg-rose-950/40 border border-rose-800/40 rounded-xl flex items-center gap-2 text-[11px] text-rose-300">
-              <ShieldCheck className="w-4 h-4 flex-shrink-0 text-rose-400" />
-              <span>
-                登録済みの<strong>奥様NG（{wifeNgPairs.length}件）</strong>も注意喚起（おすすめ除外対象）としてプロンプトに含めます。
-              </span>
-            </div>
-          )}
-
-          {/* プロンプトコピーボタン */}
-          <button
-            type="button"
-            onClick={handleCopyConsultationPrompt}
-            className={`w-full min-h-[44px] py-3 px-4 rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition-all shadow-lg ${
-              copiedConsultPromptStatus === 'success'
-                ? 'bg-emerald-600 text-white'
-                : copiedConsultPromptStatus === 'error'
-                ? 'bg-rose-600 text-white'
-                : 'bg-blue-600 hover:bg-blue-500 text-white shadow-blue-900/40 active:scale-[0.98]'
-            }`}
-          >
-            {copiedConsultPromptStatus === 'success' ? (
-              <>
-                <Check className="w-4 h-4" />
-                <span>コピー完了！ Gemini に貼って相談してください</span>
-              </>
-            ) : copiedConsultPromptStatus === 'error' ? (
-              <>
-                <AlertCircle className="w-4 h-4" />
-                <span>コピーに失敗しました（もう一度お試しください）</span>
-              </>
-            ) : (
-              <>
-                <Copy className="w-4 h-4" />
-                <span>📋 買い足し相談用プロンプトをコピー</span>
-              </>
-            )}
-          </button>
-
-          {/* 購入後の案内 */}
-          <div className="p-2.5 bg-blue-950/40 border border-blue-800/40 rounded-xl text-[11px] text-blue-300 leading-relaxed">
-            💡 相談して新しい服を購入した後は、「服追加・AI」タブから写真（＋A4用紙）を選んで登録できます。
-          </div>
-        </div>
-      </section>
-
       {/* Selected Pair Preview Modal */}
       {selectedPair && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
-          <div className="bg-slate-900 border border-slate-700 rounded-3xl max-w-sm w-full p-5 space-y-4 shadow-2xl relative">
+        <div
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              setSelectedPair(null);
+            }
+          }}
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in cursor-pointer"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="bg-slate-900 border border-slate-700 rounded-3xl max-w-sm w-full p-5 space-y-4 shadow-2xl relative cursor-default"
+          >
             <button
+              type="button"
               onClick={() => setSelectedPair(null)}
-              className="absolute top-4 right-4 min-h-[44px] min-w-[44px] flex items-center justify-center text-slate-400 hover:text-white rounded-full bg-slate-800"
+              className="absolute top-4 right-4 min-h-[44px] min-w-[44px] flex items-center justify-center text-slate-400 hover:text-white rounded-full bg-slate-800 transition-colors"
               title="閉じる"
             >
               <X className="w-4 h-4" />
@@ -750,6 +668,7 @@ export const MatrixView: React.FC = () => {
                   <div className="pt-2">
                     {ngCheck.isWifeNg ? (
                       <button
+                        type="button"
                         onClick={() => {
                           removeWifeNg(selectedPair.shirt.id, selectedPair.pants.id);
                           setSelectedPair(null);
@@ -760,6 +679,7 @@ export const MatrixView: React.FC = () => {
                       </button>
                     ) : (
                       <button
+                        type="button"
                         onClick={() => {
                           registerWifeNg(selectedPair.shirt.id, selectedPair.pants.id);
                           setSelectedPair(null);

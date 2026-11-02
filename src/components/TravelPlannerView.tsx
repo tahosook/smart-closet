@@ -143,7 +143,7 @@ export const TravelPlannerView: React.FC = () => {
 
   if (shirts.length === 0 || pants.length === 0) {
     return (
-      <div className="space-y-6 pb-20">
+      <div className="space-y-4">
         <div className="p-4 bg-gradient-to-r from-slate-900 via-indigo-950/60 to-slate-900 border border-slate-700/80 rounded-2xl shadow-xl">
           <div className="flex items-center gap-2 text-indigo-400 font-bold text-sm mb-1">
             <Luggage className="w-4 h-4 text-indigo-400" />
@@ -156,7 +156,7 @@ export const TravelPlannerView: React.FC = () => {
         <div className="bg-slate-800/80 border border-slate-700/70 rounded-2xl p-6 text-center text-slate-400 space-y-2">
           <p className="text-sm font-bold text-slate-300">現役のシャツまたはパンツがありません</p>
           <p className="text-xs text-slate-400">
-            すべての服が「片付けた服」に入っているか、登録されていません。「服追加・AI」タブの「ワードローブ整理」セクションから服を「出す」操作を行うと再開できます。
+            すべての服が「片付けた服」に入っているか、登録されていません。上の「ワードローブ整理」セクションから服を「出す」操作を行うと再開できます。
           </p>
         </div>
       </div>
@@ -164,7 +164,7 @@ export const TravelPlannerView: React.FC = () => {
   }
 
   return (
-    <div className="space-y-6 pb-20">
+    <div className="space-y-4">
       {/* Header */}
       <div className="p-4 bg-gradient-to-r from-slate-900 via-indigo-950/60 to-slate-900 border border-slate-700/80 rounded-2xl shadow-xl">
         <div className="flex items-center gap-2 text-indigo-400 font-bold text-sm mb-1">

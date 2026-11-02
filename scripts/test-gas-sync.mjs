@@ -2508,10 +2508,9 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
   console.log('  ✅ ID prefix validation, switchDraftItemCategory, and draft store isolation verified');
 }
 
-// 21. 「覚えなくていい」クラウド同期画面 (GasSyncModal) およびバックアップ操作 (AiSyncView) の静的検証
+// 21. 「覚えなくていい」クラウド同期画面 (GasSyncModal) の静的検証
 {
   const gasSyncModalCode = fs.readFileSync(path.join(projectRoot, 'src/components/GasSyncModal.tsx'), 'utf-8');
-  const aiSyncViewCode = fs.readFileSync(path.join(projectRoot, 'src/components/AiSyncView.tsx'), 'utf-8');
 
   // 【条件1検証】統合ボタン (handleUnifiedSync) が未送信フラグ (smart_closet_sync_dirty) を事前検査し、
   // dirty 時は pushToGas() を先に実行し、成功後に pullFromGas() を実行する順序になっていること
@@ -2596,21 +2595,7 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
     'GasSyncModal must display verified fact "端末にN着分の写真を保存済み"'
   );
 
-  // AiSyncView: バックアップ折りたたみ & 「初期データに戻す」文言の検証
-  assert.ok(
-    aiSyncViewCode.includes('isBackupOpen'),
-    'AiSyncView must have isBackupOpen collapsible state'
-  );
-  assert.ok(
-    aiSyncViewCode.includes('📦 バックアップ・復旧'),
-    'AiSyncView must have backup and restore collapsible section'
-  );
-  assert.ok(
-    aiSyncViewCode.includes('<span>初期データに戻す</span>'),
-    'AiSyncView must display explicit text label for reset button'
-  );
-
-  console.log('  ✅ Zero-memorization Cloud Sync & AiSyncView backup collapsible UI verified');
+  console.log('  ✅ Zero-memorization Cloud Sync verified');
 }
 
 // -------------------------------------------------------------

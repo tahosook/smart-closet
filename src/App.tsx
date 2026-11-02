@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import {
   Sparkles,
-  Compass,
   Grid,
   History,
   Shirt,
@@ -9,17 +8,18 @@ import {
   Cloud,
   CloudOff,
   RefreshCw,
+  SlidersHorizontal,
 } from 'lucide-react';
 import { ClosetProvider, useClosetStore } from './hooks/useClosetStore';
 import { TodayView } from './components/TodayView';
 import { AiSyncView } from './components/AiSyncView';
-import { TravelPlannerView } from './components/TravelPlannerView';
 import { MatrixView } from './components/MatrixView';
+import { ManageView } from './components/ManageView';
 import { HistoryModal } from './components/HistoryModal';
 import { GasSyncModal } from './components/GasSyncModal';
 import { initStorage } from './utils/imageStore';
 
-type ActiveTab = 'today' | 'ai' | 'travel' | 'matrix';
+type ActiveTab = 'today' | 'ai' | 'matrix' | 'manage';
 
 const AppShell: React.FC = () => {
   const [activeTab, setActiveTab] = useState<ActiveTab>('today');
@@ -92,8 +92,8 @@ const AppShell: React.FC = () => {
       <main className="flex-1 w-full max-w-2xl lg:max-w-6xl mx-auto p-2.5 sm:p-4">
         {activeTab === 'today' && <TodayView />}
         {activeTab === 'ai' && <AiSyncView />}
-        {activeTab === 'travel' && <TravelPlannerView />}
         {activeTab === 'matrix' && <MatrixView />}
+        {activeTab === 'manage' && <ManageView />}
       </main>
 
       {/* History Modal */}
@@ -105,7 +105,7 @@ const AppShell: React.FC = () => {
       {/* Fixed Bottom Navigation (Pixel 9a Thumb Friendly) */}
       <nav className="fixed bottom-0 left-0 right-0 z-40 bg-slate-900/95 backdrop-blur-lg border-t border-slate-800/80 pb-safe">
         <div className="max-w-2xl lg:max-w-6xl mx-auto grid grid-cols-4 px-2 py-1.5">
-          {/* Tab 1: Today */}
+          {/* Tab 1: 朝モード */}
           <button
             onClick={() => setActiveTab('today')}
             className={`flex flex-col items-center justify-center py-1.5 rounded-xl transition-all ${
@@ -118,7 +118,7 @@ const AppShell: React.FC = () => {
             <span className="text-[11px] leading-tight">朝モード</span>
           </button>
 
-          {/* Tab 2: AI Sync */}
+          {/* Tab 2: 追加・相談 */}
           <button
             onClick={() => setActiveTab('ai')}
             className={`flex flex-col items-center justify-center py-1.5 rounded-xl transition-all ${
@@ -128,23 +128,10 @@ const AppShell: React.FC = () => {
             }`}
           >
             <Sparkles className="w-5 h-5 mb-0.5" />
-            <span className="text-[11px] leading-tight">服追加・AI</span>
+            <span className="text-[11px] leading-tight">追加・相談</span>
           </button>
 
-          {/* Tab 3: Travel */}
-          <button
-            onClick={() => setActiveTab('travel')}
-            className={`flex flex-col items-center justify-center py-1.5 rounded-xl transition-all ${
-              activeTab === 'travel'
-                ? 'text-blue-400 font-bold bg-blue-950/50'
-                : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            <Compass className="w-5 h-5 mb-0.5" />
-            <span className="text-[11px] leading-tight">旅行</span>
-          </button>
-
-          {/* Tab 4: Matrix */}
+          {/* Tab 3: 相性 */}
           <button
             onClick={() => setActiveTab('matrix')}
             className={`flex flex-col items-center justify-center py-1.5 rounded-xl transition-all ${
@@ -154,7 +141,20 @@ const AppShell: React.FC = () => {
             }`}
           >
             <Grid className="w-5 h-5 mb-0.5" />
-            <span className="text-[11px] leading-tight">全マトリクス</span>
+            <span className="text-[11px] leading-tight">相性</span>
+          </button>
+
+          {/* Tab 4: 管理 */}
+          <button
+            onClick={() => setActiveTab('manage')}
+            className={`flex flex-col items-center justify-center py-1.5 rounded-xl transition-all ${
+              activeTab === 'manage'
+                ? 'text-blue-400 font-bold bg-blue-950/50'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <SlidersHorizontal className="w-5 h-5 mb-0.5" />
+            <span className="text-[11px] leading-tight">管理</span>
           </button>
         </div>
       </nav>
