@@ -165,6 +165,9 @@ function doPost(e) {
     if (payload.action === 'uploadImage') {
       return handleUploadImage(ss, payload);
     }
+    if (payload.action === 'deleteImages') {
+      return handleDeleteImages(ss, payload);
+    }
 
     const itemNamesMap = payload.itemNamesMap || {};
 
@@ -1072,6 +1075,68 @@ function handleUploadImage(ss, payload) {
     });
   } catch (err) {
     return createJsonResponse({ ok: false, error: '画像アップロード保存エラー: ' + err.toString() });
+  }
+}
+
+/**
+ * 重複解消等により不要となった写真をドライブ正本フォルダからゴミ箱へ移動 (action: 'deleteImages')
+ * - 条件1: validateToken による認証通過後のみ実行
+ * - 条件2: payload のフォルダ指定は無視し、meta_config の正本フォルダのみを使用
+ * - 条件3: 物理完全削除ではなく setTrashed(true) で安全にゴミ箱へ移動
+ */
+function handleDeleteImages(ss, payload) {
+  const folderId = readConfigValue(ss, 'imageFolderId');
+  if (!folderId) {
+    return createJsonResponse({
+      ok: false,
+      error: 'Google ドライブの画像フォルダ ID が未設定です。スプレッドシートの meta_config に登録してください。'
+    });
+  }
+
+  const rawItemIds = payload && payload.itemIds;
+  if (!Array.isArray(rawItemIds) || rawItemIds.length === 0) {
+    return createJsonResponse({ ok: true, deletedItemIds: [], notFoundItemIds: [] });
+  }
+
+  if (typeof DriveApp === 'undefined') {
+    return createJsonResponse({ ok: false, error: 'DriveApp が利用できません' });
+  }
+
+  try {
+    const folder = DriveApp.getFolderById(folderId);
+    const deletedItemIds = [];
+    const notFoundItemIds = [];
+
+    for (let i = 0; i < rawItemIds.length; i++) {
+      const rawId = rawItemIds[i];
+      if (!rawId || typeof rawId !== 'string' || !/^[A-Za-z0-9_-]+$/.test(rawId)) {
+        continue;
+      }
+      const itemId = rawId.toUpperCase();
+      const fileName = itemId + '.jpg';
+
+      const files = folder.getFilesByName(fileName);
+      let found = false;
+      while (files.hasNext()) {
+        const file = files.next();
+        file.setTrashed(true);
+        found = true;
+      }
+
+      if (found) {
+        deletedItemIds.push(itemId);
+      } else {
+        notFoundItemIds.push(itemId);
+      }
+    }
+
+    return createJsonResponse({
+      ok: true,
+      deletedItemIds: deletedItemIds,
+      notFoundItemIds: notFoundItemIds
+    });
+  } catch (err) {
+    return createJsonResponse({ ok: false, error: '画像削除エラー: ' + err.toString() });
   }
 }
 

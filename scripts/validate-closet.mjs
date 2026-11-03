@@ -22,6 +22,7 @@ export const allowedNonexistentPaths = new Set(['public/images/', '/images/<ID>.
 export const validGarmentColors = new Set([
   '白',
   '生成り',
+  'ベージュ',
   '黒',
   'チャコール',
   'ミディアムグレー',

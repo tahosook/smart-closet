@@ -31,8 +31,8 @@ Consult **`docs/STYLING_RULES.md`** for 40s male fashion principles, bias analys
 Add the new item to `items` adhering to the schema:
 - `id`: Next sequential ID (e.g. `getNextSequentialId(items, 'pants')` -> `P16`).
 - `category`: `"shirt"` or `"pants"`.
-- `name`: Clean Japanese name aligning with 12-color palette vocabulary (e.g. `"濃紺テーパードスラックス"`).
-- `color`: 12-color palette value (`白`, `生成り`, `黒`, `チャコール`, `ミディアムグレー`, `ライトグレー`, `グレージュ`, `濃紺`, `ブルー`, `淡青`, `オリーブ`, `ブラウン`). In runtime user imports, missing or out-of-palette colors are accepted as unconfirmed (`color: undefined`) with an auto-appended note hint (`（色の目安：〇〇 ※12色パレット外のため未確定）`).
+- `name`: Clean Japanese name aligning with 13-color palette vocabulary (e.g. `"濃紺テーパードスラックス"`).
+- `color`: 13-color palette value (`白`, `生成り`, `ベージュ`, `黒`, `チャコール`, `ミディアムグレー`, `ライトグレー`, `グレージュ`, `濃紺`, `ブルー`, `淡青`, `オリーブ`, `ブラウン`). In runtime user imports, missing or out-of-palette colors are accepted as unconfirmed (`color: undefined`) with an auto-appended note hint (`（色の目安：〇〇 ※13色パレット外のため未確定）`).
 - `imageUrl`: `"/images/<ID>.jpg"`.
 - `seasonSleeve`: Chip preset selection (e.g. `"通年"`, `"長袖・通年"`, `"春夏・半袖"`, `"春夏秋・七分袖"`).
 - `dressScore`: 1.0 - 5.0 (4.5 for formal slacks, 2.0 for sweatpants).

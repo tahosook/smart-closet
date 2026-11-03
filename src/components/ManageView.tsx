@@ -7,16 +7,16 @@ import {
   ChevronUp,
   Download,
   Copy,
-  RotateCcw,
   Check,
   AlertCircle,
   FolderSync,
+  Layers,
 } from 'lucide-react';
 import { useClosetStore } from '../hooks/useClosetStore';
 import { ItemImage } from './ItemImage';
 import { TravelPlannerView } from './TravelPlannerView';
 import { copyTextToClipboard, CopyFeedbackStatus } from '../utils/closetDomain';
-import { saveFailedDriveUploadsToStorage } from '../types/closet';
+import { WardrobeRebuildModal } from './WardrobeRebuildModal';
 
 export const ManageView: React.FC = () => {
   const {
@@ -26,13 +26,12 @@ export const ManageView: React.FC = () => {
     archivedItems,
     archiveItem,
     unarchiveItem,
-    resetToDefaultData,
   } = useClosetStore();
 
   const [isOrganizeOpen, setIsOrganizeOpen] = useState(false);
   const [isBackupOpen, setIsBackupOpen] = useState(false);
+  const [isRebuildOpen, setIsRebuildOpen] = useState(false);
   const [copiedJsonStatus, setCopiedJsonStatus] = useState<CopyFeedbackStatus>('idle');
-  const [resetStatus, setResetStatus] = useState<string | null>(null);
 
   const handleDownloadJson = () => {
     const blob = new Blob([JSON.stringify(mergedClosetData, null, 2)], {
@@ -52,19 +51,6 @@ export const ManageView: React.FC = () => {
     setTimeout(() => {
       setCopiedJsonStatus('idle');
     }, 3000);
-  };
-
-  const handleReset = () => {
-    if (window.confirm('初期マスターデータ（全24着）に戻しますか？\n※カスタム追加した服や設定はリセットされます。')) {
-      resetToDefaultData();
-      if (typeof window !== 'undefined' && window.localStorage) {
-        saveFailedDriveUploadsToStorage(window.localStorage, []);
-      }
-      setResetStatus('初期マスターデータにリセットしました。');
-      setTimeout(() => {
-        setResetStatus(null);
-      }, 4000);
-    }
   };
 
   return (
@@ -274,7 +260,7 @@ export const ManageView: React.FC = () => {
           className="w-full min-h-[44px] py-2 px-3 rounded-xl bg-slate-900/60 hover:bg-slate-800 text-slate-400 hover:text-slate-300 flex items-center justify-between text-xs transition-colors border border-slate-800/80"
         >
           <span className="font-semibold text-slate-300 flex items-center gap-1.5">
-            <span>💾 データのバックアップ・復旧（ファイル保存・初期データに戻す）</span>
+            <span>💾 データのバックアップ・全件リビルド（ファイル保存・写真から再構築）</span>
           </span>
           {isBackupOpen ? (
             <ChevronUp className="w-4 h-4 text-slate-400" />
@@ -287,15 +273,8 @@ export const ManageView: React.FC = () => {
           <div className="p-3 bg-slate-900/80 rounded-xl border border-slate-800 space-y-3 animate-fade-in">
             <p className="text-[11px] text-slate-400 leading-relaxed">
               現在のワードローブデータ（奥様NGマージ済み）をJSONファイルとして保存したり、クリップボードにコピーできます。
-              初期マスターデータに戻すことも可能です。
+              保存写真を正本とした全件リビルドや重複解消も実行できます。
             </p>
-
-            {resetStatus && (
-              <div className="p-2.5 bg-emerald-950/80 border border-emerald-800 text-emerald-300 rounded-xl text-xs flex items-center gap-2">
-                <Check className="w-4 h-4 flex-shrink-0" />
-                <span>{resetStatus}</span>
-              </div>
-            )}
 
             <div className="flex flex-col sm:flex-row gap-2">
               <button
@@ -338,17 +317,22 @@ export const ManageView: React.FC = () => {
 
               <button
                 type="button"
-                onClick={handleReset}
-                className="min-h-[44px] py-2 px-3 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-rose-950/60 text-rose-300 hover:text-rose-200 border border-slate-700 hover:border-rose-800/80 flex items-center justify-center gap-1.5 transition-colors"
-                title="初期データに戻す"
+                onClick={() => setIsRebuildOpen(true)}
+                className="min-h-[44px] py-2 px-3 rounded-xl text-xs font-semibold bg-indigo-900/40 hover:bg-indigo-900/70 text-indigo-200 border border-indigo-700/60 flex items-center justify-center gap-1.5 transition-colors"
+                title="写真からの全件リビルド＆重複解消"
               >
-                <RotateCcw className="w-3.5 h-3.5 text-rose-400" />
-                <span>初期データに戻す</span>
+                <Layers className="w-3.5 h-3.5 text-indigo-400" />
+                <span>全件リビルド・重複解消</span>
               </button>
             </div>
           </div>
         )}
       </section>
+
+      <WardrobeRebuildModal
+        isOpen={isRebuildOpen}
+        onClose={() => setIsRebuildOpen(false)}
+      />
     </div>
   );
 };

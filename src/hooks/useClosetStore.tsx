@@ -14,6 +14,11 @@ import {
   BootstrapConfigResponse,
   BatchGarmentDraftItem,
   BatchGarmentsMergeResult,
+  DuplicateMergeSelection,
+  DuplicateMergeExecutionResult,
+  RebuildItemDiff,
+  RebuildFieldSelection,
+  RebuildApplyResult,
 } from '../types/closet';
 import defaultClosetData from '../data/closet.json';
 import {
@@ -30,7 +35,11 @@ import {
   checkIsNgPair,
   calculateRecommendationsForShirt,
   setGarmentArchived,
+  executeDuplicateMerge,
+  applyRebuildDiffs,
 } from '../utils/closetDomain';
+import { deleteImagesFromGas } from '../utils/imageProcessor';
+import { deleteImageBlob } from '../utils/imageStore';
 
 const STORAGE_KEYS = {
   CUSTOM_DATA: 'smart_closet_custom_data',
@@ -107,7 +116,14 @@ export interface ClosetStoreContextType {
     options?: { skipPush?: boolean }
   ) => BatchGarmentsMergeResult;
   triggerBackgroundPush: () => void;
-  resetToDefaultData: () => void;
+  mergeDuplicateGarments: (
+    selections: DuplicateMergeSelection[],
+    options?: { deleteImages?: boolean }
+  ) => Promise<DuplicateMergeExecutionResult>;
+  applyWardrobeRebuild: (
+    diffs: RebuildItemDiff[],
+    fieldSelections: Record<string, RebuildFieldSelection>
+  ) => RebuildApplyResult;
   updateGasConfig: (newConfig: Partial<GasSyncConfig>) => void;
   pullFromGas: () => Promise<boolean>;
   pushToGas: () => Promise<boolean>;
@@ -1112,22 +1128,101 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     [triggerBackgroundPush]
   );
 
-  const resetToDefaultData = useCallback(() => {
-    mutationSeqRef.current++;
-    customDataSeqRef.current++;
-    const now = Math.max(Date.now(), (stateRef.current.tombstones.customClosetDataClearedAt || 0) + 1);
-    localStorage.removeItem(STORAGE_KEYS.CUSTOM_DATA);
-    stateRef.current.closetData = defaultClosetData as ClosetData;
-    const updatedTombstones: SyncTombstones = {
-      ...stateRef.current.tombstones,
-      clearCustomClosetData: true,
-      customClosetDataClearedAt: now,
-    };
-    stateRef.current.tombstones = updatedTombstones;
-    setClosetData(defaultClosetData as ClosetData);
-    setTombstones(updatedTombstones);
-    triggerBackgroundPush();
-  }, [triggerBackgroundPush]);
+  const mergeDuplicateGarments = useCallback(
+    async (
+      selections: DuplicateMergeSelection[],
+      options?: { deleteImages?: boolean }
+    ): Promise<DuplicateMergeExecutionResult> => {
+      const result = executeDuplicateMerge({
+        closetData: stateRef.current.closetData,
+        wearHistory: stateRef.current.wearHistory,
+        wifeNgPairs: stateRef.current.wifeNgPairs,
+        selections,
+        currentTombstones: stateRef.current.tombstones,
+      });
+
+      if (!result.ok) {
+        return result;
+      }
+
+      mutationSeqRef.current++;
+      customDataSeqRef.current++;
+
+      // ローカルストレージに永続化
+      localStorage.setItem(STORAGE_KEYS.CUSTOM_DATA, JSON.stringify(result.closetData));
+      localStorage.setItem(STORAGE_KEYS.WEAR_HISTORY, JSON.stringify(result.wearHistory));
+      localStorage.setItem(STORAGE_KEYS.WIFE_NG, JSON.stringify(result.wifeNgPairs));
+      localStorage.setItem(STORAGE_KEYS.SYNC_TOMBSTONES, JSON.stringify(result.tombstones));
+
+      // 参照とステートを更新
+      stateRef.current.closetData = result.closetData;
+      stateRef.current.wearHistory = result.wearHistory;
+      stateRef.current.wifeNgPairs = result.wifeNgPairs;
+      stateRef.current.tombstones = result.tombstones;
+
+      setClosetData(result.closetData);
+      setWearHistory(result.wearHistory);
+      setWifeNgPairs(result.wifeNgPairs);
+      setTombstones(result.tombstones);
+
+      // ローカルIndexedDBからの画像キャッシュ削除
+      for (const id of result.removedItemIds) {
+        try {
+          await deleteImageBlob(id);
+        } catch (e) {
+          console.warn(`ローカル画像キャッシュ削除失敗 [${id}]:`, e);
+        }
+      }
+
+      // ドライブ上の画像削除（GAS連携が有効な場合）
+      if (options?.deleteImages && gasConfig.webAppUrl && result.removedItemIds.length > 0) {
+        try {
+          await deleteImagesFromGas({
+            webAppUrl: gasConfig.webAppUrl,
+            secretToken: gasConfig.secretToken,
+            itemIds: result.removedItemIds,
+          });
+        } catch (e) {
+          console.warn('GAS画像削除リクエスト失敗:', e);
+        }
+      }
+
+      // 変更をGASへ自動同期
+      triggerBackgroundPush();
+
+      return result;
+    },
+    [gasConfig.webAppUrl, gasConfig.secretToken, triggerBackgroundPush]
+  );
+
+  const applyWardrobeRebuild = useCallback(
+    (
+      diffs: RebuildItemDiff[],
+      fieldSelections: Record<string, RebuildFieldSelection>
+    ): RebuildApplyResult => {
+      const result = applyRebuildDiffs({
+        closetData: stateRef.current.closetData,
+        diffs,
+        fieldSelections,
+      });
+
+      if (!result.valid || !result.data) {
+        return result;
+      }
+
+      mutationSeqRef.current++;
+      customDataSeqRef.current++;
+
+      localStorage.setItem(STORAGE_KEYS.CUSTOM_DATA, JSON.stringify(result.data));
+      stateRef.current.closetData = result.data;
+      setClosetData(result.data);
+
+      triggerBackgroundPush();
+
+      return result;
+    },
+    [triggerBackgroundPush]
+  );
 
   const updateGasConfig = useCallback((newConfig: Partial<GasSyncConfig>) => {
     setGasConfig((prev) => {
@@ -1171,7 +1266,8 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       importCustomData,
       importBatchGarments,
       triggerBackgroundPush,
-      resetToDefaultData,
+      mergeDuplicateGarments,
+      applyWardrobeRebuild,
       updateGasConfig,
       pullFromGas,
       pushToGas,
@@ -1206,7 +1302,8 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       importCustomData,
       importBatchGarments,
       triggerBackgroundPush,
-      resetToDefaultData,
+      mergeDuplicateGarments,
+      applyWardrobeRebuild,
       updateGasConfig,
       pullFromGas,
       pushToGas,

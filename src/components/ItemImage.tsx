@@ -10,13 +10,15 @@ interface ItemImageProps {
   showBadge?: boolean;
 }
 
-// 12色パレットに対応するSVGシルエット用スタイル
+// 13色パレットに対応するSVGシルエット用スタイル
 export function getColorForPalette(color: GarmentColor): { fill: string; stroke: string; accent: string } {
   switch (color) {
     case '白':
       return { fill: '#f8fafc', stroke: '#cbd5e1', accent: '#3b82f6' };
     case '生成り':
       return { fill: '#fef3c7', stroke: '#fde047', accent: '#a16207' };
+    case 'ベージュ':
+      return { fill: '#f5ebe0', stroke: '#d5bdaf', accent: '#b08968' };
     case '黒':
       return { fill: '#09090b', stroke: '#27272a', accent: '#71717a' };
     case 'チャコール':

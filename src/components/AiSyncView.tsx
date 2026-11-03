@@ -20,7 +20,9 @@ import {
   Ruler,
   UploadCloud,
   ShoppingBag,
+  Layers,
 } from 'lucide-react';
+import { WardrobeRebuildModal } from './WardrobeRebuildModal';
 import { useClosetStore } from '../hooks/useClosetStore';
 import {
   Category,
@@ -109,11 +111,10 @@ export const AiSyncView: React.FC = () => {
   const [registrationMode, setRegistrationMode] = useState<'single' | 'batch'>('single');
 
   const [copiedPromptStatus, setCopiedPromptStatus] = useState<CopyFeedbackStatus>('idle');
-  const [copiedBatchPromptStatus, setCopiedBatchPromptStatus] = useState<CopyFeedbackStatus>('idle');
   const [copiedConsultPromptStatus, setCopiedConsultPromptStatus] = useState<CopyFeedbackStatus>('idle');
+  const [isRebuildModalOpen, setIsRebuildModalOpen] = useState(false);
 
   const promptTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const batchPromptTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const consultPromptTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const triggerCopyFeedback = (
@@ -134,7 +135,6 @@ export const AiSyncView: React.FC = () => {
   useEffect(() => {
     return () => {
       if (promptTimerRef.current) clearTimeout(promptTimerRef.current);
-      if (batchPromptTimerRef.current) clearTimeout(batchPromptTimerRef.current);
       if (consultPromptTimerRef.current) clearTimeout(consultPromptTimerRef.current);
     };
   }, []);
@@ -192,9 +192,7 @@ export const AiSyncView: React.FC = () => {
   const nextShirtId = getNextSequentialId(mergedClosetData.items, 'shirt');
   const nextPantsId = getNextSequentialId(mergedClosetData.items, 'pants');
 
-  // Count unconfirmed color garments
   const activeItems = mergedClosetData.items.filter((item) => !item.archived);
-  const unconfirmedColorCount = activeItems.filter((item) => !item.color).length;
 
   // マウント時に専用下書き枠から復元（Geminiアプリ往復でのタブ再読み込み耐性）
   useEffect(() => {
@@ -602,13 +600,13 @@ export const AiSyncView: React.FC = () => {
 （※各服のID採番および双方向リンク更新はアプリ側で決定論的に自動マージされます）
 
 ### 登録写真の基準化指示（色・寸法・切り抜き）
-1. **ホワイトバランスと12色パレット判定**:
+1. **ホワイトバランスと13色パレット判定**:
    - 写真内に置かれたA4白用紙（210×297mm、白）を全着共通のホワイトバランス基準とし、照明の色かぶりを差し引いたうえで各服の色（color）を判定してください。
-   - 各服の色は必ず次の【12色パレット】から1つ選択してください:
+   - 各服の色は必ず次の【13色パレット】から1つ選択してください:
      ${GARMENT_COLOR_PALETTE.join('／')}
    - 色の境界判定アンカー:
 ${GARMENT_COLOR_ANCHOR_GUIDE}
-   - 各服のアイテム名（name）の色表記も、12色パレットの語彙に寄せて命名してください（例: 「ネイビー」ではなく「濃紺」）。
+   - 各服のアイテム名（name）の色表記も、13色パレットの語彙に寄せて命名してください（例: 「ネイビー」ではなく「濃紺」）。
 
 2. **A4用紙を基準とした実寸（cm）推定**:
    - 写真内のA4白用紙（長辺297mm × 短辺210mm）を共通の物差しとして、各服の主要寸法（実寸目安）を cm（10〜200cm、0.5cm刻み）で推定し、"measurements" に格納してください。
@@ -665,8 +663,8 @@ ${wifeNgSummary}
   "garments": [
     {
       "category": "shirt または pants",
-      "name": "12色パレットの語彙に寄せた適切な日本語名称",
-      "color": "12色パレット（白／生成り／黒／チャコール／ミディアムグレー／ライトグレー／グレージュ／濃紺／ブルー／淡青／オリーブ／ブラウン）から1つ選択",
+      "name": "13色パレットの語彙に寄せた適切な日本語名称",
+      "color": "13色パレット（白／生成り／ベージュ／黒／チャコール／ミディアムグレー／ライトグレー／グレージュ／濃紺／ブルー／淡青／オリーブ／ブラウン）から1つ選択",
       "seasonSleeve": "写真から判定した季節・袖丈（シャツ: 長袖・通年 / 春夏秋・七分袖 / 春夏・半袖 / 秋冬・長袖、パンツ: 通年 / 春夏秋 / 春夏 / 秋冬）",
       "dressScore": 4.0,
       "comfortScore": 4.0,
@@ -722,13 +720,13 @@ ${wifeNgSummary}
 （※全体データではなく、新規追加する1着分のみを単一JSONオブジェクトとして出力してください。双方向のリンク更新はアプリ側で自動マージされます）
 
 ### 登録写真の基準化指示（色・寸法・切り抜き）
-1. **ホワイトバランスと12色パレット判定**:
+1. **ホワイトバランスと13色パレット判定**:
    - 写真内に置かれたA4白用紙（210×297mm、白）をホワイトバランスの基準とし、照明の色かぶりを差し引いたうえで服の色（color）を判定してください。
-   - 服の色は必ず次の【12色パレット】から1つ選択してください:
+   - 服の色は必ず次の【13色パレット】から1つ選択してください:
      ${GARMENT_COLOR_PALETTE.join('／')}
    - 色の境界判定アンカー:
 ${GARMENT_COLOR_ANCHOR_GUIDE}
-   - 新規アイテムのアイテム名（name）の色表記も、12色パレットの語彙に寄せて命名してください（例: 「ネイビー」ではなく「濃紺」）。
+   - 新規アイテムのアイテム名（name）の色表記も、13色パレットの語彙に寄せて命名してください（例: 「ネイビー」ではなく「濃紺」）。
 
 2. **A4用紙を基準とした実寸（cm）推定**:
    - 写真内にA4白用紙（長辺297mm × 短辺210mm）が確認できる場合、用紙を物差しとして主要寸法（実寸目安）を cm（10〜200cm、0.5cm刻み）で推定し、"measurements" に格納してください。
@@ -785,8 +783,8 @@ ${wifeNgSummary}
 {
   "id": "写真からシャツと判定した場合は \\"${nextShirtId}\\"、パンツと判定した場合は \\"${nextPantsId}\\"",
   "category": "写真から判定した種別（\\"shirt\\" または \\"pants\\"）",
-  "name": "12色パレットの語彙に寄せた適切な日本語名称",
-  "color": "12色パレット（白／生成り／黒／チャコール／ミディアムグレー／ライトグレー／グレージュ／濃紺／ブルー／淡青／オリーブ／ブラウン）から1つ選択",
+  "name": "13色パレットの語彙に寄せた適切な日本語名称",
+  "color": "13色パレット（白／生成り／ベージュ／黒／チャコール／ミディアムグレー／ライトグレー／グレージュ／濃紺／ブルー／淡青／オリーブ／ブラウン）から1つ選択",
   "imageUrl": "写真からシャツと判定した場合は \\"/images/${nextShirtId}.jpg\\"、パンツと判定した場合は \\"/images/${nextPantsId}.jpg\\"",
   "seasonSleeve": "写真から判定した季節・袖丈（シャツ: 長袖・通年 / 春夏秋・七分袖 / 春夏・半袖 / 秋冬・長袖、パンツ: 通年 / 春夏秋 / 春夏 / 秋冬）",
   "dressScore": 4.0,
@@ -832,48 +830,6 @@ ${wifeNgSummary}
     });
     const ok = await copyTextToClipboard(promptText);
     triggerCopyFeedback(setCopiedConsultPromptStatus, consultPromptTimerRef, ok);
-  };
-
-  // 既存服の色パレット一括相談プロンプトの生成とコピー
-  const handleCopyBatchColorPrompt = async () => {
-    const items = mergedClosetData.items.filter((item) => !item.archived);
-    const itemsList = items
-      .map(
-        (item) =>
-          `- [${item.id}] ${item.name}（カテゴリ: ${
-            item.category === 'shirt' ? 'シャツ' : 'パンツ'
-          }、現在の色: ${item.color || '未確定'}）: ${item.notes || 'メモなし'}`
-      )
-      .join('\n');
-
-    const promptText = `あなたは40代後半男性専属のプロスタイリストAIです。
-以下は現在アプリに登録されている全${items.length}着の服リストです。
-各アイテムの名称・メモ・カテゴリから、照明の色かぶりや曖昧さを排除し、下記の12色パレットおよび境界判定アンカーに最も合致する【確定色】を判定してください。
-
-### 12色パレット
-${GARMENT_COLOR_PALETTE.join('／')}
-
-### 境界判定アンカー（色の基準）
-${GARMENT_COLOR_ANCHOR_GUIDE}
-
-### 対象アイテム一覧（全${items.length}着）
-${itemsList}
-
-### 出力スキーマ厳密制約（事故防止ルール・名前保護）
-1. 各要素は必ず "id" と "color" の2項目のみとし、"name" などの他フィールドは絶対に出力しないでください（名前の書き換え事故を完全に防止するためです）。
-2. 色は必ず12色パレット（${GARMENT_COLOR_PALETTE.join('／')}）から選んでください。「ネイビー」は「濃紺」に統合されているため「濃紺」を指定してください。
-3. 出力形式: 説明文や前置きは含めず、以下のJSONコードブロックのみを出力してください。
-\`\`\`json
-{
-  "colorUpdates": [
-    { "id": "S1", "color": "濃紺" },
-    { "id": "S2", "color": "白" }
-  ]
-}
-\`\`\``;
-
-    const ok = await copyTextToClipboard(promptText);
-    triggerCopyFeedback(setCopiedBatchPromptStatus, batchPromptTimerRef, ok);
   };
 
   // Step 3: JSON適用・自動マージ・写真の本保存・下書き消去・GASアップロード連動
@@ -2666,61 +2622,38 @@ ${itemsList}
             </button>
           </div>
 
-          {/* 2. 既存服の色パレット一括相談 */}
+          {/* 2. 写真からの全件リビルド ＆ 重複解消 */}
           <div className="p-4 bg-slate-900/90 border border-slate-800 rounded-2xl space-y-3 shadow-md">
             <div className="flex items-center justify-between">
-              <span className="text-sm font-bold text-amber-300 flex items-center gap-2">
-                <Palette className="w-4 h-4 text-amber-400" />
-                <span>🎨 既存服の色パレット一括相談</span>
+              <span className="text-sm font-bold text-indigo-300 flex items-center gap-2">
+                <Layers className="w-4 h-4 text-indigo-400" />
+                <span>🔄 写真からの全件リビルド ＆ 重複解消</span>
               </span>
-              {unconfirmedColorCount > 0 ? (
-                <span className="px-2 py-0.5 rounded text-[10px] bg-amber-950 text-amber-300 border border-amber-800 font-bold font-mono">
-                  未確定 {unconfirmedColorCount}着
-                </span>
-              ) : (
-                <span className="text-[10px] text-slate-400 font-mono">
-                  全{activeItems.length}着 確定済み
-                </span>
-              )}
+              <span className="text-[10px] px-2 py-0.5 rounded bg-indigo-950 text-indigo-300 border border-indigo-800 font-mono">
+                13色新パレット対応
+              </span>
             </div>
 
             <p className="text-[11px] text-slate-400 leading-relaxed">
-              全アイテムの情報と12色パレット基準を Gemini に相談するプロンプトです。Geminiから返ってきた
-              <code className="text-amber-300"> &#123; "colorUpdates": [...] &#125; </code>
-              を上のStep 3に貼り付けるだけで、名前を変えずに全着の色のみを一括確定できます。
+              保存されている写真を正本として、全アイテムの名前・13色パレット確定色・季節・ドレス度・相性を再分析し、データを丸ごと作り直します。同一写真の重複登録も自動検出して1着に統合できます。
             </p>
 
             <button
               type="button"
-              onClick={handleCopyBatchColorPrompt}
-              className={`w-full min-h-[44px] py-2.5 px-3 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all shadow-md ${
-                copiedBatchPromptStatus === 'success'
-                  ? 'bg-emerald-600 text-white'
-                  : copiedBatchPromptStatus === 'error'
-                  ? 'bg-rose-600 text-white'
-                  : 'bg-amber-600 hover:bg-amber-500 text-white shadow-amber-950 active:scale-[0.98]'
-              }`}
+              onClick={() => setIsRebuildModalOpen(true)}
+              className="w-full min-h-[44px] py-2.5 px-3 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all shadow-md bg-indigo-600 hover:bg-indigo-500 text-white shadow-indigo-950 active:scale-[0.98]"
             >
-              {copiedBatchPromptStatus === 'success' ? (
-                <>
-                  <Check className="w-4 h-4" />
-                  <span>コピー完了！ Gemini に貼って相談してください</span>
-                </>
-              ) : copiedBatchPromptStatus === 'error' ? (
-                <>
-                  <AlertCircle className="w-4 h-4" />
-                  <span>コピーに失敗しました（もう一度お試しください）</span>
-                </>
-              ) : (
-                <>
-                  <Copy className="w-4 h-4" />
-                  <span>🎨 既存服の色パレット一括相談プロンプトをコピー</span>
-                </>
-              )}
+              <Layers className="w-4 h-4" />
+              <span>全件リビルド ＆ 重複解消ウィザードを開く</span>
             </button>
           </div>
         </div>
       </section>
+
+      <WardrobeRebuildModal
+        isOpen={isRebuildModalOpen}
+        onClose={() => setIsRebuildModalOpen(false)}
+      />
     </div>
   );
 };

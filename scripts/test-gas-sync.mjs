@@ -59,6 +59,14 @@ const {
   setGarmentArchived,
   buildShoppingConsultationPrompt,
   copyTextToClipboard,
+  computeHammingDistance,
+  detectDuplicateGarmentGroups,
+  previewDuplicateMerge,
+  executeDuplicateMerge,
+  buildWardrobeRebuildPrompt,
+  parseRebuildInputJson,
+  computeRebuildDiffs,
+  applyRebuildDiffs,
 } = closetDomain;
 
 const imageProcessorTsPath = path.join(projectRoot, 'src/utils/imageProcessor.ts');
@@ -2658,10 +2666,11 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
 {
   const rawCloset = JSON.parse(fs.readFileSync(path.join(projectRoot, 'src/data/closet.json'), 'utf-8'));
 
-  // 1. 全12色パレットおよび境界判定アンカー定数の検証
+  // 1. 全13色パレットおよび境界判定アンカー定数の検証
   const expectedPalette = [
     '白',
     '生成り',
+    'ベージュ',
     '黒',
     'チャコール',
     'ミディアムグレー',
@@ -2683,14 +2692,17 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
   assert.equal(isValidGarmentColor(null), false);
   assert.equal(isValidGarmentColor(undefined), false);
 
-  assert.ok(GARMENT_COLOR_ANCHOR_GUIDE.includes('白と生成りの境界'), 'Anchor guide must include white/ecru boundary');
+  assert.ok(GARMENT_COLOR_ANCHOR_GUIDE.includes('白・生成り・ベージュの境界'), 'Anchor guide must include white/ecru/beige boundary');
+  assert.ok(GARMENT_COLOR_ANCHOR_GUIDE.includes('生成り・ベージュ・グレージュ・ブラウンの境界'), 'Anchor guide must include ecru/beige/greige/brown boundary');
   assert.ok(GARMENT_COLOR_ANCHOR_GUIDE.includes('淡青・ブルー・濃紺の境界'), 'Anchor guide must include 3-level blue boundary');
   assert.ok(GARMENT_COLOR_ANCHOR_GUIDE.includes('濃紺と黒の境界'), 'Anchor guide must include dark navy / black boundary');
   assert.ok(GARMENT_COLOR_ANCHOR_GUIDE.includes('グレー各色'), 'Anchor guide must include gray boundary');
+  assert.ok(GARMENT_COLOR_ANCHOR_GUIDE.includes('配色物・柄物・杢（メランジ）の主色決定ルール'), 'Anchor guide must include 70% primary color rule');
 
   // 2. inferGarmentColor (表示用暫定値フォールバック) の検証
   assert.equal(inferGarmentColor('白無地長袖シャツ', '清潔感'), '白');
   assert.equal(inferGarmentColor('生成りワーク長袖シャツ', 'エクリュ'), '生成り');
+  assert.equal(inferGarmentColor('ベージュコットンチノパン', 'サンドベージュ'), 'ベージュ');
   assert.equal(inferGarmentColor('黒スウェットイージーパンツ'), '黒');
   assert.equal(inferGarmentColor('チャコールグレージョガーパンツ'), 'チャコール');
   assert.equal(inferGarmentColor('ライトグレースウェットジョガー'), 'ライトグレー');
@@ -2812,14 +2824,19 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
   assert.equal(navyRes.valid, true, 'Navy must pass as unconfirmed warning with note hint');
   assert.equal(navyRes.item.color, undefined);
   assert.equal(navyRes.unconfirmedColorHint, 'ネイビー');
-  assert.ok(navyRes.item.notes.includes('（色の目安：ネイビー ※12色パレット外のため未確定）'));
+  assert.ok(navyRes.item.notes.includes('（色の目安：ネイビー ※13色パレット外のため未確定）'));
 
-  // パレット外の色（ベージュ）もエラーにせず、color=undefined かつ notes に目安追記
+  // 新規確定色「ベージュ」は13色パレット内のため正常に確定色として受理
   const beigeRes = validateSingleClosetItem({ ...testP16Candidate, color: 'ベージュ' }, rawCloset);
-  assert.equal(beigeRes.valid, true, 'Beige must pass as unconfirmed warning with note hint');
-  assert.equal(beigeRes.item.color, undefined);
-  assert.equal(beigeRes.unconfirmedColorHint, 'ベージュ');
-  assert.ok(beigeRes.item.notes.includes('（色の目安：ベージュ ※12色パレット外のため未確定）'));
+  assert.equal(beigeRes.valid, true, 'Beige must pass as valid color in 13-color palette');
+  assert.equal(beigeRes.item.color, 'ベージュ');
+
+  // パレット外の色（ラベンダー）もエラーにせず、color=undefined かつ notes に目安追記
+  const lavenderRes = validateSingleClosetItem({ ...testP16Candidate, color: 'ラベンダー' }, rawCloset);
+  assert.equal(lavenderRes.valid, true, 'Lavender must pass as unconfirmed warning with note hint');
+  assert.equal(lavenderRes.item.color, undefined);
+  assert.equal(lavenderRes.unconfirmedColorHint, 'ラベンダー');
+  assert.ok(lavenderRes.item.notes.includes('（色の目安：ラベンダー ※13色パレット外のため未確定）'));
 
   // 6. 【レビュー条件検証】validateClosetDataSchema の暫定値非永続化と既存データ読み込み保護
   // 6a. color が未設定のレガシーデータ: 読み込み成功し、color は undefined のまま保持（inferGarmentColor で勝手に上書きされない）
@@ -2929,13 +2946,7 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
   assert.ok(aiSyncCode.includes('waist'), 'AiSyncView prompt must include waist for pants');
   assert.ok(aiSyncCode.includes('cropBox'), 'AiSyncView prompt must include cropBox instruction');
   assert.ok(aiSyncCode.includes('colorUpdates'), 'AiSyncView must support colorUpdates batch updates');
-
-  // 一括色相談プロンプト: name を出力させない指示
-  assert.ok(
-    aiSyncCode.includes('name" などの他フィールドは絶対に出力しないでください') ||
-    aiSyncCode.includes('name" 等の他フィールドは絶対に出力しないでください'),
-    'Batch color prompt must strictly forbid outputting name'
-  );
+  assert.ok(aiSyncCode.includes('WardrobeRebuildModal'), 'AiSyncView must integrate WardrobeRebuildModal');
 
   // Step 3: 確認パネル UI 要件 & レビュー指摘対応
   assert.ok(aiSyncCode.includes('10〜200cm（0.5cm刻み・空欄で未設定）'), 'Measurements must specify 10-200cm valid range notice');
@@ -2986,19 +2997,19 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
 
   // 2. appendUnconfirmedColorNote の決定論的動作検証
   assert.equal(
-    appendUnconfirmedColorNote('', 'ベージュ'),
-    '（色の目安：ベージュ ※12色パレット外のため未確定）',
+    appendUnconfirmedColorNote('', 'ラベンダー'),
+    '（色の目安：ラベンダー ※13色パレット外のため未確定）',
     'Must format empty notes'
   );
   assert.equal(
-    appendUnconfirmedColorNote('白オックスフォードシャツ', 'ベージュ'),
-    '白オックスフォードシャツ （色の目安：ベージュ ※12色パレット外のため未確定）',
+    appendUnconfirmedColorNote('白オックスフォードシャツ', 'ラベンダー'),
+    '白オックスフォードシャツ （色の目安：ラベンダー ※13色パレット外のため未確定）',
     'Must append to existing notes'
   );
   // 二重追記防止
-  const withHint = '白オックスフォードシャツ （色の目安：ベージュ ※12色パレット外のため未確定）';
+  const withHint = '白オックスフォードシャツ （色の目安：ラベンダー ※13色パレット外のため未確定）';
   assert.equal(
-    appendUnconfirmedColorNote(withHint, 'ベージュ'),
+    appendUnconfirmedColorNote(withHint, 'ラベンダー'),
     withHint,
     'Must prevent duplicate color hint in notes'
   );
@@ -3022,16 +3033,16 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
     notes: 'テストシャツメモ',
   };
 
-  // 3a. パレット外の色（ベージュ）: 警告として通過、color=undefined、notes 末尾に目安追記
-  const beigeShirtRes = validateSingleClosetItem(
-    { ...baseShirtCandidate, color: 'ベージュ' },
+  // 3a. パレット外の色（ラベンダー）: 警告として通過、color=undefined、notes 末尾に目安追記
+  const lavenderShirtRes = validateSingleClosetItem(
+    { ...baseShirtCandidate, color: 'ラベンダー' },
     rawCloset
   );
-  assert.equal(beigeShirtRes.valid, true, 'Beige shirt must pass validation');
-  assert.equal(beigeShirtRes.item.color, undefined, 'Out-of-palette color must be stored as undefined');
-  assert.equal(beigeShirtRes.unconfirmedColorHint, 'ベージュ');
-  assert.ok(beigeShirtRes.item.notes.includes('（色の目安：ベージュ ※12色パレット外のため未確定）'));
-  assert.ok(beigeShirtRes.warning.includes('12色パレット外'));
+  assert.equal(lavenderShirtRes.valid, true, 'Lavender shirt must pass validation');
+  assert.equal(lavenderShirtRes.item.color, undefined, 'Out-of-palette color must be stored as undefined');
+  assert.equal(lavenderShirtRes.unconfirmedColorHint, 'ラベンダー');
+  assert.ok(lavenderShirtRes.item.notes.includes('（色の目安：ラベンダー ※13色パレット外のため未確定）'));
+  assert.ok(lavenderShirtRes.warning.includes('13色パレット外'));
 
   // 3b. 色欠落（undefined / 空文字）: 警告として通過、color=undefined、notes への目安追記はなし
   const noColorShirtRes = validateSingleClosetItem(
@@ -3119,7 +3130,7 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
       {
         category: 'shirt',
         name: 'ベージュリネンシャツ',
-        color: 'ベージュ', // パレット外色 -> color=undefined & notes追記
+        color: 'ラベンダー', // パレット外色 -> color=undefined & notes追記
         seasonSleeve: '春夏・長袖',
         dressScore: 3.5,
         comfortScore: 4.5,
@@ -3170,7 +3181,7 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
   const mergedS10 = mergeRes.data.items.find((i) => i.id === 'S10');
   assert.ok(mergedS10, 'S10 must be merged into data');
   assert.equal(mergedS10.color, undefined);
-  assert.ok(mergedS10.notes.includes('（色の目安：ベージュ ※12色パレット外のため未確定）'));
+  assert.ok(mergedS10.notes.includes('（色の目安：ラベンダー ※13色パレット外のため未確定）'));
 
   // 2着目: P16, color='ライトグレー'
   const mergedP16 = mergeRes.data.items.find((i) => i.id === 'P16');
@@ -3436,7 +3447,7 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
   const skillCode = fs.readFileSync(path.join(projectRoot, '.agents/skills/manage-wardrobe/SKILL.md'), 'utf8');
   assert.ok(skillCode.includes('まとめ撮り一括登録'), 'SKILL.md must document batch registration workflow');
   assert.ok(skillCode.includes('2000px'), 'SKILL.md must document 2000px batch resolution');
-  assert.ok(skillCode.includes('（色の目安：〇〇 ※12色パレット外のため未確定）'), 'SKILL.md must document unconfirmed color hint');
+  assert.ok(skillCode.includes('（色の目安：〇〇 ※13色パレット外のため未確定）'), 'SKILL.md must document unconfirmed color hint');
 
   // 8. レビュー指摘対応の検証（Drive画像再試行・Sync Push遅延・解像度保護・既存ID重複防止入出力テスト）
   // 8a. Driveアップロード失敗時の画像単体再試行導線 (修正1)
@@ -4423,6 +4434,318 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
   assert.equal(invalidClipboardRes, false, 'copyTextToClipboard must return false if writeText is not a function');
 
   console.log('  ✅ copyTextToClipboard pure logic unit tests verified');
+}
+
+// -------------------------------------------------------------
+// Test Case 31: 同一写真重複解消（executeDuplicateMerge における date不変・timestamp+1・LWW同期・相性マージ・tombstone管理）
+// -------------------------------------------------------------
+{
+  const mockClosetData = {
+    updatedAt: 1000,
+    items: [
+      {
+        id: 'S36',
+        category: 'shirt',
+        name: 'ライトグレーロゴパーカー',
+        color: 'ライトグレー',
+        imageUrl: '/images/S36.jpg',
+        seasonSleeve: '秋冬・長袖',
+        dressScore: 2.0,
+        comfortScore: 5.0,
+        officeRecommendIds: [],
+        remoteRecommendIds: ['P1', 'P2'],
+        ngIds: ['P3'],
+        ngReason: '部屋着専用',
+        notes: '裏起毛プルオーバー',
+      },
+      {
+        id: 'S41',
+        category: 'shirt',
+        name: 'ライトグレーロゴパーカー（重複）',
+        color: 'ライトグレー',
+        imageUrl: '/images/S41.jpg',
+        seasonSleeve: '秋冬・長袖',
+        dressScore: 2.0,
+        comfortScore: 5.0,
+        officeRecommendIds: [],
+        remoteRecommendIds: ['P2', 'P4'],
+        ngIds: ['P5'],
+        ngReason: '同系色',
+        notes: '裏起毛プルオーバー重複',
+      },
+      {
+        id: 'P1',
+        category: 'pants',
+        name: '濃紺パンツ',
+        color: '濃紺',
+        imageUrl: '/images/P1.jpg',
+        seasonSleeve: '通年',
+        dressScore: 3.5,
+        comfortScore: 4.0,
+        officeRecommendIds: [],
+        remoteRecommendIds: ['S36', 'S41'],
+        ngIds: [],
+        ngReason: '',
+        notes: '',
+      },
+    ],
+  };
+
+  const mockWearHistory = [
+    {
+      id: '2026-11-01_100',
+      date: '2026-11-01',
+      shirtId: 'S41',
+      pantsId: 'P1',
+      scene: 'remote',
+      timestamp: 100,
+    },
+    {
+      id: '2026-11-02_200',
+      date: '2026-11-02',
+      shirtId: 'S36',
+      pantsId: 'P1',
+      scene: 'remote',
+      timestamp: 200,
+    },
+  ];
+
+  const mockWifeNgPairs = [
+    {
+      shirtId: 'S41',
+      pantsId: 'P1',
+      reason: 'フードがだらしない',
+      createdAt: '2026-11-01T12:00:00Z',
+    },
+  ];
+
+  const selections = [
+    {
+      survivorId: 'S36',
+      removedIds: ['S41'],
+      included: true,
+    },
+  ];
+
+  // 1. previewDuplicateMerge の検証
+  const preview = previewDuplicateMerge({
+    closetData: mockClosetData,
+    wearHistory: mockWearHistory,
+    wifeNgPairs: mockWifeNgPairs,
+    selections,
+  });
+  assert.equal(preview.totalRemovedCount, 1);
+  assert.equal(preview.affectedWearRecordsCount, 1);
+  assert.equal(preview.affectedWifeNgCount, 1);
+  assert.equal(preview.affectedPeerItemsCount, 1);
+  assert.equal(preview.itemsAfterCount, 2);
+
+  // 2. executeDuplicateMerge の検証
+  const res = executeDuplicateMerge({
+    closetData: mockClosetData,
+    wearHistory: mockWearHistory,
+    wifeNgPairs: mockWifeNgPairs,
+    selections,
+  });
+
+  assert.equal(res.ok, true);
+  assert.equal(res.mergedCount, 1);
+  assert.deepEqual(res.removedItemIds, ['S41']);
+
+  // アイテム整合性: S41 が除外され S36 が残る
+  assert.equal(res.closetData.items.length, 2);
+  const survivorItem = res.closetData.items.find((it) => it.id === 'S36');
+  assert.ok(survivorItem);
+  assert.ok(!res.closetData.items.some((it) => it.id === 'S41'));
+
+  // survivor の相性リストに旧S41の相性が安全にマージされていること（重複・自己参照なし）
+  assert.ok(survivorItem.remoteRecommendIds.includes('P4'));
+  assert.ok(survivorItem.ngIds.includes('P5'));
+
+  // 相手側 P1 の相性参照が S41 -> S36 に置換され、重複が排除されていること
+  const peerP1 = res.closetData.items.find((it) => it.id === 'P1');
+  assert.ok(!peerP1.remoteRecommendIds.includes('S41'));
+  assert.equal(peerP1.remoteRecommendIds.filter((id) => id === 'S36').length, 1);
+
+  // 【最重要不変条件】着用履歴の日付（date）は一切変わらない！
+  const updatedRec = res.wearHistory.find((r) => r.date === '2026-11-01');
+  assert.ok(updatedRec, '2026-11-01 record must exist');
+  assert.equal(updatedRec.date, '2026-11-01', 'Wear date must NEVER be modified');
+  assert.equal(updatedRec.shirtId, 'S36', 'shirtId must be updated to survivorId');
+  assert.equal(updatedRec.timestamp, 101, 'timestamp must be incremented by 1 for LWW propagation');
+  assert.equal(updatedRec.id, '2026-11-01_101', 'id must follow date_timestamp format');
+
+  // 旧レコードIDの墓標が登録されていること（他端末からのゾンビ復活防止）
+  assert.equal(res.tombstones.deletedWearMap['2026-11-01_100'], 101);
+
+  // 奥様NGペアが置換され、旧ペアの墓標が登録されていること
+  assert.equal(res.wifeNgPairs.length, 1);
+  assert.equal(res.wifeNgPairs[0].shirtId, 'S36');
+  assert.equal(res.wifeNgPairs[0].pantsId, 'P1');
+  assert.ok(res.tombstones.deletedWifeNgMap['S41_P1'] > 0);
+
+  // computeHammingDistance の検証
+  assert.equal(computeHammingDistance('ffffffffffffffff', 'ffffffffffffffff'), 0);
+  assert.equal(computeHammingDistance('ffffffffffffffff', '0000000000000000'), 64);
+  assert.equal(computeHammingDistance('1234567890abcdef', '1234567890abcdee'), 1);
+
+  console.log('  ✅ Duplicate detection and merge (date preservation & tombstone safety) verified');
+}
+
+// -------------------------------------------------------------
+// Test Case 32: GAS deleteImages ハンドラー（setTrashed による安全ゴミ箱退避）
+// -------------------------------------------------------------
+{
+  const codeGsPath = path.join(projectRoot, 'gas/Code.gs');
+  const codeGs = fs.readFileSync(codeGsPath, 'utf8');
+
+  // doPost ルーティング検証
+  assert.ok(
+    codeGs.includes("payload.action === 'deleteImages'"),
+    'Code.gs must route deleteImages action in doPost'
+  );
+  assert.ok(
+    codeGs.includes('handleDeleteImages(ss, payload)'),
+    'Code.gs must call handleDeleteImages'
+  );
+
+  // handleDeleteImages 実装検証
+  assert.ok(
+    codeGs.includes('function handleDeleteImages(ss, payload)'),
+    'Code.gs must implement handleDeleteImages'
+  );
+  assert.ok(
+    codeGs.includes('file.setTrashed(true)'),
+    'handleDeleteImages must use setTrashed(true) for safety'
+  );
+  assert.ok(
+    codeGs.includes('deletedItemIds'),
+    'handleDeleteImages must return deletedItemIds'
+  );
+
+  console.log('  ✅ GAS deleteImages handler (setTrashed & fail-closed) verified');
+}
+
+// -------------------------------------------------------------
+// Test Case 33: 全件リビルド（parseRebuildInputJson, 確定色・実寸保護ロック, applyRebuildDiffs）
+// -------------------------------------------------------------
+{
+  const currentItems = [
+    {
+      id: 'S1',
+      category: 'shirt',
+      name: '旧シャツ名',
+      color: '濃紺', // 確定色
+      imageUrl: '/images/S1.jpg',
+      seasonSleeve: '長袖・通年',
+      dressScore: 3.0,
+      comfortScore: 4.0,
+      measurements: { bodyLength: 72, chestWidth: 54, shoulderWidth: 46, sleeveLength: 61 }, // 実寸あり
+      officeRecommendIds: ['P1'],
+      remoteRecommendIds: ['P2'],
+      ngIds: [],
+      ngReason: '',
+      notes: '旧メモ',
+    },
+    {
+      id: 'P1',
+      category: 'pants',
+      name: '旧パンツ名',
+      color: undefined, // 未確定色
+      imageUrl: '/images/P1.jpg',
+      seasonSleeve: '通年',
+      dressScore: 3.5,
+      comfortScore: 4.0,
+      officeRecommendIds: ['S1'],
+      remoteRecommendIds: [],
+      ngIds: [],
+      ngReason: '',
+      notes: '',
+    },
+  ];
+
+  // 1. parseRebuildInputJson の検証（Markdownフェンス除去とバリデーション）
+  const jsonWithFence = `\`\`\`json
+{
+  "rebuildItems": [
+    {
+      "id": "S1",
+      "name": "新濃インディゴ無地長袖シャツ",
+      "color": "ネイビー",
+      "seasonSleeve": "長袖・通年",
+      "dressScore": 3.5,
+      "comfortScore": 4.5,
+      "notes": "新メモ",
+      "officeRecommendIds": ["P1"],
+      "remoteRecommendIds": [],
+      "ngIds": []
+    },
+    {
+      "id": "P1",
+      "name": "新濃紺スリムパンツ",
+      "color": "ベージュ",
+      "seasonSleeve": "通年",
+      "dressScore": 4.0,
+      "comfortScore": 4.0,
+      "notes": "新メモ",
+      "officeRecommendIds": ["S1"],
+      "remoteRecommendIds": [],
+      "ngIds": []
+    }
+  ]
+}
+\`\`\``;
+
+  const parsed = parseRebuildInputJson(jsonWithFence);
+  assert.equal(parsed.valid, true);
+  assert.equal(parsed.items.length, 2);
+  // ネイビーが濃紺に自動補正されていること
+  assert.equal(parsed.items[0].color, '濃紺');
+  assert.equal(parsed.items[1].color, 'ベージュ');
+
+  // 2. computeRebuildDiffs の保護ロック検証
+  const diffs = computeRebuildDiffs({
+    currentItems,
+    rebuildItems: parsed.items,
+  });
+  assert.equal(diffs.length, 2);
+
+  const s1Diff = diffs.find((d) => d.id === 'S1');
+  assert.ok(s1Diff);
+  assert.equal(s1Diff.isColorProtected, true, 'S1 color must be protected (already confirmed)');
+  assert.equal(s1Diff.isMeasurementsProtected, true, 'S1 measurements must be protected');
+  assert.equal(s1Diff.defaultSelection.color, false, 'Default color selection must be false (protected)');
+  assert.equal(s1Diff.defaultSelection.name, true, 'Default name selection must be true (changed)');
+
+  const p1Diff = diffs.find((d) => d.id === 'P1');
+  assert.ok(p1Diff);
+  assert.equal(p1Diff.isColorProtected, false, 'P1 color was unconfirmed, so not protected');
+  assert.equal(p1Diff.defaultSelection.color, true, 'P1 color should be selected by default to adopt new color');
+
+  // 3. applyRebuildDiffs の検証
+  const fieldSelections = {
+    S1: { ...s1Diff.defaultSelection }, // color は false (保護維持)
+    P1: { ...p1Diff.defaultSelection }, // color は true (ベージュ適用)
+  };
+
+  const applyRes = applyRebuildDiffs({
+    closetData: { updatedAt: 1000, items: currentItems },
+    diffs,
+    fieldSelections,
+  });
+
+  assert.equal(applyRes.valid, true);
+  assert.equal(applyRes.appliedItemsCount, 2);
+
+  const appliedS1 = applyRes.data.items.find((it) => it.id === 'S1');
+  assert.equal(appliedS1.name, '新濃インディゴ無地長袖シャツ', 'Name must be updated');
+  assert.equal(appliedS1.color, '濃紺', 'Color must remain 濃紺 because selection was false');
+  assert.deepEqual(appliedS1.measurements, currentItems[0].measurements, 'Measurements must remain preserved');
+
+  const appliedP1 = applyRes.data.items.find((it) => it.id === 'P1');
+  assert.equal(appliedP1.color, 'ベージュ', 'P1 color must be updated to ベージュ');
+
+  console.log('  ✅ Wardrobe rebuild pure domain logic (protected lock & selective apply) verified');
 }
 
 console.log('🎉 All GAS backend & sync logic tests passed successfully!');
