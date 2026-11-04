@@ -66,6 +66,7 @@ const {
   buildWardrobeRebuildPrompt,
   parseRebuildInputJson,
   computeRebuildDiffs,
+  validateAndBuildRebuildDiffs,
   applyRebuildDiffs,
 } = closetDomain;
 
@@ -4832,6 +4833,50 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
   // 不正データ（例: 不正スコア等）を含む場合にスキーマ検証が失敗することの確認
   const brokenData = { ...applyRes.data, items: [{ ...appliedS1, dressScore: 99 }] };
   assert.equal(validateClosetDataSchema(brokenData).valid, false, 'Invalid schema must be rejected');
+
+  // 5. validateAndBuildRebuildDiffs（貼り付け・ファイル取り込み共通パイプライン）の検証
+  // 空入力チェック
+  const emptyRes = validateAndBuildRebuildDiffs('', currentItems);
+  assert.equal(emptyRes.valid, false);
+  assert.ok(emptyRes.error.includes('空です'));
+
+  // 不正構文チェック
+  const malformedRes = validateAndBuildRebuildDiffs('not a json', currentItems);
+  assert.equal(malformedRes.valid, false);
+  assert.ok(malformedRes.error);
+
+  // 全件完全性チェック（不足IDがある場合）
+  const missingIdJson = JSON.stringify({
+    rebuildItems: [
+      { id: 'S1', name: 'シャツ1', seasonSleeve: '通年', dressScore: 3, comfortScore: 3, officeRecommendIds: [], remoteRecommendIds: [], ngIds: [] },
+    ],
+  });
+  const missingRes = validateAndBuildRebuildDiffs(missingIdJson, currentItems);
+  assert.equal(missingRes.valid, false);
+  assert.ok(missingRes.error.includes('不足しているアイテムID'));
+  assert.ok(missingRes.error.includes('P1'));
+
+  // 全件完全性チェック（余分なIDがある場合）
+  const extraIdJson = JSON.stringify({
+    rebuildItems: [
+      { id: 'S1', name: 'シャツ1', seasonSleeve: '通年', dressScore: 3, comfortScore: 3, officeRecommendIds: [], remoteRecommendIds: [], ngIds: [] },
+      { id: 'P1', name: 'パンツ1', seasonSleeve: '通年', dressScore: 3, comfortScore: 3, officeRecommendIds: [], remoteRecommendIds: [], ngIds: [] },
+      { id: 'P99', name: '余分パンツ', seasonSleeve: '通年', dressScore: 3, comfortScore: 3, officeRecommendIds: [], remoteRecommendIds: [], ngIds: [] },
+    ],
+  });
+  const extraRes = validateAndBuildRebuildDiffs(extraIdJson, currentItems);
+  assert.equal(extraRes.valid, false);
+  assert.ok(extraRes.error.includes('対象外の余分なアイテムID'));
+  assert.ok(extraRes.error.includes('P99'));
+
+  // 正常系（Markdownフェンス付きテキストからの差分生成と保護判定の検証）
+  const validFullRes = validateAndBuildRebuildDiffs(jsonWithFence, currentItems);
+  assert.equal(validFullRes.valid, true);
+  assert.equal(validFullRes.diffs.length, 2);
+  const s1FullDiff = validFullRes.diffs.find((d) => d.id === 'S1');
+  assert.ok(s1FullDiff);
+  assert.equal(s1FullDiff.isColorProtected, true);
+  assert.equal(s1FullDiff.after.name, '新濃インディゴ無地長袖シャツ');
 
   console.log('  ✅ Wardrobe rebuild pure domain logic (protected lock & selective apply) verified');
 }

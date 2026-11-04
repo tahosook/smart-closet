@@ -348,6 +348,13 @@ export interface RebuildApplyResult {
   error?: string;
 }
 
+export interface RebuildValidationResult {
+  valid: boolean;
+  diffs?: RebuildItemDiff[];
+  items?: RebuildCandidateItem[];
+  error?: string;
+}
+
 // ----------------------------------------------------
 // ワードローブ分析・インサイト関連の型定義
 // ----------------------------------------------------
