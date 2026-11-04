@@ -45,12 +45,6 @@ Add the new item to `items` adhering to the schema:
 - `ngReason`: Clear explanation of why pairs in `ngIds` look bad (e.g. "同系色濃紺による作業着見え").
 - `notes`: Short role summary (e.g. "【万能出社エース】会食・出社").
 
-**Batch Outerwear Updates:**
-To classify existing shirts in bulk into outerwear vs single-layer tops without touching names, colors, or compatibility matrices, copy the prompt from Tab 2 "💬 Gemini スタイリスト相談" -> "🧥 既存シャツの羽織り分類・一括相談", paste to Gemini, and import the resulting `{ "outerwearUpdates": [{ "id": "S1", "isOuterwear": false }, { "id": "S10", "isOuterwear": true }] }` into Step 3. Individual items can also be fine-tuned via the toggle buttons in Step 3 preview or ManageView.
-
-**Batch Color Updates:**
-To update colors across multiple existing garments without touching names or compatibility matrices, copy the batch consultation prompt from Tab 2 backup accordion and import `{ "colorUpdates": [{ "id": "...", "color": "..." }] }`. Unconfirmed color garments can also be confirmed in bulk using this tool.
-
 **Deterministic Multi-Garment and Single-Item Merge:**
 When importing batch garments (`{ "garments": [...] }`) or single item JSON (via AiSyncView), the app deterministically assigns category sequential IDs and updates bidirectional references without modifying existing $S_i \times P_j$ relationships. Batch garments only evaluate compatibility against existing items (Rule B). If updating `closet.json` manually in Git, ensure existing items' arrays are symmetrically updated.
 

@@ -29,8 +29,6 @@ import {
   ClosetItem,
   GarmentMeasurements,
   GarmentCropBox,
-  ColorUpdateItem,
-  OuterwearUpdateItem,
   BatchGarmentDraftItem,
   MAX_BATCH_GARMENTS,
   FailedDriveUploadItem,
@@ -52,7 +50,6 @@ import {
   copyTextToClipboard,
   CopyFeedbackStatus,
   buildShoppingConsultationPrompt,
-  buildBatchOuterwearAssessmentPrompt,
 } from '../utils/closetDomain';
 import {
   saveDraftImage,
@@ -114,12 +111,10 @@ export const AiSyncView: React.FC = () => {
 
   const [copiedPromptStatus, setCopiedPromptStatus] = useState<CopyFeedbackStatus>('idle');
   const [copiedConsultPromptStatus, setCopiedConsultPromptStatus] = useState<CopyFeedbackStatus>('idle');
-  const [copiedOuterwearPromptStatus, setCopiedOuterwearPromptStatus] = useState<CopyFeedbackStatus>('idle');
   const [isRebuildModalOpen, setIsRebuildModalOpen] = useState(false);
 
   const promptTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const consultPromptTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const outerwearPromptTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const triggerCopyFeedback = (
     setter: React.Dispatch<React.SetStateAction<CopyFeedbackStatus>>,
@@ -140,7 +135,6 @@ export const AiSyncView: React.FC = () => {
     return () => {
       if (promptTimerRef.current) clearTimeout(promptTimerRef.current);
       if (consultPromptTimerRef.current) clearTimeout(consultPromptTimerRef.current);
-      if (outerwearPromptTimerRef.current) clearTimeout(outerwearPromptTimerRef.current);
     };
   }, []);
 
@@ -177,8 +171,6 @@ export const AiSyncView: React.FC = () => {
   const [draftCropBox, setDraftCropBox] = useState<GarmentCropBox | null>(null);
   const [applySmartCrop, setApplySmartCrop] = useState<boolean>(true);
   const [normalizedPreviewUrl, setNormalizedPreviewUrl] = useState<string | null>(null);
-  const [draftBatchUpdates, setDraftBatchUpdates] = useState<ColorUpdateItem[] | null>(null);
-  const [draftBatchOuterwearUpdates, setDraftBatchOuterwearUpdates] = useState<OuterwearUpdateItem[] | null>(null);
   const [isCategorySwitched, setIsCategorySwitched] = useState(false);
 
   // Step 3: Batch garments drafts & toggles (Batch mode)
@@ -367,7 +359,7 @@ export const AiSyncView: React.FC = () => {
     }
   };
 
-  // リアルタイムに JSON テキストを監視し、有効な単一アイテム、一括色更新、またはまとめ撮り服なら同期
+  // リアルタイムに JSON テキストを監視し、有効な単一アイテム、またはまとめ撮り服なら同期
   useEffect(() => {
     const parseRes = parseSyncInputJson(jsonInput, mergedClosetData.items);
     if (parseRes.kind === 'single' && parseRes.item) {
@@ -376,24 +368,6 @@ export const AiSyncView: React.FC = () => {
       if (parseRes.cropBox && normalizeCropBox(parseRes.cropBox)) {
         setApplySmartCrop(true);
       }
-      setDraftBatchUpdates(null);
-      setDraftBatchOuterwearUpdates(null);
-      setDraftBatchGarments(null);
-      setIsCategorySwitched(false);
-      setJsonParseWarning(null);
-    } else if (parseRes.kind === 'batch_color' && parseRes.batchColorUpdates) {
-      setDraftBatchUpdates(parseRes.batchColorUpdates);
-      setDraftBatchOuterwearUpdates(null);
-      setDraftEditItem(null);
-      setDraftCropBox(null);
-      setDraftBatchGarments(null);
-      setIsCategorySwitched(false);
-      setJsonParseWarning(null);
-    } else if (parseRes.kind === 'batch_outerwear' && parseRes.batchOuterwearUpdates) {
-      setDraftBatchOuterwearUpdates(parseRes.batchOuterwearUpdates);
-      setDraftBatchUpdates(null);
-      setDraftEditItem(null);
-      setDraftCropBox(null);
       setDraftBatchGarments(null);
       setIsCategorySwitched(false);
       setJsonParseWarning(null);
@@ -409,15 +383,11 @@ export const AiSyncView: React.FC = () => {
       });
       setDraftEditItem(null);
       setDraftCropBox(null);
-      setDraftBatchUpdates(null);
-      setDraftBatchOuterwearUpdates(null);
       setIsCategorySwitched(false);
       setJsonParseWarning(null);
     } else {
       setDraftEditItem(null);
       setDraftCropBox(null);
-      setDraftBatchUpdates(null);
-      setDraftBatchOuterwearUpdates(null);
       setDraftBatchGarments(null);
       setIsCategorySwitched(false);
       setJsonParseWarning(jsonInput.trim() ? (parseRes.error ?? 'JSON構文が無効です') : null);
@@ -863,61 +833,10 @@ ${wifeNgSummary}
     triggerCopyFeedback(setCopiedConsultPromptStatus, consultPromptTimerRef, ok);
   };
 
-  // 既存シャツの羽織り分類一括相談プロンプトの生成とコピー
-  const handleCopyOuterwearPrompt = async () => {
-    const promptText = buildBatchOuterwearAssessmentPrompt(mergedClosetData.items);
-    const ok = await copyTextToClipboard(promptText);
-    triggerCopyFeedback(setCopiedOuterwearPromptStatus, outerwearPromptTimerRef, ok);
-  };
-
   // Step 3: JSON適用・自動マージ・写真の本保存・下書き消去・GASアップロード連動
   const handleApplyJson = async () => {
     setImportStatus(null);
     const parseRes = parseSyncInputJson(jsonInput, mergedClosetData.items);
-
-    // 一括色更新の適用
-    if (parseRes.kind === 'batch_color') {
-      const payload = JSON.stringify({
-        colorUpdates: parseRes.batchColorUpdates ?? [],
-      });
-      const res = importCustomData(payload);
-      if (res.success) {
-        setImportStatus({
-          type: 'success',
-          message: `全${res.updatedPeersCount || 0}着の色パレットを一括更新しました！（既存のアイテム名・相性は保護されています）`,
-        });
-        setJsonInput('');
-        setDraftBatchUpdates(null);
-      } else {
-        setImportStatus({
-          type: 'error',
-          message: res.error || '色パレット一括更新に失敗しました。形式を確認してください。',
-        });
-      }
-      return;
-    }
-
-    // 一括羽織り分類更新の適用
-    if (parseRes.kind === 'batch_outerwear') {
-      const payload = JSON.stringify({
-        outerwearUpdates: draftBatchOuterwearUpdates ?? parseRes.batchOuterwearUpdates ?? [],
-      });
-      const res = importCustomData(payload);
-      if (res.success) {
-        setImportStatus({
-          type: 'success',
-          message: `全${res.updatedPeersCount || 0}着の羽織り分類を一括更新しました！（既存のアイテム名・相性は保護されています）`,
-        });
-        setJsonInput('');
-        setDraftBatchOuterwearUpdates(null);
-      } else {
-        setImportStatus({
-          type: 'error',
-          message: res.error || '羽織り分類一括更新に失敗しました。形式を確認してください。',
-        });
-      }
-      return;
-    }
 
     // 単一アイテムの適用
     if (!parseRes.item || parseRes.kind !== 'single') {
@@ -1679,7 +1598,7 @@ ${wifeNgSummary}
         </div>
 
         <p className="text-xs text-slate-300 leading-relaxed pl-8">
-          Geminiから出力された【1着分のJSON】（またはまとめ撮り一括登録JSON・色一括更新JSON）を貼り付けると、下に確認・微修正パネルが表示されます。
+          Geminiから出力された【1着分のJSON】（またはまとめ撮り一括登録JSON）を貼り付けると、下に確認・微修正パネルが表示されます。
         </p>
 
         <div className="pl-8 space-y-3">
@@ -1700,139 +1619,6 @@ ${wifeNgSummary}
             <div className="p-2.5 bg-rose-950/70 border border-rose-800/80 rounded-xl flex items-start gap-2 text-xs text-rose-300">
               <AlertCircle className="w-4 h-4 flex-shrink-0 text-rose-400 mt-0.5" />
               <span className="leading-relaxed">{jsonParseWarning}</span>
-            </div>
-          )}
-
-          {/* Case A: Batch Color Updates Preview Card */}
-          {draftBatchUpdates && (
-            <div className="p-4 bg-slate-900/95 border border-amber-500/50 rounded-2xl space-y-3 shadow-2xl">
-              <div className="flex items-center justify-between border-b border-slate-800 pb-2">
-                <span className="text-xs font-bold text-amber-300 flex items-center gap-1.5">
-                  <Palette className="w-4 h-4 text-amber-400" />
-                  色パレット一括更新プレビュー（全{draftBatchUpdates.length}着）
-                </span>
-                <span className="text-[10px] text-slate-400">※名前や相性リストは変更されません</span>
-              </div>
-
-              <div className="max-h-60 overflow-y-auto space-y-1.5 pr-1">
-                {draftBatchUpdates.map((update) => {
-                  const existing = mergedClosetData.items.find(
-                    (i) => i.id.toUpperCase() === update.id.toUpperCase()
-                  );
-                  const isColorValid = isValidGarmentColor(update.color);
-                  return (
-                    <div
-                      key={update.id}
-                      className="p-2 rounded-xl bg-slate-950 border border-slate-800 flex items-center justify-between text-xs"
-                    >
-                      <div className="min-w-0 flex items-center gap-2">
-                        <span className="font-bold text-blue-400 font-mono">{update.id}</span>
-                        <span className="text-slate-300 truncate">
-                          {existing ? existing.name : '（未登録アイテム）'}
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-1.5 flex-shrink-0 font-medium">
-                        <span className="text-slate-400 text-[11px]">
-                          {existing?.color ? existing.color : '未設定'}
-                        </span>
-                        <span className="text-slate-500">→</span>
-                        <span
-                          className={`font-bold px-1.5 py-0.5 rounded text-[11px] ${
-                            isColorValid
-                              ? 'bg-amber-950 text-amber-300 border border-amber-800'
-                              : 'bg-rose-950 text-rose-300 border border-rose-800'
-                          }`}
-                        >
-                          🎨 {update.color}
-                        </span>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-
-              <button
-                type="button"
-                onClick={handleApplyJson}
-                className="w-full min-h-[44px] py-3 px-4 rounded-xl text-xs font-bold bg-amber-600 hover:bg-amber-500 text-white shadow-lg shadow-amber-900/40 flex items-center justify-center gap-2 active:scale-[0.98] transition-all"
-              >
-                <Check className="w-4 h-4" />
-                <span>💾 色パレット一括更新を適用（{draftBatchUpdates.length}着）</span>
-              </button>
-            </div>
-          )}
-
-          {/* Case A-2: Batch Outerwear Updates Preview Card */}
-          {draftBatchOuterwearUpdates && (
-            <div className="p-4 bg-slate-900/95 border border-indigo-500/50 rounded-2xl space-y-3 shadow-2xl">
-              <div className="flex items-center justify-between border-b border-slate-800 pb-2">
-                <span className="text-xs font-bold text-indigo-300 flex items-center gap-1.5">
-                  <Sliders className="w-4 h-4 text-indigo-400" />
-                  羽織り分類一括更新プレビュー（全{draftBatchOuterwearUpdates.length}着）
-                </span>
-                <span className="text-[10px] text-slate-400">※名前や相性リストは変更されません</span>
-              </div>
-
-              <div className="max-h-60 overflow-y-auto space-y-1.5 pr-1">
-                {draftBatchOuterwearUpdates.map((update) => {
-                  const existing = mergedClosetData.items.find(
-                    (i) => i.id.toUpperCase() === update.id.toUpperCase()
-                  );
-                  const isCurrentOuterwear = Boolean(existing?.isOuterwear);
-                  const isChanged = isCurrentOuterwear !== update.isOuterwear;
-
-                  return (
-                    <div
-                      key={update.id}
-                      className="p-2 rounded-xl bg-slate-950 border border-slate-800 flex items-center justify-between text-xs"
-                    >
-                      <div className="min-w-0 flex items-center gap-2">
-                        <span className="font-bold text-blue-400 font-mono">{update.id}</span>
-                        <span className="text-slate-300 truncate">
-                          {existing ? existing.name : '（未登録アイテム）'}
-                        </span>
-                        {isChanged && (
-                          <span className="text-[10px] px-1.5 py-0.2 rounded bg-amber-950 text-amber-300 border border-amber-800">
-                            変更
-                          </span>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-1.5 flex-shrink-0 font-medium">
-                        <span className="text-slate-400 text-[11px]">
-                          {isCurrentOuterwear ? '🧥 羽織り' : '👔 1枚もの'}
-                        </span>
-                        <span className="text-slate-500">→</span>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const next = draftBatchOuterwearUpdates.map((u) =>
-                              u.id === update.id ? { ...u, isOuterwear: !u.isOuterwear } : u
-                            );
-                            setDraftBatchOuterwearUpdates(next);
-                            setJsonInput(JSON.stringify({ outerwearUpdates: next }, null, 2));
-                          }}
-                          className={`px-2 py-1 rounded text-[11px] font-bold border transition-all ${
-                            update.isOuterwear
-                              ? 'bg-indigo-950 text-indigo-300 border-indigo-700 hover:bg-indigo-900'
-                              : 'bg-slate-900 text-slate-300 border-slate-700 hover:bg-slate-800'
-                          }`}
-                        >
-                          {update.isOuterwear ? '🧥 羽織り' : '👔 1枚もの'}
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-
-              <button
-                type="button"
-                onClick={handleApplyJson}
-                className="w-full min-h-[44px] py-3 px-4 rounded-xl text-xs font-bold bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-900/40 flex items-center justify-center gap-2 active:scale-[0.98] transition-all"
-              >
-                <Check className="w-4 h-4" />
-                <span>💾 羽織り分類一括更新を適用（{draftBatchOuterwearUpdates.length}着）</span>
-              </button>
             </div>
           )}
 
@@ -2778,7 +2564,7 @@ ${wifeNgSummary}
           )}
 
           {/* Main Apply Button */}
-          {!draftBatchUpdates && !draftBatchGarments && !draftBatchOuterwearUpdates && (
+          {!draftBatchGarments && (
             <button
               onClick={handleApplyJson}
               className="w-full min-h-[44px] py-3 px-4 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-900/40 flex items-center justify-center gap-2 active:scale-[0.98] transition-all"
@@ -2896,52 +2682,6 @@ ${wifeNgSummary}
             >
               <Layers className="w-4 h-4" />
               <span>全件リビルド ＆ 重複解消ウィザードを開く</span>
-            </button>
-          </div>
-
-          {/* 3. 既存シャツの羽織り分類・一括相談 */}
-          <div className="p-4 bg-slate-900/90 border border-slate-800 rounded-2xl space-y-3 shadow-md">
-            <div className="flex items-center justify-between">
-              <span className="text-sm font-bold text-indigo-300 flex items-center gap-2">
-                <Sliders className="w-4 h-4 text-indigo-400" />
-                <span>🧥 既存シャツの羽織り分類・一括相談</span>
-              </span>
-              <span className="text-[10px] px-2 py-0.5 rounded bg-indigo-950 text-indigo-300 border border-indigo-800 font-mono">
-                シャツ全{shirts.length}着一括
-              </span>
-            </div>
-
-            <p className="text-[11px] text-slate-400 leading-relaxed">
-              登録済みのすべてのシャツ・トップス（カーディガン、ジップアップ、パーカー、ジャケット等）を、名前・色・季節袖丈・メモから「羽織り」か「1枚もの」かに一括分類するプロンプトを生成します。Gemini の回答JSONを上の「Step 3」に貼り付けるだけで、1着ずつの手作業なしに全件を一括更新できます。
-            </p>
-
-            <button
-              type="button"
-              onClick={handleCopyOuterwearPrompt}
-              className={`w-full min-h-[44px] py-3 px-4 rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition-all shadow-lg ${
-                copiedOuterwearPromptStatus === 'success'
-                  ? 'bg-emerald-600 text-white'
-                  : copiedOuterwearPromptStatus === 'error'
-                  ? 'bg-rose-600 text-white'
-                  : 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-indigo-900/40 active:scale-[0.98]'
-              }`}
-            >
-              {copiedOuterwearPromptStatus === 'success' ? (
-                <>
-                  <Check className="w-4 h-4" />
-                  <span>コピー完了！ Gemini に貼って相談してください</span>
-                </>
-              ) : copiedOuterwearPromptStatus === 'error' ? (
-                <>
-                  <AlertCircle className="w-4 h-4" />
-                  <span>コピーに失敗しました（もう一度お試しください）</span>
-                </>
-              ) : (
-                <>
-                  <Copy className="w-4 h-4" />
-                  <span>📋 羽織り分類一括相談プロンプトをコピー</span>
-                </>
-              )}
             </button>
           </div>
         </div>

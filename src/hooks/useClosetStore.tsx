@@ -29,9 +29,7 @@ import {
   validateClosetDataSchema,
   validateSingleClosetItem,
   mergeSingleItemIntoClosetData,
-  applyBatchColorUpdates,
   setShirtOuterwear,
-  applyBatchOuterwearUpdates,
   validateAndMergeBatchGarments,
   mergeClosetDataWithWifeNg,
   checkIsNgPair,
@@ -99,7 +97,6 @@ export interface ClosetStoreContextType {
   };
   recordWear: (shirtId: string, pantsId: string, scene: SceneMode, dateStr?: string, outerwearId?: string) => void;
   updateTodayOuterwear: (outerwearId: string | undefined) => void;
-  simulateYesterdayWear: (pantsId: string) => void;
   removeWearRecord: (id: string) => void;
   clearAllWearHistory: () => void;
   registerWifeNg: (shirtId: string, pantsId: string, customReason?: string) => void;
@@ -109,7 +106,7 @@ export interface ClosetStoreContextType {
   unarchiveItem: (itemId: string) => void;
   importCustomData: (jsonString: string) => {
     success: boolean;
-    mode?: 'single' | 'full' | 'batch_color' | 'batch_outerwear' | 'batch_garments';
+    mode?: 'single' | 'full' | 'batch_garments';
     addedItem?: ClosetItem;
     updatedPeersCount?: number;
     error?: string;
@@ -870,14 +867,6 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     [triggerBackgroundPush]
   );
 
-  const simulateYesterdayWear = useCallback(
-    (pantsId: string) => {
-      const yDate = getYesterdayString();
-      const defaultShirtId = shirts[0]?.id || 'S2';
-      recordWear(defaultShirtId, pantsId, 'office', yDate);
-    },
-    [recordWear, shirts]
-  );
 
   const removeWearRecord = useCallback(
     (id: string) => {
@@ -1031,7 +1020,7 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       jsonString: string
     ): {
       success: boolean;
-      mode?: 'single' | 'full' | 'batch_color' | 'batch_outerwear' | 'batch_garments';
+      mode?: 'single' | 'full' | 'batch_garments';
       addedItem?: ClosetItem;
       updatedPeersCount?: number;
       error?: string;
@@ -1040,37 +1029,14 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         const parsed = JSON.parse(jsonString);
 
         let finalData: ClosetData;
-        let mode: 'single' | 'full' | 'batch_color' | 'batch_outerwear' | 'batch_garments' = 'full';
+        let mode: 'single' | 'full' | 'batch_garments' = 'full';
         let addedItem: ClosetItem | undefined = undefined;
         let updatedPeersCount = 0;
-
-        // 一括色更新形式（colorUpdates 配列を含むオブジェクト、または直接の更新配列）かどうかの判別
-        const isBatchCandidate =
-          parsed &&
-          typeof parsed === 'object' &&
-          (Array.isArray((parsed as any).colorUpdates) ||
-            (Array.isArray(parsed) &&
-              parsed.length > 0 &&
-              typeof (parsed[0] as any)?.id === 'string' &&
-              (parsed[0] as any)?.color !== undefined));
-
-        // 一括羽織り分類更新形式（outerwearUpdates 配列を含むオブジェクト、または直接の更新配列）かどうかの判別
-        const isBatchOuterwearCandidate =
-          parsed &&
-          typeof parsed === 'object' &&
-          !isBatchCandidate &&
-          (Array.isArray((parsed as any).outerwearUpdates) ||
-            (Array.isArray(parsed) &&
-              parsed.length > 0 &&
-              typeof (parsed[0] as any)?.id === 'string' &&
-              typeof (parsed[0] as any)?.isOuterwear === 'boolean'));
 
         // まとめ撮り服形式（garments 配列を含むオブジェクト、または直接の服ドラフト配列）かどうかの判別
         const isBatchGarmentsCandidate =
           parsed &&
           typeof parsed === 'object' &&
-          !isBatchCandidate &&
-          !isBatchOuterwearCandidate &&
           (Array.isArray((parsed as any).garments) ||
             (Array.isArray(parsed) &&
               parsed.length > 0 &&
@@ -1078,29 +1044,7 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
                 (parsed[0] as any)?.category === 'pants' ||
                 (parsed[0] as any)?.name !== undefined)));
 
-        if (isBatchCandidate) {
-          const batchRes = applyBatchColorUpdates(stateRef.current.closetData, parsed);
-          if (!batchRes.valid || !batchRes.data) {
-            return {
-              success: false,
-              error: batchRes.error || '色パレット一括更新データの検証に失敗しました。',
-            };
-          }
-          mode = 'batch_color';
-          finalData = batchRes.data;
-          updatedPeersCount = batchRes.updatedCount || 0;
-        } else if (isBatchOuterwearCandidate) {
-          const batchRes = applyBatchOuterwearUpdates(stateRef.current.closetData, parsed);
-          if (!batchRes.valid || !batchRes.data) {
-            return {
-              success: false,
-              error: batchRes.error || '羽織り分類一括更新データの検証に失敗しました。',
-            };
-          }
-          mode = 'batch_outerwear';
-          finalData = batchRes.data;
-          updatedPeersCount = batchRes.updatedCount || 0;
-        } else if (isBatchGarmentsCandidate) {
+        if (isBatchGarmentsCandidate) {
           const batchMergeRes = validateAndMergeBatchGarments(stateRef.current.closetData, parsed);
           if (!batchMergeRes.valid || !batchMergeRes.data) {
             return {
@@ -1360,7 +1304,6 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       getRecommendationsForShirt,
       recordWear,
       updateTodayOuterwear,
-      simulateYesterdayWear,
       removeWearRecord,
       clearAllWearHistory,
       registerWifeNg,
@@ -1398,7 +1341,6 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       getRecommendationsForShirt,
       recordWear,
       updateTodayOuterwear,
-      simulateYesterdayWear,
       removeWearRecord,
       clearAllWearHistory,
       registerWifeNg,

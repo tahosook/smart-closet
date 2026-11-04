@@ -43,7 +43,6 @@ const {
   inferGarmentColor,
   validateGarmentMeasurements,
   normalizeCropBox,
-  applyBatchColorUpdates,
   MAX_BATCH_GARMENTS,
   appendUnconfirmedColorNote,
   sanitizeDraftPeerReferences,
@@ -69,8 +68,6 @@ const {
   validateAndBuildRebuildDiffs,
   applyRebuildDiffs,
   setShirtOuterwear,
-  applyBatchOuterwearUpdates,
-  buildBatchOuterwearAssessmentPrompt,
   SHIRT_CATEGORY_FILTER_OPTIONS,
   GALLERY_CATEGORY_FILTER_OPTIONS,
   MATRIX_CATEGORY_FILTER_OPTIONS,
@@ -2902,58 +2899,7 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
   assert.equal(confirmedLoadRes.data.items[0].color, '濃紺');
   assert.equal(confirmedLoadRes.data.items[1].color, '白');
 
-  // 7. applyBatchColorUpdates の検証
-  const sampleBatchUpdates = {
-    colorUpdates: [
-      { id: 'S1', color: '濃紺' },
-      { id: 'S9', color: '濃紺', name: '意図しない上書き名前' },
-      { id: 'P11', color: '濃紺' },
-    ],
-  };
-  const batchRes = applyBatchColorUpdates(rawCloset, sampleBatchUpdates);
-  assert.equal(batchRes.valid, true);
-  assert.equal(batchRes.updatedCount, 3);
-  const updatedS1 = batchRes.data.items.find((i) => i.id === 'S1');
-  const updatedS9 = batchRes.data.items.find((i) => i.id === 'S9');
-  assert.equal(updatedS1.color, '濃紺');
-  assert.deepEqual(updatedS1.officeRecommendIds, rawCloset.items[0].officeRecommendIds, 'officeRecommendIds must remain intact');
-  assert.deepEqual(updatedS1.ngIds, rawCloset.items[0].ngIds, 'ngIds must remain intact');
-  assert.equal(
-    updatedS9.name,
-    rawCloset.items.find((i) => i.id === 'S9').name,
-    'applyBatchColorUpdates must protect and preserve original name even if payload includes name'
-  );
-
-  // 7a. 異常系: ネイビー単独指定、不正なID、重複ID、パレット外の色
-  const batchWithNavy = applyBatchColorUpdates(rawCloset, {
-    colorUpdates: [{ id: 'S1', color: 'ネイビー' }],
-  });
-  assert.equal(batchWithNavy.valid, false);
-  assert.ok(batchWithNavy.error.includes('「濃紺」に統合'));
-
-  const batchWithInvalidId = applyBatchColorUpdates(rawCloset, {
-    colorUpdates: [{ id: 'S999', color: '濃紺' }],
-  });
-  assert.equal(batchWithInvalidId.valid, false);
-  assert.ok(batchWithInvalidId.error.includes('存在しません'));
-
-  const batchWithDupId = applyBatchColorUpdates(rawCloset, {
-    colorUpdates: [{ id: 'S1', color: '濃紺' }, { id: 'S1', color: '白' }],
-  });
-  assert.equal(batchWithDupId.valid, false);
-  assert.ok(batchWithDupId.error.includes('重複'));
-
-  // 7b. 素配列形式の直接入力の検証（レビュー指摘対応）
-  const batchResRawArray = applyBatchColorUpdates(rawCloset, [
-    { id: 'S1', color: '濃紺' },
-    { id: 'S2', color: '白' },
-  ]);
-  assert.equal(batchResRawArray.valid, true);
-  assert.equal(batchResRawArray.updatedCount, 2);
-  assert.equal(batchResRawArray.data.items.find((i) => i.id === 'S1').color, '濃紺');
-  assert.equal(batchResRawArray.data.items.find((i) => i.id === 'S2').color, '白');
-
-  console.log('  ✅ Garment standardization (12-color palette, anchors, measurements, crop, resilience & batch updates) verified');
+  console.log('  ✅ Garment standardization (12-color palette, anchors, measurements, crop & resilience) verified');
 }
 
 // -------------------------------------------------------------
@@ -2972,7 +2918,6 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
   assert.ok(aiSyncCode.includes('bodyLength'), 'AiSyncView prompt must include bodyLength for shirts');
   assert.ok(aiSyncCode.includes('waist'), 'AiSyncView prompt must include waist for pants');
   assert.ok(aiSyncCode.includes('cropBox'), 'AiSyncView prompt must include cropBox instruction');
-  assert.ok(aiSyncCode.includes('colorUpdates'), 'AiSyncView must support colorUpdates batch updates');
   assert.ok(aiSyncCode.includes('WardrobeRebuildModal'), 'AiSyncView must integrate WardrobeRebuildModal');
 
   // Step 3: 確認パネル UI 要件 & レビュー指摘対応
@@ -2980,19 +2925,9 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
   assert.ok(aiSyncCode.includes('自動切り抜きを適用'), 'Smart crop toggle must be present');
   assert.ok(aiSyncCode.includes('getColorForPalette'), 'Color chips must use getColorForPalette');
   assert.ok(
-    aiSyncCode.includes('colorUpdates: parseRes.batchColorUpdates'),
-    'AiSyncView must normalize batchColorUpdates payload before passing to importCustomData'
-  );
-  assert.ok(
     aiSyncCode.includes('元画像フォールバック'),
     'AiSyncView must explicitly label fallback to raw photo when normalization fails'
   );
-
-  // 2. useClosetStore.tsx の batch_color モードと名前保護連携（素配列対応含む）
-  const useStoreCode = fs.readFileSync(path.join(projectRoot, 'src/hooks/useClosetStore.tsx'), 'utf8');
-  assert.ok(useStoreCode.includes("'batch_color'"), 'useClosetStore must support batch_color mode');
-  assert.ok(useStoreCode.includes('applyBatchColorUpdates'), 'useClosetStore must call applyBatchColorUpdates');
-  assert.ok(useStoreCode.includes('isBatchCandidate'), 'useClosetStore must recognize raw array batch updates');
 
   // 3. TodayView.tsx の色・寸法表示
   const todayCode = fs.readFileSync(path.join(projectRoot, 'src/components/TodayView.tsx'), 'utf8');
@@ -4982,44 +4917,7 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
   const nonExistentAttempt = setShirtOuterwear(baseClosetData, 'S999', true);
   assert.equal(nonExistentAttempt, baseClosetData, 'Setting isOuterwear on non-existent item must return data unchanged');
 
-  // 2. applyBatchOuterwearUpdates: 一括更新（シャツのみ適用、パンツおよび存在しないIDは検証エラー）
-  const batchRes = applyBatchOuterwearUpdates(baseClosetData, {
-    outerwearUpdates: [
-      { id: 'S1', isOuterwear: true },
-      { id: 'S2', isOuterwear: false },
-    ],
-  });
-  assert.equal(batchRes.valid, true);
-  assert.equal(batchRes.updatedCount, 2, 'S1 and S2 must be counted as updated');
-
-  const resS1 = batchRes.data.items.find((it) => it.id === 'S1');
-  const resS2 = batchRes.data.items.find((it) => it.id === 'S2');
-  const resP1 = batchRes.data.items.find((it) => it.id === 'P1');
-  assert.equal(resS1.isOuterwear, true, 'S1 isOuterwear must be true');
-  assert.equal(Boolean(resS2.isOuterwear), false, 'S2 isOuterwear must be false');
-  assert.equal(resP1.isOuterwear, undefined, 'P1 must not have isOuterwear');
-  assert.equal(resS1.name, baseShirt1.name, 'Name must be preserved');
-  assert.deepEqual(resS1.officeRecommendIds, baseShirt1.officeRecommendIds, 'Compatibility must be preserved');
-
-  // パンツを含む場合は検証エラー
-  const pantsBatchRes = applyBatchOuterwearUpdates(baseClosetData, {
-    outerwearUpdates: [{ id: 'P1', isOuterwear: true }],
-  });
-  assert.equal(pantsBatchRes.valid, false);
-  assert.ok(pantsBatchRes.error.includes('パンツです'));
-
-  // 存在しないIDを含む場合は検証エラー
-  const nonExistentBatchRes = applyBatchOuterwearUpdates(baseClosetData, {
-    outerwearUpdates: [{ id: 'S999', isOuterwear: true }],
-  });
-  assert.equal(nonExistentBatchRes.valid, false);
-  assert.ok(nonExistentBatchRes.error.includes('存在しません'));
-
-  // スキーマ検証
-  const validSchema = validateClosetDataSchema(batchRes.data);
-  assert.equal(validSchema.valid, true, 'Batch outerwear updated data must pass schema validation');
-
-  // 3. validateClosetDataSchema & validateSingleClosetItem: パンツへの isOuterwear 拒否・除去
+  // 2. validateClosetDataSchema & validateSingleClosetItem: パンツへの isOuterwear 拒否・除去
   const invalidPantsData = {
     lastUpdated: '2026-11-04T00:00:00.000Z',
     items: [
@@ -5034,30 +4932,7 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
   assert.equal(singlePantsRes.valid, true);
   assert.equal(singlePantsRes.item?.isOuterwear, undefined, 'validateSingleClosetItem must strip isOuterwear from pants');
 
-  // 4. buildBatchOuterwearAssessmentPrompt: プロンプト生成（シャツのみ一覧化）
-  const outerwearPrompt = buildBatchOuterwearAssessmentPrompt(baseClosetData.items);
-  assert.ok(outerwearPrompt.includes('S1'), 'Prompt must include S1');
-  assert.ok(outerwearPrompt.includes('S2'), 'Prompt must include S2');
-  assert.ok(!outerwearPrompt.includes('P1'), 'Prompt must NOT include pants P1');
-  assert.ok(outerwearPrompt.includes('outerwearUpdates'), 'Prompt must mention outerwearUpdates schema');
-  assert.ok(outerwearPrompt.includes('isOuterwear'), 'Prompt must mention isOuterwear');
-  assert.ok(!outerwearPrompt.includes('写真一覧'), 'Prompt must NOT assume photo list');
-  assert.ok(outerwearPrompt.includes('アイテム名、色、季節袖丈、メモから'), 'Prompt must judge from name, color, season/sleeve, and notes');
-
-  // 5. parseSyncInputJson: batch_outerwear の自動判定
-  const parsedOuterwearJson = parseSyncInputJson(
-    JSON.stringify({
-      outerwearUpdates: [
-        { id: 'S1', isOuterwear: true },
-        { id: 'S2', isOuterwear: false },
-      ],
-    }),
-    baseClosetData.items
-  );
-  assert.equal(parsedOuterwearJson.kind, 'batch_outerwear');
-  assert.equal(parsedOuterwearJson.batchOuterwearUpdates?.length, 2);
-
-  // 6. GAS 10列化・後方互換性・アナリティクス検証
+  // 3. GAS 10列化・後方互換性・アナリティクス検証
   const { context } = createGasEnvironment('test-token-outerwear');
   vm.runInContext('setupSpreadsheet()', context);
 
@@ -5222,7 +5097,7 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
   assert.equal(rebuildApplyRes.valid, true);
   assert.equal(rebuildApplyRes.data.items[0].isOuterwear, true, 'Applied item must have isOuterwear: true');
 
-  console.log('  ✅ Shirt outerwear classification, batch updates, GAS 10-column history & rebuild integration verified');
+  console.log('  ✅ Shirt outerwear classification, GAS 10-column history & rebuild integration verified');
 }
 
 // -------------------------------------------------------------

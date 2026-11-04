@@ -1,5 +1,5 @@
 import React from 'react';
-import { X, Trash2, Calendar, Play } from 'lucide-react';
+import { X, Trash2, Calendar } from 'lucide-react';
 import { useClosetStore } from '../hooks/useClosetStore';
 import { ItemImage } from './ItemImage';
 
@@ -12,10 +12,8 @@ export const HistoryModal: React.FC<HistoryModalProps> = ({ isOpen, onClose }) =
   const {
     wearHistory,
     itemMap,
-    pants,
     removeWearRecord,
     clearAllWearHistory,
-    simulateYesterdayWear,
   } = useClosetStore();
 
   if (!isOpen) return null;
@@ -27,7 +25,7 @@ export const HistoryModal: React.FC<HistoryModalProps> = ({ isOpen, onClose }) =
         <div className="flex items-center justify-between pb-3 border-b border-slate-800">
           <div className="flex items-center gap-2">
             <Calendar className="w-5 h-5 text-blue-400" />
-            <h3 className="text-sm font-bold text-white">着用履歴＆冷却期間テスト</h3>
+            <h3 className="text-sm font-bold text-white">着用履歴</h3>
           </div>
           <button
             onClick={onClose}
@@ -35,29 +33,6 @@ export const HistoryModal: React.FC<HistoryModalProps> = ({ isOpen, onClose }) =
           >
             <X className="w-4 h-4" />
           </button>
-        </div>
-
-        {/* Quick Simulation for testing cooling period */}
-        <div className="p-3 bg-slate-800/80 rounded-2xl border border-slate-700/60 space-y-2">
-          <div className="text-xs font-bold text-amber-300 flex items-center gap-1.5">
-            <Play className="w-3.5 h-3.5 text-amber-400" />
-            <span>冷却期間クイックテスト（昨日着用シミュレート）</span>
-          </div>
-          <p className="text-[11px] text-slate-400">
-            パンツをタップすると「昨日着用」として履歴を1件即座に作成し、朝モードでの順位下げ動作を確認できます。
-          </p>
-          <div className="flex gap-1.5 overflow-x-auto pb-1 no-scrollbar">
-            {pants.slice(0, 6).map((p) => (
-              <button
-                key={p.id}
-                onClick={() => simulateYesterdayWear(p.id)}
-                className="py-1.5 px-2 bg-slate-700 hover:bg-amber-600/80 text-white rounded-lg text-[10px] font-bold flex-shrink-0 transition-colors"
-                title={`${p.name} を昨日着用に設定`}
-              >
-                {p.id} を昨日着用
-              </button>
-            ))}
-          </div>
         </div>
 
         {/* Wear History List */}

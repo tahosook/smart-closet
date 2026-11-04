@@ -11,10 +11,6 @@ import type {
   GarmentColor,
   GarmentMeasurements,
   GarmentCropBox,
-  BatchColorUpdatesPayload,
-  ColorUpdateItem,
-  BatchOuterwearUpdatesPayload,
-  OuterwearUpdateItem,
   BatchGarmentDraftItem,
   BatchGarmentsPayload,
   BatchGarmentItemResult,
@@ -1288,97 +1284,6 @@ export function setGarmentArchived(
 }
 
 /**
- * 既存アイテム間の相性配列やスコア、名称（name）を一切破壊せず、全着の color のみを安全に一括更新する純粋関数
- */
-export function applyBatchColorUpdates(
-  existingData: ClosetData,
-  payload: BatchColorUpdatesPayload | ColorUpdateItem[] | unknown
-): {
-  valid: boolean;
-  data?: ClosetData;
-  error?: string;
-  updatedCount?: number;
-} {
-  if (!payload || typeof payload !== 'object') {
-    return { valid: false, error: '一括色更新ペイロードがオブジェクトまたは配列ではありません。' };
-  }
-
-  // { colorUpdates: [...] } または 素配列 [...] の両方を受理
-  const rawList = Array.isArray(payload)
-    ? payload
-    : Array.isArray((payload as any).colorUpdates)
-    ? (payload as any).colorUpdates
-    : null;
-
-  if (!rawList) {
-    return { valid: false, error: 'ペイロードに "colorUpdates" 配列または更新アイテム配列が含まれていません。' };
-  }
-  if (rawList.length === 0) {
-    return { valid: false, error: '一括色更新の配列が空です。' };
-  }
-
-  const existingMap = new Map(existingData.items.map((it) => [it.id, it]));
-  const seenIds = new Set<string>();
-
-  for (let i = 0; i < rawList.length; i++) {
-    const update = rawList[i];
-    if (!update || typeof update !== 'object') {
-      return { valid: false, error: `colorUpdates[${i}] の形式が不正です。` };
-    }
-    const id = typeof update.id === 'string' ? update.id.trim().toUpperCase() : '';
-    if (!id) {
-      return { valid: false, error: `colorUpdates[${i}] の ID が未指定です。` };
-    }
-    if (!existingMap.has(id)) {
-      return { valid: false, error: `ID "${id}" は現在のワードローブに存在しません。` };
-    }
-    if (seenIds.has(id)) {
-      return { valid: false, error: `ID "${id}" の色更新が重複して指定されています。` };
-    }
-    seenIds.add(id);
-
-    const rawColor = update.color as unknown;
-    if (rawColor === 'ネイビー') {
-      return {
-        valid: false,
-        error: `ID "${id}" の色「ネイビー」はパレット上「濃紺」に統合されています。「濃紺」を指定してください。`,
-      };
-    }
-    if (!isValidGarmentColor(rawColor)) {
-      return {
-        valid: false,
-        error: `ID "${id}" の色 "${String(rawColor)}" は無効です。13色パレット（${GARMENT_COLOR_PALETTE.join(', ')}）から指定してください。`,
-      };
-    }
-  }
-
-  const updateMap = new Map<string, ColorUpdateItem>(
-    rawList.map((u: any) => [u.id.trim().toUpperCase(), u as ColorUpdateItem])
-  );
-  let updatedCount = 0;
-
-  const newItems = existingData.items.map((item) => {
-    const update = updateMap.get(item.id);
-    if (!update) return item;
-    updatedCount++;
-    return {
-      ...item,
-      color: update.color,
-    };
-  });
-
-  return {
-    valid: true,
-    data: {
-      ...existingData,
-      items: newItems,
-      updatedAt: Date.now(),
-    },
-    updatedCount,
-  };
-}
-
-/**
  * 指定されたシャツの「羽織り（isOuterwear: true）」「1枚もの（isOuterwear: undefined）」を切り替える純粋関数
  * 対象アイテム以外のプロパティや相性配列、他アイテムのデータは1ビットも変更せず不変性を保証する。
  */
@@ -1417,136 +1322,6 @@ export function setShirtOuterwear(
     items: updatedItems,
     updatedAt: updatedAt !== undefined ? updatedAt : Date.now(),
   };
-}
-
-/**
- * 既存アイテム間の相性配列やスコア、名称（name）を一切破壊せず、全シャツの isOuterwear のみを安全に一括更新する純粋関数
- */
-export function applyBatchOuterwearUpdates(
-  existingData: ClosetData,
-  payload: BatchOuterwearUpdatesPayload | OuterwearUpdateItem[] | unknown
-): {
-  valid: boolean;
-  data?: ClosetData;
-  error?: string;
-  updatedCount?: number;
-} {
-  if (!payload || typeof payload !== 'object') {
-    return { valid: false, error: '一括羽織り更新ペイロードがオブジェクトまたは配列ではありません。' };
-  }
-
-  const rawList = Array.isArray(payload)
-    ? payload
-    : Array.isArray((payload as any).outerwearUpdates)
-    ? (payload as any).outerwearUpdates
-    : null;
-
-  if (!rawList) {
-    return { valid: false, error: 'ペイロードに "outerwearUpdates" 配列または更新アイテム配列が含まれていません。' };
-  }
-  if (rawList.length === 0) {
-    return { valid: false, error: '一括羽織り更新の配列が空です。' };
-  }
-
-  const existingMap = new Map(existingData.items.map((it) => [it.id, it]));
-  const seenIds = new Set<string>();
-
-  for (let i = 0; i < rawList.length; i++) {
-    const update = rawList[i];
-    if (!update || typeof update !== 'object') {
-      return { valid: false, error: `outerwearUpdates[${i}] の形式が不正です。` };
-    }
-    const id = typeof update.id === 'string' ? update.id.trim().toUpperCase() : '';
-    if (!id) {
-      return { valid: false, error: `outerwearUpdates[${i}] の ID が未指定です。` };
-    }
-    const targetItem = existingMap.get(id);
-    if (!targetItem) {
-      return { valid: false, error: `ID "${id}" は現在のワードローブに存在しません。` };
-    }
-    if (targetItem.category !== 'shirt') {
-      return { valid: false, error: `ID "${id}" はパンツです。羽織り分類はシャツのみに設定できます。` };
-    }
-    if (seenIds.has(id)) {
-      return { valid: false, error: `ID "${id}" の羽織り分類更新が重複して指定されています。` };
-    }
-    seenIds.add(id);
-
-    if (typeof update.isOuterwear !== 'boolean') {
-      return { valid: false, error: `ID "${id}" の isOuterwear は真偽値である必要があります。` };
-    }
-  }
-
-  const updateMap = new Map<string, OuterwearUpdateItem>(
-    rawList.map((u: any) => [u.id.trim().toUpperCase(), u as OuterwearUpdateItem])
-  );
-  let updatedCount = 0;
-
-  const newItems = existingData.items.map((item) => {
-    const update = updateMap.get(item.id);
-    if (!update) return item;
-    updatedCount++;
-    if (update.isOuterwear) {
-      return { ...item, isOuterwear: true };
-    } else {
-      const { isOuterwear: _isOuterwear, ...rest } = item;
-      return rest;
-    }
-  });
-
-  return {
-    valid: true,
-    data: {
-      ...existingData,
-      items: newItems,
-      updatedAt: Date.now(),
-    },
-    updatedCount,
-  };
-}
-
-/**
- * 既存の全シャツ一覧を埋め込み、Gemini 相談で羽織りか1枚ものかを一括判定させるプロンプトを生成する純粋関数
- */
-export function buildBatchOuterwearAssessmentPrompt(items: ClosetItem[]): string {
-  const shirts = items.filter((it) => it.category === 'shirt');
-
-  const shirtsList = shirts
-    .map((s) => {
-      const currentCategory = s.isOuterwear ? '羽織り' : '1枚もの';
-      const status = s.archived ? '（保管中）' : '';
-      return `- [${s.id}] ${s.name} ${status}(現在区分: ${currentCategory}, 色: ${s.color || '未設定'}, 季節袖丈: ${s.seasonSleeve || '通年'}, メモ: ${s.notes || 'なし'})`;
-    })
-    .join('\n');
-
-  return `あなたは40代男性専属のプロスタイリストAIです。
-以下は私のクローゼットに登録されているすべてのシャツ・トップス（全${shirts.length}着）の一覧です。
-アイテム名、色、季節袖丈、メモから、各アイテムが「羽織り（アウター・中間着）」か「1枚もの（インナー・トップス）」かを判定してください。
-
-### 分類基準
-1. **羽織り（isOuterwear: true）**:
-   - カーディガン（前開き・ボタン留め）
-   - ジップアップ、ジップパーカー、フルジップ/ハーフジップ
-   - ニットジャケット、シャツジャケット、ブルゾン
-   - インナーの上に重ねて着る前提のアイテム
-2. **1枚もの（isOuterwear: false）**:
-   - 通常の長袖・半袖シャツ（ドレスシャツ、カジュアルシャツ、オックスフォード等）
-   - Tシャツ、ロンT、ポロシャツ
-   - プルオーバーニット、スウェット（前開きでないかぶりもの）
-
-### 対象シャツ一覧（全${shirts.length}着）
-${shirtsList}
-
-### 出力フォーマット指示
-必ず以下のJSON形式のみを出力してください。Markdownの説明文や前置きは不要です。全${shirts.length}着のIDを漏らさず含めてください。
-\`\`\`json
-{
-  "outerwearUpdates": [
-    { "id": "S1", "isOuterwear": false },
-    { "id": "S10", "isOuterwear": true }
-  ]
-}
-\`\`\``;
 }
 
 /**
@@ -1826,18 +1601,16 @@ export function validateAndMergeBatchGarments(
 }
 
 export interface ParsedSyncInput {
-  kind: 'single' | 'batch_color' | 'batch_outerwear' | 'batch_garments' | 'invalid';
+  kind: 'single' | 'batch_garments' | 'invalid';
   item?: Partial<ClosetItem>;
   cropBox?: GarmentCropBox | null;
-  batchColorUpdates?: ColorUpdateItem[];
-  batchOuterwearUpdates?: OuterwearUpdateItem[];
   batchGarments?: BatchGarmentDraftItem[];
   error?: string;
   existingIdConflict?: string;
 }
 
 /**
- * 貼り付けられた JSON テキストから単一アイテム、一括色更新、またはまとめ撮り一括服オブジェクトを安全に解析するヘルパー
+ * 貼り付けられた JSON テキストから単一アイテム、またはまとめ撮り一括服オブジェクトを安全に解析するヘルパー
  * - まとめ撮り配列（Array.isArray）判定では要素に id が無いことを必須とする（既存アイテム配列の誤登録を防止）
  * - 要素に既存アイテムと重複する id が含まれる場合は警告して登録に進ませない
  */
@@ -1860,57 +1633,7 @@ export function parseSyncInputJson(
   try {
     const parsed = JSON.parse(clean);
 
-    // 1. 一括色更新形式: { "colorUpdates": [...] } または 配列
-    if (parsed && typeof parsed === 'object') {
-      const candidates = Array.isArray((parsed as any).colorUpdates)
-        ? (parsed as any).colorUpdates
-        : Array.isArray(parsed) &&
-          parsed.length > 0 &&
-          typeof (parsed[0] as any)?.id === 'string' &&
-          (parsed[0] as any)?.color !== undefined &&
-          (parsed[0] as any)?.category === undefined
-        ? parsed
-        : null;
-
-      if (candidates) {
-        const batchList: ColorUpdateItem[] = [];
-        for (const c of candidates) {
-          if (c && typeof c.id === 'string' && typeof c.color === 'string') {
-            batchList.push({ id: c.id.trim().toUpperCase(), color: c.color.trim() as any });
-          }
-        }
-        if (batchList.length > 0) {
-          return { kind: 'batch_color', batchColorUpdates: batchList };
-        }
-      }
-    }
-
-    // 2. 一括羽織り分類更新形式: { "outerwearUpdates": [...] } または 配列
-    if (parsed && typeof parsed === 'object') {
-      const candidates = Array.isArray((parsed as any).outerwearUpdates)
-        ? (parsed as any).outerwearUpdates
-        : Array.isArray(parsed) &&
-          parsed.length > 0 &&
-          typeof (parsed[0] as any)?.id === 'string' &&
-          (parsed[0] as any)?.isOuterwear !== undefined &&
-          (parsed[0] as any)?.category === undefined
-        ? parsed
-        : null;
-
-      if (candidates) {
-        const batchList: OuterwearUpdateItem[] = [];
-        for (const c of candidates) {
-          if (c && typeof c.id === 'string' && typeof c.isOuterwear === 'boolean') {
-            batchList.push({ id: c.id.trim().toUpperCase(), isOuterwear: c.isOuterwear });
-          }
-        }
-        if (batchList.length > 0) {
-          return { kind: 'batch_outerwear', batchOuterwearUpdates: batchList };
-        }
-      }
-    }
-
-    // 2. まとめ撮り服形式: { "garments": [...] } または 服ドラフト配列
+    // 1. まとめ撮り服形式: { "garments": [...] } または 服ドラフト配列
     if (parsed && typeof parsed === 'object') {
       const hasGarmentsProp = Array.isArray((parsed as any).garments);
       const isRawArray = Array.isArray(parsed);
@@ -1968,7 +1691,7 @@ export function parseSyncInputJson(
       }
     }
 
-    // 3. 単一アイテム形式
+    // 2. 単一アイテム形式
     if (
       parsed &&
       typeof parsed === 'object' &&
@@ -1983,7 +1706,7 @@ export function parseSyncInputJson(
     return {
       kind: 'invalid',
       error:
-        '単一アイテム形式（id と category）、まとめ撮り形式（garments 配列）、一括色更新形式（colorUpdates）、または一括羽織り更新形式（outerwearUpdates）を満たしていません。',
+        '単一アイテム形式（id と category）またはまとめ撮り形式（garments 配列）を満たしていません。',
     };
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : '構文エラー';
