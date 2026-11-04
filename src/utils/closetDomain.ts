@@ -27,6 +27,7 @@ import type {
   RebuildFieldSelection,
   RebuildItemDiff,
   RebuildApplyResult,
+  RebuildValidationResult,
 } from '../types/closet';
 
 /**
@@ -2987,6 +2988,65 @@ export function applyRebuildDiffs(params: {
       updatedAt: Date.now(),
     },
     appliedItemsCount,
+  };
+}
+
+/**
+ * リビルド回答文字列（JSONまたはMarkdownコードフェンス付き）を検証し、
+ * 全件完全性チェック（全アイテムの不足・余分なし）と差分計算を行う純粋関数。
+ * テキスト貼り付け・ファイル取り込み共通の検証パイプラインとして機能する。
+ */
+export function validateAndBuildRebuildDiffs(
+  rawText: string,
+  currentItems: ClosetItem[]
+): RebuildValidationResult {
+  if (!rawText || !rawText.trim()) {
+    return {
+      valid: false,
+      error: '入力内容が空です。Geminiの回答JSONを指定してください。',
+    };
+  }
+
+  const parsed = parseRebuildInputJson(rawText, currentItems);
+  if (!parsed.valid || !parsed.items) {
+    return {
+      valid: false,
+      error: parsed.error || 'JSONの解析に失敗しました。',
+    };
+  }
+
+  // 全件の完全性チェック: Gemini 回答のID集合がリビルド対象のID集合と完全一致するか（不足・余分・重複なし）
+  const targetItemIds = currentItems.map((it) => it.id);
+  const targetIdSet = new Set(targetItemIds);
+  const parsedItemIds = parsed.items.map((it) => it.id);
+  const parsedIdSet = new Set(parsedItemIds);
+
+  const missingIds = targetItemIds.filter((id) => !parsedIdSet.has(id));
+  const extraIds = parsedItemIds.filter((id) => !targetIdSet.has(id));
+
+  if (missingIds.length > 0 || extraIds.length > 0) {
+    const errorParts: string[] = [];
+    if (missingIds.length > 0) {
+      errorParts.push(`不足しているアイテムID (${missingIds.length}着): ${missingIds.join(', ')}`);
+    }
+    if (extraIds.length > 0) {
+      errorParts.push(`対象外の余分なアイテムID (${extraIds.length}着): ${extraIds.join(', ')}`);
+    }
+    return {
+      valid: false,
+      error: `リビルド対象（全${targetItemIds.length}着）と回答内容が完全一致しません。\n${errorParts.join('\n')}`,
+    };
+  }
+
+  const diffs = computeRebuildDiffs({
+    currentItems,
+    rebuildItems: parsed.items,
+  });
+
+  return {
+    valid: true,
+    diffs,
+    items: parsed.items,
   };
 }
 

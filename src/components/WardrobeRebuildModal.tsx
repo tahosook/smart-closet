@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   X,
   Copy,
@@ -12,6 +12,8 @@ import {
   Download,
   RefreshCw,
   Info,
+  Upload,
+  FileText,
 } from 'lucide-react';
 import { useClosetStore } from '../hooks/useClosetStore';
 import { ItemImage } from './ItemImage';
@@ -26,8 +28,7 @@ import {
   detectDuplicateGarmentGroups,
   previewDuplicateMerge,
   buildWardrobeRebuildPrompt,
-  parseRebuildInputJson,
-  computeRebuildDiffs,
+  validateAndBuildRebuildDiffs,
   copyTextToClipboard,
 } from '../utils/closetDomain';
 import type {
@@ -75,7 +76,9 @@ export const WardrobeRebuildModal: React.FC<WardrobeRebuildModalProps> = ({
   const [isGeneratingSheets, setIsGeneratingSheets] = useState(false);
   const [copyStatus, setCopyStatus] = useState<'idle' | 'success' | 'error'>('idle');
   const [rebuildJsonInput, setRebuildJsonInput] = useState('');
+  const [selectedFileName, setSelectedFileName] = useState<string | null>(null);
   const [parseError, setParseError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // ----------------------------------------------------
   // Step 3: 差分比較＆選択適用ステート
@@ -93,6 +96,7 @@ export const WardrobeRebuildModal: React.FC<WardrobeRebuildModalProps> = ({
       setMergeSuccessMessage(null);
       setRebuildSuccessMessage(null);
       setParseError(null);
+      setSelectedFileName(null);
       return;
     }
 
@@ -249,49 +253,68 @@ export const WardrobeRebuildModal: React.FC<WardrobeRebuildModalProps> = ({
     }
   };
 
-  const handleParseRebuildJson = () => {
+  const processRebuildJsonText = (rawText: string) => {
     setParseError(null);
-    const parsed = parseRebuildInputJson(rebuildJsonInput, closetData.items);
-    if (!parsed.valid || !parsed.items) {
-      setParseError(parsed.error || 'JSONの解析に失敗しました。');
-      return;
+    const result = validateAndBuildRebuildDiffs(rawText, closetData.items);
+    if (!result.valid || !result.diffs) {
+      setParseError(result.error || 'JSONの解析に失敗しました。');
+      return false;
     }
 
-    // 全件の完全性チェック: Gemini 回答のID集合がリビルド対象のID集合と完全一致するか（不足・余分・重複なし）
-    const targetItemIds = closetData.items.map((it) => it.id);
-    const targetIdSet = new Set(targetItemIds);
-    const parsedItemIds = parsed.items.map((it) => it.id);
-    const parsedIdSet = new Set(parsedItemIds);
-
-    const missingIds = targetItemIds.filter((id) => !parsedIdSet.has(id));
-    const extraIds = parsedItemIds.filter((id) => !targetIdSet.has(id));
-
-    if (missingIds.length > 0 || extraIds.length > 0) {
-      const errorParts: string[] = [];
-      if (missingIds.length > 0) {
-        errorParts.push(`不足しているアイテムID (${missingIds.length}着): ${missingIds.join(', ')}`);
-      }
-      if (extraIds.length > 0) {
-        errorParts.push(`対象外の余分なアイテムID (${extraIds.length}着): ${extraIds.join(', ')}`);
-      }
-      setParseError(
-        `リビルド対象（全${targetItemIds.length}着）と回答内容が完全一致しません。\n${errorParts.join('\n')}`
-      );
-      return;
-    }
-
-    const diffs = computeRebuildDiffs({
-      currentItems: closetData.items,
-      rebuildItems: parsed.items,
-    });
-    setRebuildDiffs(diffs);
+    setRebuildDiffs(result.diffs);
 
     const initialFieldSelections: Record<string, RebuildFieldSelection> = {};
-    for (const d of diffs) {
+    for (const d of result.diffs) {
       initialFieldSelections[d.id] = { ...d.defaultSelection };
     }
     setFieldSelections(initialFieldSelections);
     setActiveStep(3);
+    return true;
+  };
+
+  const handleParseRebuildJson = () => {
+    processRebuildJsonText(rebuildJsonInput);
+  };
+
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setSelectedFileName(file.name);
+    setParseError(null);
+
+    try {
+      let text = '';
+      if (typeof file.text === 'function') {
+        text = await file.text();
+      } else {
+        text = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result as string);
+          reader.onerror = () => reject(new Error('ファイルの読み込みに失敗しました'));
+          reader.readAsText(file, 'UTF-8');
+        });
+      }
+
+      if (!text || !text.trim()) {
+        setParseError(
+          '選択されたファイルが空です。Geminiの回答JSONが含まれるファイル（.json / .txt）を選択してください。'
+        );
+        return;
+      }
+
+      setRebuildJsonInput(text);
+      processRebuildJsonText(text);
+    } catch (err) {
+      console.error('File read error:', err);
+      setParseError(
+        'ファイルの読み取りに失敗しました。別のファイルを選択するか、テキストを貼り付けてください。'
+      );
+    } finally {
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+    }
   };
 
   // ----------------------------------------------------
@@ -791,31 +814,77 @@ export const WardrobeRebuildModal: React.FC<WardrobeRebuildModalProps> = ({
                 </div>
               </div>
 
-              {/* 回答JSON貼り付けエリア */}
-              <div className="border border-slate-200 rounded-xl p-4 bg-white space-y-3">
-                <h3 className="font-bold text-sm text-slate-900">
-                  3. Geminiの回答JSONを貼り付け
-                </h3>
-                <p className="text-xs text-slate-500">
-                  Geminiから返信された JSON（```json ... ``` を含む全文でも可）をそのまま貼り付けてください。
-                </p>
+              {/* 回答JSON取り込みエリア */}
+              <div className="border border-slate-200 rounded-xl p-4 bg-white space-y-4">
+                <div>
+                  <h3 className="font-bold text-sm text-slate-900">
+                    3. Geminiの回答JSONを取り込み
+                  </h3>
+                  <p className="text-xs text-slate-500 mt-1">
+                    Geminiから返信された JSON（```json ... ``` を含む全文でも可）をファイルまたは貼り付けで取り込んでください。全着分の長文JSONはファイル選択が確実です。
+                  </p>
+                </div>
 
-                <textarea
-                  value={rebuildJsonInput}
-                  onChange={(e) => setRebuildJsonInput(e.target.value)}
-                  placeholder={`{\n  "rebuildItems": [\n    { "id": "S1", "name": "...", "color": "濃紺", ... }\n  ]\n}`}
-                  rows={8}
-                  className="w-full text-xs font-mono p-3 rounded-lg border border-slate-300 text-slate-800 outline-none focus:ring-2 focus:ring-indigo-500"
-                />
+                {/* ファイル選択入り口 */}
+                <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5 space-y-2">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                    <div>
+                      <div className="font-bold text-xs text-slate-800 flex items-center gap-1.5">
+                        <Upload className="w-3.5 h-3.5 text-indigo-600" />
+                        ファイルから取り込む（長文推奨）
+                      </div>
+                      <div className="text-[11px] text-slate-500">
+                        .json または .txt ファイルを選択すると、自動で検証して差分プレビューへ進みます
+                      </div>
+                    </div>
+                    <div>
+                      <input
+                        ref={fileInputRef}
+                        type="file"
+                        accept=".json,.txt,application/json,text/plain"
+                        onChange={handleFileSelect}
+                        className="hidden"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => fileInputRef.current?.click()}
+                        className="w-full sm:w-auto px-4 py-2 bg-white border border-indigo-200 hover:border-indigo-400 text-indigo-700 rounded-lg text-xs font-bold transition-colors shadow-sm flex items-center justify-center gap-1.5 min-h-[44px]"
+                      >
+                        <FileText className="w-4 h-4" />
+                        ファイルを選択
+                      </button>
+                    </div>
+                  </div>
+                  {selectedFileName && (
+                    <div className="text-[11px] text-indigo-600 font-medium flex items-center gap-1 pt-0.5">
+                      <Check className="w-3.5 h-3.5" />
+                      読み込み済み: {selectedFileName}
+                    </div>
+                  )}
+                </div>
+
+                {/* テキスト貼り付けエリア */}
+                <div className="space-y-2">
+                  <div className="font-bold text-xs text-slate-700">
+                    またはテキストを直接貼り付け
+                  </div>
+                  <textarea
+                    value={rebuildJsonInput}
+                    onChange={(e) => setRebuildJsonInput(e.target.value)}
+                    placeholder={`{\n  "rebuildItems": [\n    { "id": "S1", "name": "...", "color": "濃紺", ... }\n  ]\n}`}
+                    rows={6}
+                    className="w-full text-xs font-mono p-3 rounded-lg border border-slate-300 text-slate-800 outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                </div>
 
                 {parseError && (
-                  <div className="p-3 bg-rose-50 border border-rose-200 rounded-lg text-xs text-rose-800 flex items-center gap-2">
-                    <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
-                    {parseError}
+                  <div className="p-3 bg-rose-50 border border-rose-200 rounded-lg text-xs text-rose-800 flex items-start gap-2 whitespace-pre-line">
+                    <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                    <div>{parseError}</div>
                   </div>
                 )}
 
-                <div className="flex justify-end pt-2">
+                <div className="flex justify-end pt-1">
                   <button
                     onClick={handleParseRebuildJson}
                     disabled={!rebuildJsonInput.trim()}
