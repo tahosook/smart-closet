@@ -3332,7 +3332,7 @@ export const GALLERY_CATEGORY_FILTER_OPTIONS: readonly FilterOption<GalleryCateg
 
 /**
  * 相性マトリクス表示フィルター
- * 分類軸（すべて / 1枚もの / 羽織り）と分析・季節条件軸（要注意 / 出社 / 長袖 / 半袖）に分離
+ * 分類軸（すべて / 1枚もの / 羽織り）と分析・季節条件軸（要注意 / 出社 / 長袖 / 七分袖・半袖）に分離
  */
 export type MatrixCategoryFilter = 'all' | 'single_shirt' | 'outerwear';
 
@@ -3348,7 +3348,7 @@ export const MATRIX_ANALYSIS_FILTER_OPTIONS: readonly FilterOption<MatrixAnalysi
   { id: 'warning', label: '⚠️ 要注意のみ' },
   { id: 'office', label: '🏢 出社対応のみ' },
   { id: 'long', label: '長袖のみ' },
-  { id: 'short', label: '半袖のみ' },
+  { id: 'short', label: '☀️ 七分袖・半袖のみ' },
 ] as const;
 
 export type MatrixFilter = MatrixCategoryFilter | MatrixAnalysisFilter;

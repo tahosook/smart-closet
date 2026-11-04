@@ -5414,7 +5414,7 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
       { id: 'warning', label: '⚠️ 要注意のみ' },
       { id: 'office', label: '🏢 出社対応のみ' },
       { id: 'long', label: '長袖のみ' },
-      { id: 'short', label: '半袖のみ' },
+      { id: 'short', label: '☀️ 七分袖・半袖のみ' },
     ],
     'MATRIX_ANALYSIS_FILTER_OPTIONS must match analysis/condition terminology'
   );
