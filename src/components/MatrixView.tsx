@@ -15,13 +15,15 @@ import { useClosetStore } from '../hooks/useClosetStore';
 import { ItemImage } from './ItemImage';
 import { analyzeWardrobeStats } from '../utils/closetDomain';
 
-type MatrixFilter = 'all' | 'warning' | 'office' | 'long' | 'short';
+type MatrixFilter = 'all' | 'outerwear' | 'single_shirt' | 'warning' | 'office' | 'long' | 'short';
 
 const FILTER_OPTIONS: { id: MatrixFilter; label: string }[] = [
   { id: 'all', label: 'すべて' },
+  { id: 'outerwear', label: '🧥 羽織りのみ' },
+  { id: 'single_shirt', label: '👔 1枚もののみ' },
   { id: 'warning', label: '⚠️ 要注意アイテムのみ' },
   { id: 'office', label: '🏢 出社対応のみ' },
-  { id: 'long', label: '🧥 長袖のみ' },
+  { id: 'long', label: '長袖のみ' },
   { id: 'short', label: '☀️ 七分袖・半袖のみ' },
 ];
 
@@ -118,6 +120,10 @@ export const MatrixView: React.FC = () => {
   // 統一フィルター適用後のシャツ・パンツリスト
   const filteredShirts = useMemo(() => {
     switch (activeFilter) {
+      case 'outerwear':
+        return shirts.filter((s) => Boolean(s.isOuterwear));
+      case 'single_shirt':
+        return shirts.filter((s) => !s.isOuterwear);
       case 'warning':
         return shirts.filter((s) => {
           const isLowOffice = lowOfficeShirts.some((item) => item.item.id === s.id);
@@ -144,6 +150,9 @@ export const MatrixView: React.FC = () => {
 
   const filteredPants = useMemo(() => {
     switch (activeFilter) {
+      case 'outerwear':
+      case 'single_shirt':
+        return pants;
       case 'warning':
         return pants.filter((p) => {
           const isLowOffice = lowOfficePants.some((item) => item.item.id === p.id);
@@ -385,7 +394,14 @@ export const MatrixView: React.FC = () => {
               <ItemImage item={selectedFocusItem} showBadge={false} className="w-full h-full" />
             </div>
             <div className="min-w-0 flex-1">
-              <div className="text-xs font-bold text-white truncate">{selectedFocusItem.name}</div>
+              <div className="text-xs font-bold text-white truncate flex items-center gap-1.5">
+                <span>{selectedFocusItem.name}</span>
+                {selectedFocusItem.isOuterwear && (
+                  <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-indigo-950 text-indigo-300 border border-indigo-700/60">
+                    🧥 羽織り
+                  </span>
+                )}
+              </div>
               <div className="text-[10px] text-slate-400 mt-0.5">
                 {selectedFocusItem.category === 'shirt' ? 'シャツ' : 'パンツ'} • {selectedFocusItem.seasonSleeve || '通年'} • ドレス度 {selectedFocusItem.dressScore.toFixed(1)}
               </div>
@@ -566,6 +582,11 @@ export const MatrixView: React.FC = () => {
                                 <span className="text-[9px] text-slate-300 truncate block max-w-[60px]">
                                   {shirt.name.slice(0, 5)}
                                 </span>
+                                {shirt.isOuterwear && (
+                                  <span className="text-[8px] font-bold text-indigo-300 bg-indigo-950/80 px-1 py-0.2 rounded border border-indigo-700/50 block w-fit mt-0.5">
+                                    🧥
+                                  </span>
+                                )}
                               </div>
                             </button>
                           </th>

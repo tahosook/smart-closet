@@ -37,12 +37,16 @@ Add the new item to `items` adhering to the schema:
 - `seasonSleeve`: Chip preset selection (e.g. `"通年"`, `"長袖・通年"`, `"春夏・半袖"`, `"春夏秋・七分袖"`).
 - `dressScore`: 1.0 - 5.0 (4.5 for formal slacks, 2.0 for sweatpants).
 - `comfortScore`: 1.0 - 5.0.
+- `isOuterwear`: Optional boolean for shirts only. `true` for outerwear (cardigans, zip-ups, zip hoodies, knit jackets, shirt jackets worn over an inner layer); `false` or omitted (`undefined`) for single-layer tops (T-shirts, regular shirts, pullover sweatshirts/knits). Never assign to pants (rejected by schema validator).
 - `measurements`: Key dimensions estimated from A4 reference (shirts: `bodyLength`, `chestWidth`, `shoulderWidth`, `sleeveLength`; pants: `waist`, `inseam`, `totalLength`, `hemWidth` in cm, 10–200cm, 0.5cm steps) or omitted if not visible.
 - `officeRecommendIds`: Array of compatible shirt/pants IDs for office work.
 - `remoteRecommendIds`: Array of compatible shirt/pants IDs for remote/casual.
 - `ngIds`: Array of conflicting IDs based on the 40s male fashion principles.
 - `ngReason`: Clear explanation of why pairs in `ngIds` look bad (e.g. "同系色濃紺による作業着見え").
 - `notes`: Short role summary (e.g. "【万能出社エース】会食・出社").
+
+**Batch Outerwear Updates:**
+To classify existing shirts in bulk into outerwear vs single-layer tops without touching names, colors, or compatibility matrices, copy the prompt from Tab 2 "💬 Gemini スタイリスト相談" -> "🧥 既存シャツの羽織り分類・一括相談", paste to Gemini, and import the resulting `{ "outerwearUpdates": [{ "id": "S1", "isOuterwear": false }, { "id": "S10", "isOuterwear": true }] }` into Step 3. Individual items can also be fine-tuned via the toggle buttons in Step 3 preview or ManageView.
 
 **Batch Color Updates:**
 To update colors across multiple existing garments without touching names or compatibility matrices, copy the batch consultation prompt from Tab 2 backup accordion and import `{ "colorUpdates": [{ "id": "...", "color": "..." }] }`. Unconfirmed color garments can also be confirmed in bulk using this tool.

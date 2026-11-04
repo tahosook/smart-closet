@@ -68,6 +68,9 @@ const {
   computeRebuildDiffs,
   validateAndBuildRebuildDiffs,
   applyRebuildDiffs,
+  setShirtOuterwear,
+  applyBatchOuterwearUpdates,
+  buildBatchOuterwearAssessmentPrompt,
 } = closetDomain;
 
 const imageProcessorTsPath = path.join(projectRoot, 'src/utils/imageProcessor.ts');
@@ -198,6 +201,22 @@ class MockSheet {
       }
     }
     return last;
+  }
+
+  getLastColumn() {
+    let maxCol = 0;
+    for (let r = 0; r < this.grid.length; r++) {
+      const row = this.grid[r];
+      if (row) {
+        for (let c = row.length - 1; c >= 0; c--) {
+          if (row[c] !== '' && row[c] !== undefined && row[c] !== null) {
+            if (c + 1 > maxCol) maxCol = c + 1;
+            break;
+          }
+        }
+      }
+    }
+    return maxCol;
   }
 
   getRange(row, col, numRows = 1, numCols = 1) {
@@ -4879,6 +4898,322 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
   assert.equal(s1FullDiff.after.name, '新濃インディゴ無地長袖シャツ');
 
   console.log('  ✅ Wardrobe rebuild pure domain logic (protected lock & selective apply) verified');
+}
+
+// -------------------------------------------------------------
+// Test Case 35: シャツ「羽織り（isOuterwear）」分類、一括更新、GAS 10列履歴、後方互換性検証
+// -------------------------------------------------------------
+{
+  const baseShirt1 = {
+    id: 'S1',
+    category: 'shirt',
+    name: 'インディゴ無地長袖シャツ',
+    color: '濃紺',
+    imageUrl: '/images/S1.jpg',
+    seasonSleeve: '長袖・通年',
+    dressScore: 3.5,
+    comfortScore: 3.5,
+    officeRecommendIds: ['P1'],
+    remoteRecommendIds: ['P1'],
+    ngIds: [],
+    ngReason: 'なし',
+    notes: 'テストシャツ1',
+  };
+
+  const baseShirt2 = {
+    id: 'S2',
+    category: 'shirt',
+    name: 'ウール混ジップアップカーディガン',
+    color: 'チャコール',
+    imageUrl: '/images/S2.jpg',
+    seasonSleeve: '秋冬・長袖',
+    dressScore: 4.0,
+    comfortScore: 4.5,
+    isOuterwear: true,
+    officeRecommendIds: ['P1'],
+    remoteRecommendIds: ['P1'],
+    ngIds: [],
+    ngReason: 'なし',
+    notes: 'テスト羽織りカーディガン',
+  };
+
+  const basePants1 = {
+    id: 'P1',
+    category: 'pants',
+    name: '黒テーパードスラックス',
+    color: '黒',
+    imageUrl: '/images/P1.jpg',
+    seasonSleeve: '通年',
+    dressScore: 4.5,
+    comfortScore: 3.5,
+    officeRecommendIds: ['S1', 'S2'],
+    remoteRecommendIds: ['S1', 'S2'],
+    ngIds: [],
+    ngReason: 'なし',
+    notes: 'テストスラックス',
+  };
+
+  const baseClosetData = {
+    lastUpdated: '2026-11-04T00:00:00.000Z',
+    items: [baseShirt1, baseShirt2, basePants1],
+  };
+
+  // 1. setShirtOuterwear: シャツのみ isOuterwear の設定が可能、パンツおよび存在しないIDは不変
+  const updatedData1 = setShirtOuterwear(baseClosetData, 'S1', true);
+  const s1Updated = updatedData1.items.find((it) => it.id === 'S1');
+  assert.equal(s1Updated.isOuterwear, true, 'S1 must be set to isOuterwear: true');
+
+  const updatedData2 = setShirtOuterwear(updatedData1, 'S1', false);
+  const s1Reverted = updatedData2.items.find((it) => it.id === 'S1');
+  assert.equal(Boolean(s1Reverted.isOuterwear), false, 'S1 must be reverted to isOuterwear: false/undefined');
+
+  // パンツに設定しようとした場合は不変（無視される）
+  const pantsAttempt = setShirtOuterwear(baseClosetData, 'P1', true);
+  assert.equal(pantsAttempt, baseClosetData, 'Setting isOuterwear on pants must return data unchanged');
+
+  // 存在しないアイテムは不変（無視される）
+  const nonExistentAttempt = setShirtOuterwear(baseClosetData, 'S999', true);
+  assert.equal(nonExistentAttempt, baseClosetData, 'Setting isOuterwear on non-existent item must return data unchanged');
+
+  // 2. applyBatchOuterwearUpdates: 一括更新（シャツのみ適用、パンツおよび存在しないIDは検証エラー）
+  const batchRes = applyBatchOuterwearUpdates(baseClosetData, {
+    outerwearUpdates: [
+      { id: 'S1', isOuterwear: true },
+      { id: 'S2', isOuterwear: false },
+    ],
+  });
+  assert.equal(batchRes.valid, true);
+  assert.equal(batchRes.updatedCount, 2, 'S1 and S2 must be counted as updated');
+
+  const resS1 = batchRes.data.items.find((it) => it.id === 'S1');
+  const resS2 = batchRes.data.items.find((it) => it.id === 'S2');
+  const resP1 = batchRes.data.items.find((it) => it.id === 'P1');
+  assert.equal(resS1.isOuterwear, true, 'S1 isOuterwear must be true');
+  assert.equal(Boolean(resS2.isOuterwear), false, 'S2 isOuterwear must be false');
+  assert.equal(resP1.isOuterwear, undefined, 'P1 must not have isOuterwear');
+  assert.equal(resS1.name, baseShirt1.name, 'Name must be preserved');
+  assert.deepEqual(resS1.officeRecommendIds, baseShirt1.officeRecommendIds, 'Compatibility must be preserved');
+
+  // パンツを含む場合は検証エラー
+  const pantsBatchRes = applyBatchOuterwearUpdates(baseClosetData, {
+    outerwearUpdates: [{ id: 'P1', isOuterwear: true }],
+  });
+  assert.equal(pantsBatchRes.valid, false);
+  assert.ok(pantsBatchRes.error.includes('パンツです'));
+
+  // 存在しないIDを含む場合は検証エラー
+  const nonExistentBatchRes = applyBatchOuterwearUpdates(baseClosetData, {
+    outerwearUpdates: [{ id: 'S999', isOuterwear: true }],
+  });
+  assert.equal(nonExistentBatchRes.valid, false);
+  assert.ok(nonExistentBatchRes.error.includes('存在しません'));
+
+  // スキーマ検証
+  const validSchema = validateClosetDataSchema(batchRes.data);
+  assert.equal(validSchema.valid, true, 'Batch outerwear updated data must pass schema validation');
+
+  // 3. validateClosetDataSchema & validateSingleClosetItem: パンツへの isOuterwear 拒否・除去
+  const invalidPantsData = {
+    lastUpdated: '2026-11-04T00:00:00.000Z',
+    items: [
+      { ...basePants1, isOuterwear: true },
+    ],
+  };
+  const invalidPantsRes = validateClosetDataSchema(invalidPantsData);
+  assert.equal(invalidPantsRes.valid, false, 'Pants with isOuterwear: true must be rejected by validateClosetDataSchema');
+
+  const singlePantsCandidate = { ...basePants1, isOuterwear: true };
+  const singlePantsRes = validateSingleClosetItem(singlePantsCandidate, baseClosetData);
+  assert.equal(singlePantsRes.valid, true);
+  assert.equal(singlePantsRes.item?.isOuterwear, undefined, 'validateSingleClosetItem must strip isOuterwear from pants');
+
+  // 4. buildBatchOuterwearAssessmentPrompt: プロンプト生成（シャツのみ一覧化）
+  const outerwearPrompt = buildBatchOuterwearAssessmentPrompt(baseClosetData.items);
+  assert.ok(outerwearPrompt.includes('S1'), 'Prompt must include S1');
+  assert.ok(outerwearPrompt.includes('S2'), 'Prompt must include S2');
+  assert.ok(!outerwearPrompt.includes('P1'), 'Prompt must NOT include pants P1');
+  assert.ok(outerwearPrompt.includes('outerwearUpdates'), 'Prompt must mention outerwearUpdates schema');
+  assert.ok(outerwearPrompt.includes('isOuterwear'), 'Prompt must mention isOuterwear');
+
+  // 5. parseSyncInputJson: batch_outerwear の自動判定
+  const parsedOuterwearJson = parseSyncInputJson(
+    JSON.stringify({
+      outerwearUpdates: [
+        { id: 'S1', isOuterwear: true },
+        { id: 'S2', isOuterwear: false },
+      ],
+    }),
+    baseClosetData.items
+  );
+  assert.equal(parsedOuterwearJson.kind, 'batch_outerwear');
+  assert.equal(parsedOuterwearJson.batchOuterwearUpdates?.length, 2);
+
+  // 6. GAS 10列化・後方互換性・アナリティクス検証
+  const { context } = createGasEnvironment('test-token-outerwear');
+  vm.runInContext('setupSpreadsheet()', context);
+
+  // 10列で着用履歴（羽織り付き）を書き込み
+  const wearWithOuterwear = [
+    {
+      id: 'w_test_1',
+      date: '2026-11-04',
+      scene: 'office',
+      shirtId: 'S1',
+      pantsId: 'P1',
+      timestamp: 1730678400000,
+      outerwearId: 'S2',
+    },
+    {
+      id: 'w_test_2',
+      date: '2026-11-03',
+      scene: 'remote',
+      shirtId: 'S1',
+      pantsId: 'P1',
+      timestamp: 1730592000000,
+      // 羽織りなし
+    },
+  ];
+
+  const pushRes = JSON.parse(
+    vm.runInContext(
+      `doPost({
+        postData: {
+          contents: JSON.stringify({
+            action: "push",
+            token: "test-token-outerwear",
+            wearHistory: ${JSON.stringify(wearWithOuterwear)},
+            itemNamesMap: { S1: "シャツ1", S2: "羽織り2", P1: "パンツ1" }
+          })
+        }
+      })`,
+      context
+    ).getContent()
+  );
+  assert.equal(pushRes.ok, true, 'doPost push with outerwear must succeed');
+
+  // doGet で読み取り（10列読み取りの検証）
+  const getRes = JSON.parse(
+    vm.runInContext('doGet({ parameter: { token: "test-token-outerwear" } })', context).getContent()
+  );
+  assert.equal(getRes.ok, true);
+  const rec1 = getRes.wearHistory.find((r) => r.id === 'w_test_1');
+  const rec2 = getRes.wearHistory.find((r) => r.id === 'w_test_2');
+  assert.equal(rec1.outerwearId, 'S2', 'Outerwear ID S2 must be returned');
+  assert.equal(rec2.outerwearId, undefined, 'Outerwear ID must be undefined when not worn');
+
+  // アナリティクスシートの着用回数集計（S1: 2回, P1: 2回, S2: 1回）
+  const analyticsSheet = context.SpreadsheetApp.getActiveSpreadsheet().getSheetByName('analytics');
+  assert.ok(analyticsSheet, 'analytics sheet must exist');
+  const analyticsValues = analyticsSheet.getRange(2, 1, analyticsSheet.getLastRow() - 1, 7).getValues();
+  const s2Row = analyticsValues.find((r) => r[0] === 'S2');
+  assert.ok(s2Row, 'S2 must be in analytics sheet');
+  assert.equal(Number(s2Row[3]), 1, 'S2 totalCount must be 1');
+
+  // 8列シートとの後方互換性テスト:
+  // wear_history を強制的に8列のレガシーシート状態（列9・10なし）にして readWearHistory をテスト
+  const legacySs = new MockSpreadsheet();
+  const legacySheet = legacySs.insertSheet('wear_history');
+  legacySheet.getRange(1, 1, 1, 8).setValues([
+    ['ID', '日付', 'シーン', 'シャツID', 'シャツ名', 'パンツID', 'パンツ名', 'タイムスタンプ'],
+  ]);
+  legacySheet.getRange(2, 1, 1, 8).setValues([
+    ['w_legacy_1', '2026-11-01', 'office', 'S1', 'シャツ1', 'P1', 'パンツ1', 1730419200000],
+  ]);
+
+  const legacyContext = vm.createContext({
+    SpreadsheetApp: { getActiveSpreadsheet: () => legacySs },
+    SHEET_NAMES: { WEAR_HISTORY: 'wear_history' },
+    formatDateString: (d) => String(d),
+  });
+  vm.runInContext(codeGsContent, legacyContext);
+  const legacyHistory = vm.runInContext('readWearHistory(SpreadsheetApp.getActiveSpreadsheet())', legacyContext);
+  assert.equal(legacyHistory.length, 1);
+  assert.equal(legacyHistory[0].id, 'w_legacy_1');
+  assert.equal(legacyHistory[0].shirtId, 'S1');
+  assert.equal(legacyHistory[0].pantsId, 'P1');
+  assert.equal(legacyHistory[0].outerwearId, undefined, 'Legacy 8-column record must parse outerwearId as undefined');
+
+  // 7. buildShoppingConsultationPrompt: 羽織り内訳と着用頻度カウントの検証
+  const consultPrompt = buildShoppingConsultationPrompt({
+    items: baseClosetData.items,
+    wifeNgPairs: [],
+    wearHistory: wearWithOuterwear,
+    userMemo: 'テスト相談',
+  });
+  assert.ok(consultPrompt.includes('1枚もの1着 / 羽織り1着'), 'Shopping prompt must include outerwear breakdown');
+  assert.ok(consultPrompt.includes('区分: 羽織り'), 'Shopping prompt must mark S2 as 羽織り');
+  assert.ok(consultPrompt.includes('区分: 1枚もの'), 'Shopping prompt must mark S1 as 1枚もの');
+
+  // 8. 重複統合（executeDuplicateMerge）における outerwearId の差し替え検証
+  const dupMergeData = {
+    lastUpdated: '2026-11-04T00:00:00.000Z',
+    items: [
+      baseShirt1,
+      baseShirt2,
+      { ...baseShirt2, id: 'S3', name: '重複カーディガン' },
+      basePants1,
+    ],
+  };
+  const wearWithDupOuterwear = [
+    {
+      id: 'w_dup_1',
+      date: '2026-11-04',
+      scene: 'office',
+      shirtId: 'S1',
+      pantsId: 'P1',
+      outerwearId: 'S3', // S3 は重複で S2 へ統合予定
+    },
+  ];
+  const mergeExecRes = executeDuplicateMerge({
+    closetData: dupMergeData,
+    wearHistory: wearWithDupOuterwear,
+    wifeNgPairs: [],
+    selections: [
+      {
+        groupId: 'dup_shirt_S2_S3',
+        category: 'shirt',
+        survivorId: 'S2',
+        removedIds: ['S3'],
+        included: true,
+      },
+    ],
+  });
+  assert.equal(mergeExecRes.ok, true);
+  assert.equal(mergeExecRes.wearHistory[0].outerwearId, 'S2', 'outerwearId S3 must be replaced with survivor S2');
+
+  // 9. 全件リビルド（computeRebuildDiffs & applyRebuildDiffs）における isOuterwear 差分と適用検証
+  const rebuildDiffs = computeRebuildDiffs({
+    currentItems: [baseShirt1],
+    rebuildItems: [
+      {
+        id: 'S1',
+        name: baseShirt1.name,
+        color: baseShirt1.color,
+        seasonSleeve: baseShirt1.seasonSleeve,
+        dressScore: baseShirt1.dressScore,
+        comfortScore: baseShirt1.comfortScore,
+        isOuterwear: true, // 1枚ものから羽織りへの変更差分
+        officeRecommendIds: baseShirt1.officeRecommendIds,
+        remoteRecommendIds: baseShirt1.remoteRecommendIds,
+        ngIds: baseShirt1.ngIds,
+        ngReason: baseShirt1.ngReason,
+        notes: baseShirt1.notes,
+      },
+    ],
+  });
+  assert.equal(rebuildDiffs.length, 1);
+  assert.ok(rebuildDiffs[0].changedFields.includes('isOuterwear'), 'Diff must detect isOuterwear change');
+  assert.equal(rebuildDiffs[0].defaultSelection.isOuterwear, true, 'isOuterwear should be selected by default');
+
+  const rebuildApplyRes = applyRebuildDiffs({
+    closetData: { lastUpdated: '2026-11-04T00:00:00.000Z', items: [baseShirt1] },
+    diffs: rebuildDiffs,
+    fieldSelections: { S1: { ...rebuildDiffs[0].defaultSelection, isOuterwear: true } },
+  });
+  assert.equal(rebuildApplyRes.valid, true);
+  assert.equal(rebuildApplyRes.data.items[0].isOuterwear, true, 'Applied item must have isOuterwear: true');
+
+  console.log('  ✅ Shirt outerwear classification, batch updates, GAS 10-column history & rebuild integration verified');
 }
 
 console.log('🎉 All GAS backend & sync logic tests passed successfully!');

@@ -54,15 +54,21 @@ export const TodayView: React.FC = () => {
     yesterdayWornPantsIds,
     getRecommendationsForShirt,
     recordWear,
+    updateTodayOuterwear,
     registerWifeNg,
     removeWifeNg,
   } = useClosetStore();
 
   const [scene, setScene] = useState<SceneMode>('office');
   const [sleeveCategory, setSleeveCategory] = useState<'short' | 'seven' | 'long'>('long');
+  const [shirtTypeFilter, setShirtTypeFilter] = useState<'all' | 'single' | 'outerwear'>('all');
   const [showHiddenShirts, setShowHiddenShirts] = useState(false);
   const [showOtherPants, setShowOtherPants] = useState(false);
   const [showNgAccordion, setShowNgAccordion] = useState(false);
+  const [isOuterwearAccordionOpen, setIsOuterwearAccordionOpen] = useState(false);
+  const [selectedOuterwearId, setSelectedOuterwearId] = useState<string | undefined>(
+    () => todayRecord?.outerwearId
+  );
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [zoomItemPair, setZoomItemPair] = useState<{ shirt: ClosetItem; pants: ClosetItem } | null>(
     null
@@ -211,10 +217,81 @@ export const TodayView: React.FC = () => {
     return { matchingShirts: matching, hiddenShirts: hidden };
   }, [shirts, sleeveCategory, itemMap]);
 
+  // 種別フィルター（すべて / 1枚もの / 羽織り）の適用
+  const filterShirtList = useCallback(
+    (list: ClosetItem[]) => {
+      if (shirtTypeFilter === 'outerwear') {
+        return list.filter((s) => Boolean(s.isOuterwear));
+      }
+      if (shirtTypeFilter === 'single') {
+        return list.filter((s) => !s.isOuterwear);
+      }
+      return list;
+    },
+    [shirtTypeFilter]
+  );
+
+  const displayedMatchingShirts = useMemo(
+    () => filterShirtList(matchingShirts),
+    [filterShirtList, matchingShirts]
+  );
+
+  const displayedHiddenShirts = useMemo(
+    () => filterShirtList(hiddenShirts),
+    [filterShirtList, hiddenShirts]
+  );
+
   const selectedShirt = useMemo(
     () => shirts.find((s) => s.id === selectedShirtId) || matchingShirts[0] || shirts[0],
     [selectedShirtId, matchingShirts, shirts]
   );
+
+  // todayRecord の変更に追従
+  useEffect(() => {
+    if (todayRecord?.outerwearId !== undefined) {
+      setSelectedOuterwearId(todayRecord.outerwearId);
+    }
+  }, [todayRecord?.outerwearId]);
+
+  // 利用可能な羽織り候補（現役シャツのうち isOuterwear: true かつ 選択中シャツ以外）
+  const availableOuterwears = useMemo(
+    () => shirts.filter((s) => Boolean(s.isOuterwear) && s.id !== selectedShirt.id),
+    [shirts, selectedShirt.id]
+  );
+
+  const selectedOuterwear = useMemo(
+    () => (selectedOuterwearId ? itemMap.get(selectedOuterwearId) : undefined),
+    [selectedOuterwearId, itemMap]
+  );
+
+  // 羽織りの選択・解除ハンドラ
+  const handleToggleOuterwear = (outerwearItem: ClosetItem) => {
+    const nextId = selectedOuterwearId === outerwearItem.id ? undefined : outerwearItem.id;
+    setSelectedOuterwearId(nextId);
+
+    if (todayRecord && todayRecord.shirtId === selectedShirt.id) {
+      updateTodayOuterwear(nextId);
+      if (nextId) {
+        showToast(`🧥 羽織り「${outerwearItem.name}」を追加しました`);
+      } else {
+        showToast('🧥 羽織りを解除しました');
+      }
+    } else {
+      if (nextId) {
+        showToast(`🧥 羽織り「${outerwearItem.name}」を選択しました（パンツ決定時に記録されます）`);
+      } else {
+        showToast('🧥 羽織りを解除しました');
+      }
+    }
+  };
+
+  const handleClearOuterwear = () => {
+    setSelectedOuterwearId(undefined);
+    if (todayRecord && todayRecord.shirtId === selectedShirt.id) {
+      updateTodayOuterwear(undefined);
+      showToast('🧥 羽織りを解除しました');
+    }
+  };
 
   // If selected shirt is in hidden shirts, auto-expand so user knows what's selected
   const isSelectedShirtHidden = useMemo(
@@ -250,8 +327,9 @@ export const TodayView: React.FC = () => {
   const remainingRecommendations = recommended.slice(3);
 
   const handleSelectWear = (pantsItem: ClosetItem) => {
-    recordWear(selectedShirt.id, pantsItem.id, scene);
-    showToast(`✅ 今日のコーデ「${selectedShirt.name} × ${pantsItem.name}」を決定しました！`);
+    recordWear(selectedShirt.id, pantsItem.id, scene, undefined, selectedOuterwearId);
+    const outerwearPart = selectedOuterwear ? ` ＋ 🧥 ${selectedOuterwear.name}` : '';
+    showToast(`✅ 今日のコーデ「${selectedShirt.name} × ${pantsItem.name}${outerwearPart}」を決定しました！`);
   };
 
   const handleRegisterWifeNg = (pantsItem: ClosetItem) => {
@@ -328,20 +406,37 @@ export const TodayView: React.FC = () => {
       {/* Today's Decision Status Banner if already chosen */}
       {todayRecord && itemMap.get(todayRecord.shirtId) && itemMap.get(todayRecord.pantsId) && (
         <div className="py-2 px-3 sm:p-3 bg-gradient-to-r from-emerald-950/80 to-slate-900 border border-emerald-600/70 rounded-xl sm:rounded-2xl flex items-center justify-between shadow-md">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 min-w-0">
             <CheckCircle2 className="w-4 h-4 sm:w-5 sm:h-5 text-emerald-400 flex-shrink-0" />
-            <div>
+            <div className="min-w-0">
               <div className="text-[10px] text-emerald-300 font-semibold uppercase tracking-wider">
                 本日の決定コーディネート
               </div>
-              <div className="text-[11px] sm:text-xs font-bold text-white mt-0.5">
+              <div className="text-[11px] sm:text-xs font-bold text-white mt-0.5 truncate">
                 {itemMap.get(todayRecord.shirtId)?.name} × {itemMap.get(todayRecord.pantsId)?.name}
+                {todayRecord.outerwearId && itemMap.get(todayRecord.outerwearId) && (
+                  <span className="text-amber-300 ml-1">
+                    ＋ 🧥 {itemMap.get(todayRecord.outerwearId)?.name}
+                  </span>
+                )}
               </div>
             </div>
           </div>
-          <span className="text-[10px] bg-emerald-900/60 text-emerald-300 px-2 py-0.5 rounded-md border border-emerald-700/50">
-            {todayRecord.scene === 'office' ? '出社' : 'リモート'}
-          </span>
+          <div className="flex items-center gap-1.5 flex-shrink-0">
+            {todayRecord.outerwearId && (
+              <button
+                type="button"
+                onClick={handleClearOuterwear}
+                className="min-h-[44px] px-2 py-1 text-[10px] bg-slate-800/80 hover:bg-slate-700 text-slate-300 rounded-lg border border-slate-600"
+                title="羽織りを外す"
+              >
+                羽織り解除
+              </button>
+            )}
+            <span className="text-[10px] bg-emerald-900/60 text-emerald-300 px-2 py-1 rounded-md border border-emerald-700/50">
+              {todayRecord.scene === 'office' ? '出社' : 'リモート'}
+            </span>
+          </div>
         </div>
       )}
 
@@ -353,13 +448,50 @@ export const TodayView: React.FC = () => {
             <span>今日のシャツを選ぶ（1タップ）</span>
           </h2>
           <span className="text-xs text-blue-400 font-medium">
-            気温に最適 {matchingShirts.length}着
+            気温に最適 {displayedMatchingShirts.length}着
           </span>
+        </div>
+
+        {/* Shirt Category Type Filter Pills */}
+        <div className="flex items-center gap-1.5 p-1 bg-slate-900/70 border border-slate-800 rounded-xl">
+          <button
+            type="button"
+            onClick={() => setShirtTypeFilter('all')}
+            className={`min-h-[44px] flex-1 py-1.5 px-2 rounded-lg text-xs font-bold transition-all ${
+              shirtTypeFilter === 'all'
+                ? 'bg-blue-600 text-white shadow-sm'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            すべて
+          </button>
+          <button
+            type="button"
+            onClick={() => setShirtTypeFilter('single')}
+            className={`min-h-[44px] flex-1 py-1.5 px-2 rounded-lg text-xs font-bold transition-all ${
+              shirtTypeFilter === 'single'
+                ? 'bg-blue-600 text-white shadow-sm'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            👔 1枚もの
+          </button>
+          <button
+            type="button"
+            onClick={() => setShirtTypeFilter('outerwear')}
+            className={`min-h-[44px] flex-1 py-1.5 px-2 rounded-lg text-xs font-bold transition-all ${
+              shirtTypeFilter === 'outerwear'
+                ? 'bg-blue-600 text-white shadow-sm'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            🧥 羽織り
+          </button>
         </div>
 
         {/* Matching Shirts (Primary View - Large 3-Column Grid) */}
         <div className="grid grid-cols-3 gap-2">
-          {matchingShirts.map((shirt) => {
+          {displayedMatchingShirts.map((shirt) => {
             const isSelected = shirt.id === selectedShirt.id;
             return (
               <button
@@ -384,6 +516,11 @@ export const TodayView: React.FC = () => {
                   <div className="text-[11px] font-semibold text-slate-100 line-clamp-1 leading-tight mt-0.5">
                     {shirt.name}
                   </div>
+                  {shirt.isOuterwear && (
+                    <span className="inline-block mt-0.5 px-1 py-0.2 rounded text-[8px] font-bold bg-indigo-950 text-indigo-300 border border-indigo-700/60">
+                      🧥 羽織り
+                    </span>
+                  )}
                 </div>
 
                 {isSelected && (
@@ -397,7 +534,7 @@ export const TodayView: React.FC = () => {
         </div>
 
         {/* Hidden Shirts Accordion Toggle (For shirts that don't match today's weather) */}
-        {hiddenShirts.length > 0 && (
+        {displayedHiddenShirts.length > 0 && (
           <div className="pt-1">
             <button
               onClick={() => setShowHiddenShirts(!showHiddenShirts)}
@@ -408,7 +545,7 @@ export const TodayView: React.FC = () => {
                 <span>
                   {showHiddenShirts || isSelectedShirtHidden
                     ? '気温外のシャツを折りたたむ'
-                    : `今日の気温外のシャツも見る（${hiddenShirts.length}着）`}
+                    : `今日の気温外のシャツも見る（${displayedHiddenShirts.length}着）`}
                 </span>
               </div>
               {showHiddenShirts || isSelectedShirtHidden ? (
@@ -424,7 +561,7 @@ export const TodayView: React.FC = () => {
                   ※ 気温目安に合っていませんが、タップすれば選択できます
                 </div>
                 <div className="grid grid-cols-3 gap-2">
-                  {hiddenShirts.map((shirt) => {
+                  {displayedHiddenShirts.map((shirt) => {
                     const isSelected = shirt.id === selectedShirt.id;
                     return (
                       <button
@@ -449,6 +586,11 @@ export const TodayView: React.FC = () => {
                           <div className="text-[11px] font-semibold text-slate-300 line-clamp-1 leading-tight mt-0.5">
                             {shirt.name}
                           </div>
+                          {shirt.isOuterwear && (
+                            <span className="inline-block mt-0.5 px-1 py-0.2 rounded text-[8px] font-bold bg-indigo-950 text-indigo-300 border border-indigo-700/60">
+                              🧥 羽織り
+                            </span>
+                          )}
                         </div>
 
                         {isSelected && (
@@ -510,6 +652,106 @@ export const TodayView: React.FC = () => {
             <span>シャツ変更</span>
           </button>
         </div>
+
+        {/* 4.5. Outerwear Manual Addition Selector (Optional, Max 1 item) */}
+        {availableOuterwears.length > 0 && (
+          <div className="p-2.5 bg-slate-800/60 border border-slate-700/60 rounded-xl space-y-2">
+            <button
+              type="button"
+              onClick={() => setIsOuterwearAccordionOpen(!isOuterwearAccordionOpen)}
+              className="w-full min-h-[44px] flex items-center justify-between text-left transition-colors"
+            >
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="text-base flex-shrink-0">🧥</span>
+                <div className="min-w-0">
+                  <div className="text-xs font-bold text-slate-200 flex items-center gap-1.5">
+                    <span>羽織りを1着追加する（任意・手動）</span>
+                    {selectedOuterwear ? (
+                      <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40 truncate">
+                        選択中: {selectedOuterwear.name}
+                      </span>
+                    ) : (
+                      <span className="text-[10px] text-slate-400 font-normal">（未選択）</span>
+                    )}
+                  </div>
+                  <div className="text-[10px] text-slate-400 truncate mt-0.5">
+                    カーディガン・ジップアップ・パーカー等から1着選べます（全{availableOuterwears.length}着）
+                  </div>
+                </div>
+              </div>
+              <div className="flex items-center gap-1 text-slate-400 pl-2">
+                {isOuterwearAccordionOpen ? (
+                  <ChevronUp className="w-4 h-4" />
+                ) : (
+                  <ChevronDown className="w-4 h-4" />
+                )}
+              </div>
+            </button>
+
+            {isOuterwearAccordionOpen && (
+              <div className="pt-2 border-t border-slate-700/50 space-y-2">
+                {selectedOuterwear && (
+                  <div className="flex items-center justify-between px-1">
+                    <span className="text-[11px] text-amber-300 font-semibold truncate">
+                      現在選択中: 🧥 {selectedOuterwear.name}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={handleClearOuterwear}
+                      className="min-h-[44px] px-3 py-1.5 text-xs text-rose-300 hover:text-white bg-rose-950/40 hover:bg-rose-900/60 border border-rose-800/60 rounded-lg transition-colors flex items-center gap-1 flex-shrink-0"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                      <span>羽織りを解除</span>
+                    </button>
+                  </div>
+                )}
+
+                <div className="grid grid-cols-3 gap-2">
+                  {availableOuterwears.map((outer) => {
+                    const isSelected = outer.id === selectedOuterwearId;
+                    return (
+                      <button
+                        type="button"
+                        key={outer.id}
+                        onClick={() => handleToggleOuterwear(outer)}
+                        className={`min-h-[44px] flex flex-col text-left p-1.5 rounded-xl border transition-all relative ${
+                          isSelected
+                            ? 'bg-amber-950/60 border-amber-500 ring-2 ring-amber-500/50 shadow-md'
+                            : 'bg-slate-900/80 border-slate-700/60 hover:border-slate-600'
+                        }`}
+                      >
+                        <div className="aspect-square w-full rounded-lg overflow-hidden bg-slate-950">
+                          <ItemImage item={outer} className="w-full h-full" imgClassName="object-contain" />
+                        </div>
+                        <div className="mt-1 px-0.5">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[10px] font-bold text-amber-400">{outer.id}</span>
+                            <span className="text-[9px] text-slate-400 truncate max-w-[50px]">
+                              {outer.seasonSleeve.split('・')[0]}
+                            </span>
+                          </div>
+                          <div className="text-[11px] font-semibold text-slate-100 line-clamp-1 leading-tight mt-0.5">
+                            {outer.name}
+                          </div>
+                          {outer.color && (
+                            <div className="text-[9px] text-slate-400 mt-0.5 truncate">
+                              🎨 {outer.color}
+                            </div>
+                          )}
+                        </div>
+                        {isSelected && (
+                          <div className="absolute top-1 right-1 bg-amber-500 text-slate-950 p-0.5 rounded-full shadow">
+                            <Check className="w-3 h-3 stroke-[3]" />
+                          </div>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Top Recommendations (1st to 3rd candidates) with ENLARGED photos */}
         {topRecommendations.length === 0 ? (

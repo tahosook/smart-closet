@@ -30,6 +30,8 @@ import {
   validateSingleClosetItem,
   mergeSingleItemIntoClosetData,
   applyBatchColorUpdates,
+  setShirtOuterwear,
+  applyBatchOuterwearUpdates,
   validateAndMergeBatchGarments,
   mergeClosetDataWithWifeNg,
   checkIsNgPair,
@@ -95,17 +97,19 @@ export interface ClosetStoreContextType {
     otherOk: RecommendationResult[];
     ngList: { pants: ClosetItem; reason: string; isWifeNg: boolean }[];
   };
-  recordWear: (shirtId: string, pantsId: string, scene: SceneMode, dateStr?: string) => void;
+  recordWear: (shirtId: string, pantsId: string, scene: SceneMode, dateStr?: string, outerwearId?: string) => void;
+  updateTodayOuterwear: (outerwearId: string | undefined) => void;
   simulateYesterdayWear: (pantsId: string) => void;
   removeWearRecord: (id: string) => void;
   clearAllWearHistory: () => void;
   registerWifeNg: (shirtId: string, pantsId: string, customReason?: string) => void;
   removeWifeNg: (shirtId: string, pantsId: string) => void;
+  toggleShirtOuterwear: (itemId: string, isOuterwear: boolean) => void;
   archiveItem: (itemId: string) => void;
   unarchiveItem: (itemId: string) => void;
   importCustomData: (jsonString: string) => {
     success: boolean;
-    mode?: 'single' | 'full' | 'batch_color' | 'batch_garments';
+    mode?: 'single' | 'full' | 'batch_color' | 'batch_outerwear' | 'batch_garments';
     addedItem?: ClosetItem;
     updatedPeersCount?: number;
     error?: string;
@@ -762,16 +766,24 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   // Actions
   const recordWear = useCallback(
-    (shirtId: string, pantsId: string, scene: SceneMode, dateStr: string = getTodayString()) => {
+    (
+      shirtId: string,
+      pantsId: string,
+      scene: SceneMode,
+      dateStr: string = getTodayString(),
+      outerwearId?: string
+    ) => {
       mutationSeqRef.current++;
       const now = Math.max(Date.now(), (stateRef.current.tombstones.wearHistoryClearedAt || 0) + 1);
       const replacedRecords = stateRef.current.wearHistory.filter((r) => r.date === dateStr);
       const filtered = stateRef.current.wearHistory.filter((r) => r.date !== dateStr);
+      const validOuterwearId = outerwearId && outerwearId !== shirtId ? outerwearId : undefined;
       const newRecord: WearRecord = {
         id: `${dateStr}_${now}`,
         date: dateStr,
         shirtId,
         pantsId,
+        ...(validOuterwearId ? { outerwearId: validOuterwearId } : {}),
         scene,
         timestamp: now,
       };
@@ -795,6 +807,64 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
       stateRef.current.wearHistory = updatedWear;
       setWearHistory(updatedWear);
+      triggerBackgroundPush();
+    },
+    [triggerBackgroundPush]
+  );
+
+  const updateTodayOuterwear = useCallback(
+    (outerwearId: string | undefined) => {
+      const todayStr = getTodayString();
+      const currentTodayRecord = stateRef.current.wearHistory.find((r) => r.date === todayStr);
+      if (!currentTodayRecord) return;
+
+      const validOuterwearId =
+        outerwearId && outerwearId !== currentTodayRecord.shirtId ? outerwearId : undefined;
+      if (currentTodayRecord.outerwearId === validOuterwearId) return;
+
+      mutationSeqRef.current++;
+      const now = Math.max(Date.now(), (stateRef.current.tombstones.wearHistoryClearedAt || 0) + 1);
+      const filtered = stateRef.current.wearHistory.filter((r) => r.date !== todayStr);
+      const newRecord: WearRecord = {
+        ...currentTodayRecord,
+        id: `${todayStr}_${now}`,
+        outerwearId: validOuterwearId,
+        timestamp: now,
+      };
+      const updatedWear = [newRecord, ...filtered].sort((a, b) => b.date.localeCompare(a.date));
+
+      const nextDeletedWearMap = { ...stateRef.current.tombstones.deletedWearMap };
+      nextDeletedWearMap[currentTodayRecord.id] = Math.max(
+        nextDeletedWearMap[currentTodayRecord.id] || 0,
+        now
+      );
+      const updatedTombstones = {
+        ...stateRef.current.tombstones,
+        deletedWearMap: nextDeletedWearMap,
+      };
+      stateRef.current.tombstones = updatedTombstones;
+      setTombstones(updatedTombstones);
+
+      stateRef.current.wearHistory = updatedWear;
+      setWearHistory(updatedWear);
+      triggerBackgroundPush();
+    },
+    [triggerBackgroundPush]
+  );
+
+  const toggleShirtOuterwear = useCallback(
+    (itemId: string, isOuterwear: boolean) => {
+      mutationSeqRef.current++;
+      customDataSeqRef.current++;
+      const now = Math.max(
+        Date.now(),
+        (stateRef.current.closetData.updatedAt || 0) + 1,
+        (stateRef.current.tombstones.customClosetDataClearedAt || 0) + 1
+      );
+      const nextData = setShirtOuterwear(stateRef.current.closetData, itemId, isOuterwear, now);
+      localStorage.setItem(STORAGE_KEYS.CUSTOM_DATA, JSON.stringify(nextData));
+      stateRef.current.closetData = nextData;
+      setClosetData(nextData);
       triggerBackgroundPush();
     },
     [triggerBackgroundPush]
@@ -961,7 +1031,7 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       jsonString: string
     ): {
       success: boolean;
-      mode?: 'single' | 'full' | 'batch_color' | 'batch_garments';
+      mode?: 'single' | 'full' | 'batch_color' | 'batch_outerwear' | 'batch_garments';
       addedItem?: ClosetItem;
       updatedPeersCount?: number;
       error?: string;
@@ -970,7 +1040,7 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         const parsed = JSON.parse(jsonString);
 
         let finalData: ClosetData;
-        let mode: 'single' | 'full' | 'batch_color' | 'batch_garments' = 'full';
+        let mode: 'single' | 'full' | 'batch_color' | 'batch_outerwear' | 'batch_garments' = 'full';
         let addedItem: ClosetItem | undefined = undefined;
         let updatedPeersCount = 0;
 
@@ -984,11 +1054,23 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
               typeof (parsed[0] as any)?.id === 'string' &&
               (parsed[0] as any)?.color !== undefined));
 
+        // 一括羽織り分類更新形式（outerwearUpdates 配列を含むオブジェクト、または直接の更新配列）かどうかの判別
+        const isBatchOuterwearCandidate =
+          parsed &&
+          typeof parsed === 'object' &&
+          !isBatchCandidate &&
+          (Array.isArray((parsed as any).outerwearUpdates) ||
+            (Array.isArray(parsed) &&
+              parsed.length > 0 &&
+              typeof (parsed[0] as any)?.id === 'string' &&
+              typeof (parsed[0] as any)?.isOuterwear === 'boolean'));
+
         // まとめ撮り服形式（garments 配列を含むオブジェクト、または直接の服ドラフト配列）かどうかの判別
         const isBatchGarmentsCandidate =
           parsed &&
           typeof parsed === 'object' &&
           !isBatchCandidate &&
+          !isBatchOuterwearCandidate &&
           (Array.isArray((parsed as any).garments) ||
             (Array.isArray(parsed) &&
               parsed.length > 0 &&
@@ -1005,6 +1087,17 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
             };
           }
           mode = 'batch_color';
+          finalData = batchRes.data;
+          updatedPeersCount = batchRes.updatedCount || 0;
+        } else if (isBatchOuterwearCandidate) {
+          const batchRes = applyBatchOuterwearUpdates(stateRef.current.closetData, parsed);
+          if (!batchRes.valid || !batchRes.data) {
+            return {
+              success: false,
+              error: batchRes.error || '羽織り分類一括更新データの検証に失敗しました。',
+            };
+          }
+          mode = 'batch_outerwear';
           finalData = batchRes.data;
           updatedPeersCount = batchRes.updatedCount || 0;
         } else if (isBatchGarmentsCandidate) {
@@ -1266,11 +1359,13 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       isNgPair,
       getRecommendationsForShirt,
       recordWear,
+      updateTodayOuterwear,
       simulateYesterdayWear,
       removeWearRecord,
       clearAllWearHistory,
       registerWifeNg,
       removeWifeNg,
+      toggleShirtOuterwear,
       archiveItem,
       unarchiveItem,
       importCustomData,
@@ -1302,11 +1397,13 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       isNgPair,
       getRecommendationsForShirt,
       recordWear,
+      updateTodayOuterwear,
       simulateYesterdayWear,
       removeWearRecord,
       clearAllWearHistory,
       registerWifeNg,
       removeWifeNg,
+      toggleShirtOuterwear,
       archiveItem,
       unarchiveItem,
       importCustomData,

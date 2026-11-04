@@ -30,6 +30,7 @@ import {
   GarmentMeasurements,
   GarmentCropBox,
   ColorUpdateItem,
+  OuterwearUpdateItem,
   BatchGarmentDraftItem,
   MAX_BATCH_GARMENTS,
   FailedDriveUploadItem,
@@ -51,6 +52,7 @@ import {
   copyTextToClipboard,
   CopyFeedbackStatus,
   buildShoppingConsultationPrompt,
+  buildBatchOuterwearAssessmentPrompt,
 } from '../utils/closetDomain';
 import {
   saveDraftImage,
@@ -112,10 +114,12 @@ export const AiSyncView: React.FC = () => {
 
   const [copiedPromptStatus, setCopiedPromptStatus] = useState<CopyFeedbackStatus>('idle');
   const [copiedConsultPromptStatus, setCopiedConsultPromptStatus] = useState<CopyFeedbackStatus>('idle');
+  const [copiedOuterwearPromptStatus, setCopiedOuterwearPromptStatus] = useState<CopyFeedbackStatus>('idle');
   const [isRebuildModalOpen, setIsRebuildModalOpen] = useState(false);
 
   const promptTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const consultPromptTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const outerwearPromptTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const triggerCopyFeedback = (
     setter: React.Dispatch<React.SetStateAction<CopyFeedbackStatus>>,
@@ -136,6 +140,7 @@ export const AiSyncView: React.FC = () => {
     return () => {
       if (promptTimerRef.current) clearTimeout(promptTimerRef.current);
       if (consultPromptTimerRef.current) clearTimeout(consultPromptTimerRef.current);
+      if (outerwearPromptTimerRef.current) clearTimeout(outerwearPromptTimerRef.current);
     };
   }, []);
 
@@ -163,6 +168,7 @@ export const AiSyncView: React.FC = () => {
   const [optionalNote, setOptionalNote] = useState('');
   const [isManualOverrideOpen, setIsManualOverrideOpen] = useState(false);
   const [manualCategory, setManualCategory] = useState<'auto' | Category>('auto');
+  const [manualIsOuterwear, setManualIsOuterwear] = useState<'auto' | 'single' | 'outerwear'>('auto');
   const [manualItemName, setManualItemName] = useState('');
   const [manualSleeve, setManualSleeve] = useState('');
 
@@ -172,6 +178,7 @@ export const AiSyncView: React.FC = () => {
   const [applySmartCrop, setApplySmartCrop] = useState<boolean>(true);
   const [normalizedPreviewUrl, setNormalizedPreviewUrl] = useState<string | null>(null);
   const [draftBatchUpdates, setDraftBatchUpdates] = useState<ColorUpdateItem[] | null>(null);
+  const [draftBatchOuterwearUpdates, setDraftBatchOuterwearUpdates] = useState<OuterwearUpdateItem[] | null>(null);
   const [isCategorySwitched, setIsCategorySwitched] = useState(false);
 
   // Step 3: Batch garments drafts & toggles (Batch mode)
@@ -370,11 +377,21 @@ export const AiSyncView: React.FC = () => {
         setApplySmartCrop(true);
       }
       setDraftBatchUpdates(null);
+      setDraftBatchOuterwearUpdates(null);
       setDraftBatchGarments(null);
       setIsCategorySwitched(false);
       setJsonParseWarning(null);
     } else if (parseRes.kind === 'batch_color' && parseRes.batchColorUpdates) {
       setDraftBatchUpdates(parseRes.batchColorUpdates);
+      setDraftBatchOuterwearUpdates(null);
+      setDraftEditItem(null);
+      setDraftCropBox(null);
+      setDraftBatchGarments(null);
+      setIsCategorySwitched(false);
+      setJsonParseWarning(null);
+    } else if (parseRes.kind === 'batch_outerwear' && parseRes.batchOuterwearUpdates) {
+      setDraftBatchOuterwearUpdates(parseRes.batchOuterwearUpdates);
+      setDraftBatchUpdates(null);
       setDraftEditItem(null);
       setDraftCropBox(null);
       setDraftBatchGarments(null);
@@ -393,12 +410,14 @@ export const AiSyncView: React.FC = () => {
       setDraftEditItem(null);
       setDraftCropBox(null);
       setDraftBatchUpdates(null);
+      setDraftBatchOuterwearUpdates(null);
       setIsCategorySwitched(false);
       setJsonParseWarning(null);
     } else {
       setDraftEditItem(null);
       setDraftCropBox(null);
       setDraftBatchUpdates(null);
+      setDraftBatchOuterwearUpdates(null);
       setDraftBatchGarments(null);
       setIsCategorySwitched(false);
       setJsonParseWarning(jsonInput.trim() ? (parseRes.error ?? 'JSON構文が無効です') : null);
@@ -571,7 +590,7 @@ export const AiSyncView: React.FC = () => {
     const shirtsSummary = activeShirts
       .map(
         (s) =>
-          `- [${s.id}] ${s.name}（色: ${s.color ?? '未設定'}、${s.seasonSleeve}、ドレス度${s.dressScore}、快適度${s.comfortScore}）: ${s.notes}`
+          `- [${s.id}] ${s.name}（区分: ${s.isOuterwear ? '羽織り' : '1枚もの'}、色: ${s.color ?? '未設定'}、${s.seasonSleeve}、ドレス度${s.dressScore}、快適度${s.comfortScore}）: ${s.notes}`
       )
       .join('\n');
 
@@ -631,6 +650,7 @@ ${GARMENT_COLOR_ANCHOR_GUIDE}
 - 写真内のすべての服（1〜3着、最大3着）を検出し、左から順（または上から順）に配列 "garments" として出力してください。
 - 各服のカテゴリ: シャツ（shirt）かパンツ（pants）かを写真から自動判定してください。
 - 各服のスコア判定: 40代男性のTPO（出社・リモート）に応じたドレス度（dressScore: 1.0〜5.0）、快適度（comfortScore: 1.0〜5.0）を写真の生地感やシルエットから付与してください。
+- 各服の羽織り分類（isOuterwear）: シャツ（shirt）の場合、カーディガン・ジップアップ・ジップパーカー・ニットジャケット等の羽織り系なら "isOuterwear": true、Tシャツ・シャツ・スウェット等の1枚ものなら "isOuterwear": false としてください。パンツ（pants）の場合は省略または false としてください。
 - 各服の季節・袖丈（seasonSleeve）: 写真からシャツなら「長袖・通年 / 春夏秋・七分袖 / 春夏・半袖 / 秋冬・長袖」、パンツなら「通年 / 春夏秋 / 春夏 / 秋冬」を判定してください。
 - ユーザー補足メモ: ${optionalNote.trim() || '特になし（写真からすべて判定してください）'}
 
@@ -665,6 +685,7 @@ ${wifeNgSummary}
       "category": "shirt または pants",
       "name": "13色パレットの語彙に寄せた適切な日本語名称",
       "color": "13色パレット（白／生成り／ベージュ／黒／チャコール／ミディアムグレー／ライトグレー／グレージュ／濃紺／ブルー／淡青／オリーブ／ブラウン）から1つ選択",
+      "isOuterwear": false,
       "seasonSleeve": "写真から判定した季節・袖丈（シャツ: 長袖・通年 / 春夏秋・七分袖 / 春夏・半袖 / 秋冬・長袖、パンツ: 通年 / 春夏秋 / 春夏 / 秋冬）",
       "dressScore": 4.0,
       "comfortScore": 4.0,
@@ -715,6 +736,13 @@ ${wifeNgSummary}
       ? `- 季節・袖丈指定: "${manualSleeve}"`
       : `- 季節・袖丈判定: 写真から季節・袖丈（シャツなら「長袖・通年」「春夏秋・七分袖」「春夏・半袖」「秋冬・長袖」、パンツなら「通年」「春夏秋」「春夏」「秋冬」のいずれか）を判定してください。`;
 
+    let outerwearInstruction = `- 羽織り分類（isOuterwear）: シャツ（shirt）の場合、カーディガン・ジップアップ・ジップパーカー・ニットジャケット等の羽織り系なら "isOuterwear": true、Tシャツ・シャツ・スウェット等の1枚ものなら "isOuterwear": false を指定してください。パンツ（pants）の場合は出力しないでください（または null / false）。`;
+    if (manualIsOuterwear === 'outerwear') {
+      outerwearInstruction = `- 羽織り分類指定: シャツの場合は必ず "isOuterwear": true（カーディガン／ジップアップ／パーカー等の羽織り）として出力してください。`;
+    } else if (manualIsOuterwear === 'single') {
+      outerwearInstruction = `- 羽織り分類指定: シャツの場合は必ず "isOuterwear": false（1枚ものトップス）として出力してください。`;
+    }
+
     const promptText = `あなたは40代後半男性（オフィス出社・リモートワーク併用）専属のプロスタイリストAIです。
 添付された服の写真を解析し、以下の指示および現在のワードローブ一覧と照らし合わせ、相性・NGを判定した【新規1着分のみのJSONオブジェクト】を出力してください。
 （※全体データではなく、新規追加する1着分のみを単一JSONオブジェクトとして出力してください。双方向のリンク更新はアプリ側で自動マージされます）
@@ -754,6 +782,7 @@ ${categoryInstruction}
   - パンツ（pants）と判定した場合: "id": "${nextPantsId}", "imageUrl": "/images/${nextPantsId}.jpg"
 ${nameInstruction}
 ${sleeveInstruction}
+${outerwearInstruction}
 - スコア判定: 40代男性のTPO（出社・リモート）に応じたドレス度（dressScore: 1.0〜5.0）、快適度（comfortScore: 1.0〜5.0）を写真の生地感やシルエットから付与してください。
 - ユーザー補足メモ: ${optionalNote.trim() || '特になし（写真からすべて判定してください）'}
 
@@ -785,6 +814,7 @@ ${wifeNgSummary}
   "category": "写真から判定した種別（\\"shirt\\" または \\"pants\\"）",
   "name": "13色パレットの語彙に寄せた適切な日本語名称",
   "color": "13色パレット（白／生成り／ベージュ／黒／チャコール／ミディアムグレー／ライトグレー／グレージュ／濃紺／ブルー／淡青／オリーブ／ブラウン）から1つ選択",
+  "isOuterwear": false,
   "imageUrl": "写真からシャツと判定した場合は \\"/images/${nextShirtId}.jpg\\"、パンツと判定した場合は \\"/images/${nextPantsId}.jpg\\"",
   "seasonSleeve": "写真から判定した季節・袖丈（シャツ: 長袖・通年 / 春夏秋・七分袖 / 春夏・半袖 / 秋冬・長袖、パンツ: 通年 / 春夏秋 / 春夏 / 秋冬）",
   "dressScore": 4.0,
@@ -813,6 +843,7 @@ ${wifeNgSummary}
 - シャツ（shirt）と判定した場合は、必ず id: "${nextShirtId}"、imageUrl: "/images/${nextShirtId}.jpg" としてください。
 - パンツ（pants）と判定した場合は、必ず id: "${nextPantsId}"、imageUrl: "/images/${nextPantsId}.jpg" としてください。
 - category と id の接頭辞（S / P）の不一致は、アプリのデータ保護検証によって自動で拒否されます。
+- isOuterwear: シャツの場合は羽織り系なら true、1枚ものなら false としてください（パンツの場合は出力不要）。
 - A4用紙が確認できない場合、measurements は null としてください。
 - 出力形式: 説明文や前置きは一切含めず、上記スキーマを満たす単一の有効なJSONコードブロック（\`\`\`json ... \`\`\`）のみを出力してください。`;
 
@@ -830,6 +861,13 @@ ${wifeNgSummary}
     });
     const ok = await copyTextToClipboard(promptText);
     triggerCopyFeedback(setCopiedConsultPromptStatus, consultPromptTimerRef, ok);
+  };
+
+  // 既存シャツの羽織り分類一括相談プロンプトの生成とコピー
+  const handleCopyOuterwearPrompt = async () => {
+    const promptText = buildBatchOuterwearAssessmentPrompt(mergedClosetData.items);
+    const ok = await copyTextToClipboard(promptText);
+    triggerCopyFeedback(setCopiedOuterwearPromptStatus, outerwearPromptTimerRef, ok);
   };
 
   // Step 3: JSON適用・自動マージ・写真の本保存・下書き消去・GASアップロード連動
@@ -854,6 +892,28 @@ ${wifeNgSummary}
         setImportStatus({
           type: 'error',
           message: res.error || '色パレット一括更新に失敗しました。形式を確認してください。',
+        });
+      }
+      return;
+    }
+
+    // 一括羽織り分類更新の適用
+    if (parseRes.kind === 'batch_outerwear') {
+      const payload = JSON.stringify({
+        outerwearUpdates: draftBatchOuterwearUpdates ?? parseRes.batchOuterwearUpdates ?? [],
+      });
+      const res = importCustomData(payload);
+      if (res.success) {
+        setImportStatus({
+          type: 'success',
+          message: `全${res.updatedPeersCount || 0}着の羽織り分類を一括更新しました！（既存のアイテム名・相性は保護されています）`,
+        });
+        setJsonInput('');
+        setDraftBatchOuterwearUpdates(null);
+      } else {
+        setImportStatus({
+          type: 'error',
+          message: res.error || '羽織り分類一括更新に失敗しました。形式を確認してください。',
         });
       }
       return;
@@ -1470,6 +1530,50 @@ ${wifeNgSummary}
                     </div>
                   </div>
 
+                  {/* Manual Outerwear Selection */}
+                  {(manualCategory === 'auto' || manualCategory === 'shirt') && (
+                    <div>
+                      <label className="text-[11px] font-bold text-slate-300 mb-1.5 block">
+                        羽織り分類指定（シャツの場合）
+                      </label>
+                      <div className="grid grid-cols-3 gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setManualIsOuterwear('auto')}
+                          className={`min-h-[44px] py-2 px-2 rounded-xl text-xs font-bold border transition-all ${
+                            manualIsOuterwear === 'auto'
+                              ? 'bg-blue-600 text-white border-blue-500 shadow-md shadow-blue-950'
+                              : 'bg-slate-900/60 text-slate-400 border-slate-700 hover:text-white'
+                          }`}
+                        >
+                          AIにおまかせ
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setManualIsOuterwear('single')}
+                          className={`min-h-[44px] py-2 px-2 rounded-xl text-xs font-bold border transition-all ${
+                            manualIsOuterwear === 'single'
+                              ? 'bg-blue-600 text-white border-blue-500 shadow-md shadow-blue-950'
+                              : 'bg-slate-900/60 text-slate-400 border-slate-700 hover:text-white'
+                          }`}
+                        >
+                          👔 1枚もの
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setManualIsOuterwear('outerwear')}
+                          className={`min-h-[44px] py-2 px-2 rounded-xl text-xs font-bold border transition-all ${
+                            manualIsOuterwear === 'outerwear'
+                              ? 'bg-indigo-600 text-white border-indigo-500 shadow-md shadow-indigo-950'
+                              : 'bg-slate-900/60 text-slate-400 border-slate-700 hover:text-white'
+                          }`}
+                        >
+                          🧥 羽織り
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
                   {/* Manual Item Name */}
                   <div>
                     <label className="text-[11px] font-bold text-slate-300 mb-1 block">
@@ -1658,6 +1762,80 @@ ${wifeNgSummary}
             </div>
           )}
 
+          {/* Case A-2: Batch Outerwear Updates Preview Card */}
+          {draftBatchOuterwearUpdates && (
+            <div className="p-4 bg-slate-900/95 border border-indigo-500/50 rounded-2xl space-y-3 shadow-2xl">
+              <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+                <span className="text-xs font-bold text-indigo-300 flex items-center gap-1.5">
+                  <Sliders className="w-4 h-4 text-indigo-400" />
+                  羽織り分類一括更新プレビュー（全{draftBatchOuterwearUpdates.length}着）
+                </span>
+                <span className="text-[10px] text-slate-400">※名前や相性リストは変更されません</span>
+              </div>
+
+              <div className="max-h-60 overflow-y-auto space-y-1.5 pr-1">
+                {draftBatchOuterwearUpdates.map((update) => {
+                  const existing = mergedClosetData.items.find(
+                    (i) => i.id.toUpperCase() === update.id.toUpperCase()
+                  );
+                  const isCurrentOuterwear = Boolean(existing?.isOuterwear);
+                  const isChanged = isCurrentOuterwear !== update.isOuterwear;
+
+                  return (
+                    <div
+                      key={update.id}
+                      className="p-2 rounded-xl bg-slate-950 border border-slate-800 flex items-center justify-between text-xs"
+                    >
+                      <div className="min-w-0 flex items-center gap-2">
+                        <span className="font-bold text-blue-400 font-mono">{update.id}</span>
+                        <span className="text-slate-300 truncate">
+                          {existing ? existing.name : '（未登録アイテム）'}
+                        </span>
+                        {isChanged && (
+                          <span className="text-[10px] px-1.5 py-0.2 rounded bg-amber-950 text-amber-300 border border-amber-800">
+                            変更
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-1.5 flex-shrink-0 font-medium">
+                        <span className="text-slate-400 text-[11px]">
+                          {isCurrentOuterwear ? '🧥 羽織り' : '👔 1枚もの'}
+                        </span>
+                        <span className="text-slate-500">→</span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const next = draftBatchOuterwearUpdates.map((u) =>
+                              u.id === update.id ? { ...u, isOuterwear: !u.isOuterwear } : u
+                            );
+                            setDraftBatchOuterwearUpdates(next);
+                            setJsonInput(JSON.stringify({ outerwearUpdates: next }, null, 2));
+                          }}
+                          className={`px-2 py-1 rounded text-[11px] font-bold border transition-all ${
+                            update.isOuterwear
+                              ? 'bg-indigo-950 text-indigo-300 border-indigo-700 hover:bg-indigo-900'
+                              : 'bg-slate-900 text-slate-300 border-slate-700 hover:bg-slate-800'
+                          }`}
+                        >
+                          {update.isOuterwear ? '🧥 羽織り' : '👔 1枚もの'}
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <button
+                type="button"
+                onClick={handleApplyJson}
+                className="w-full min-h-[44px] py-3 px-4 rounded-xl text-xs font-bold bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-900/40 flex items-center justify-center gap-2 active:scale-[0.98] transition-all"
+              >
+                <Check className="w-4 h-4" />
+                <span>💾 羽織り分類一括更新を適用（{draftBatchOuterwearUpdates.length}着）</span>
+              </button>
+            </div>
+          )}
+
           {/* Case B: Single Item Inline Confirmation & Fine-tuning Panel */}
           {draftEditItem && (
             <div className="p-4 bg-slate-900/95 border border-indigo-500/50 rounded-2xl space-y-4 shadow-2xl">
@@ -1712,6 +1890,42 @@ ${wifeNgSummary}
                   </div>
                 )}
               </div>
+
+              {/* Outerwear Toggle (Shirt only) */}
+              {draftEditItem.category === 'shirt' && (
+                <div>
+                  <label className="text-[11px] font-bold text-slate-300 mb-1.5 flex items-center justify-between">
+                    <span>羽織り分類</span>
+                    <span className="text-[10px] text-indigo-400 font-mono">
+                      {draftEditItem.isOuterwear ? '🧥 羽織り' : '👔 1枚もの'}
+                    </span>
+                  </label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => handleUpdateDraftField('isOuterwear', false)}
+                      className={`min-h-[44px] py-2 px-3 rounded-xl text-xs font-bold border transition-all ${
+                        !draftEditItem.isOuterwear
+                          ? 'bg-blue-600 text-white border-blue-500 shadow-md ring-1 ring-blue-400'
+                          : 'bg-slate-950 text-slate-400 border-slate-700 hover:text-white'
+                      }`}
+                    >
+                      👔 1枚もの
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleUpdateDraftField('isOuterwear', true)}
+                      className={`min-h-[44px] py-2 px-3 rounded-xl text-xs font-bold border transition-all ${
+                        draftEditItem.isOuterwear
+                          ? 'bg-indigo-600 text-white border-indigo-500 shadow-md ring-1 ring-indigo-400'
+                          : 'bg-slate-950 text-slate-400 border-slate-700 hover:text-white'
+                      }`}
+                    >
+                      🧥 羽織り
+                    </button>
+                  </div>
+                </div>
+              )}
 
               {/* 2. Color Palette Chips */}
               <div>
@@ -2064,6 +2278,7 @@ ${wifeNgSummary}
                       seasonSleeve: draft.seasonSleeve || '通年',
                       dressScore: draft.dressScore ?? 3.5,
                       comfortScore: draft.comfortScore ?? 3.5,
+                      isOuterwear: draft.isOuterwear,
                       measurements: draft.measurements,
                       officeRecommendIds: draft.officeRecommendIds || [],
                       remoteRecommendIds: draft.remoteRecommendIds || [],
@@ -2168,6 +2383,42 @@ ${wifeNgSummary}
                                 </button>
                               </div>
                             </div>
+
+                            {/* Outerwear Toggle (Shirt only) */}
+                            {draft.category === 'shirt' && (
+                              <div>
+                                <label className="text-[10px] font-bold text-slate-400 mb-1 flex items-center justify-between">
+                                  <span>羽織り分類</span>
+                                  <span className="text-[10px] text-indigo-400 font-mono">
+                                    {draft.isOuterwear ? '🧥 羽織り' : '👔 1枚もの'}
+                                  </span>
+                                </label>
+                                <div className="grid grid-cols-2 gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleUpdateBatchItemField(idx, 'isOuterwear', false)}
+                                    className={`min-h-[44px] py-1.5 px-3 rounded-xl text-xs font-bold border transition-all ${
+                                      !draft.isOuterwear
+                                        ? 'bg-blue-600 text-white border-blue-500 shadow-md ring-1 ring-blue-400'
+                                        : 'bg-slate-900 text-slate-400 border-slate-700 hover:text-white'
+                                    }`}
+                                  >
+                                    👔 1枚もの
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleUpdateBatchItemField(idx, 'isOuterwear', true)}
+                                    className={`min-h-[44px] py-1.5 px-3 rounded-xl text-xs font-bold border transition-all ${
+                                      draft.isOuterwear
+                                        ? 'bg-indigo-600 text-white border-indigo-500 shadow-md ring-1 ring-indigo-400'
+                                        : 'bg-slate-900 text-slate-400 border-slate-700 hover:text-white'
+                                    }`}
+                                  >
+                                    🧥 羽織り
+                                  </button>
+                                </div>
+                              </div>
+                            )}
 
                             {/* Color Palette Chips */}
                             <div>
@@ -2527,7 +2778,7 @@ ${wifeNgSummary}
           )}
 
           {/* Main Apply Button */}
-          {!draftBatchUpdates && !draftBatchGarments && (
+          {!draftBatchUpdates && !draftBatchGarments && !draftBatchOuterwearUpdates && (
             <button
               onClick={handleApplyJson}
               className="w-full min-h-[44px] py-3 px-4 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-900/40 flex items-center justify-center gap-2 active:scale-[0.98] transition-all"
@@ -2645,6 +2896,52 @@ ${wifeNgSummary}
             >
               <Layers className="w-4 h-4" />
               <span>全件リビルド ＆ 重複解消ウィザードを開く</span>
+            </button>
+          </div>
+
+          {/* 3. 既存シャツの羽織り分類・一括相談 */}
+          <div className="p-4 bg-slate-900/90 border border-slate-800 rounded-2xl space-y-3 shadow-md">
+            <div className="flex items-center justify-between">
+              <span className="text-sm font-bold text-indigo-300 flex items-center gap-2">
+                <Sliders className="w-4 h-4 text-indigo-400" />
+                <span>🧥 既存シャツの羽織り分類・一括相談</span>
+              </span>
+              <span className="text-[10px] px-2 py-0.5 rounded bg-indigo-950 text-indigo-300 border border-indigo-800 font-mono">
+                シャツ全{shirts.length}着一括
+              </span>
+            </div>
+
+            <p className="text-[11px] text-slate-400 leading-relaxed">
+              登録済みのすべてのシャツ・トップス（カーディガン、ジップアップ、パーカー、ジャケット等）を「羽織り」か「1枚もの」かに一括分類するプロンプトを生成します。Gemini の回答JSONを上の「Step 3」に貼り付けるだけで、1着ずつの手作業なしに全件を一括更新できます。
+            </p>
+
+            <button
+              type="button"
+              onClick={handleCopyOuterwearPrompt}
+              className={`w-full min-h-[44px] py-3 px-4 rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition-all shadow-lg ${
+                copiedOuterwearPromptStatus === 'success'
+                  ? 'bg-emerald-600 text-white'
+                  : copiedOuterwearPromptStatus === 'error'
+                  ? 'bg-rose-600 text-white'
+                  : 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-indigo-900/40 active:scale-[0.98]'
+              }`}
+            >
+              {copiedOuterwearPromptStatus === 'success' ? (
+                <>
+                  <Check className="w-4 h-4" />
+                  <span>コピー完了！ Gemini に貼って相談してください</span>
+                </>
+              ) : copiedOuterwearPromptStatus === 'error' ? (
+                <>
+                  <AlertCircle className="w-4 h-4" />
+                  <span>コピーに失敗しました（もう一度お試しください）</span>
+                </>
+              ) : (
+                <>
+                  <Copy className="w-4 h-4" />
+                  <span>📋 羽織り分類一括相談プロンプトをコピー</span>
+                </>
+              )}
             </button>
           </div>
         </div>

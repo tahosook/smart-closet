@@ -30,7 +30,7 @@ function setupSpreadsheet() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
 
   // 1. wear_history シート
-  const wearHeaders = ['ID', '日付', 'シーン', 'シャツID', 'シャツ名', 'パンツID', 'パンツ名', 'タイムスタンプ'];
+  const wearHeaders = ['ID', '日付', 'シーン', 'シャツID', 'シャツ名', 'パンツID', 'パンツ名', 'タイムスタンプ', '羽織りID', '羽織り名'];
   ensureSheetWithHeaders(ss, SHEET_NAMES.WEAR_HISTORY, wearHeaders, '#1e293b', '#f8fafc');
 
   // 2. wife_ng シート
@@ -523,27 +523,42 @@ function readWearHistory(ss) {
   const sheet = ss.getSheetByName(SHEET_NAMES.WEAR_HISTORY);
   if (!sheet || sheet.getLastRow() < 2) return [];
 
-  const values = sheet.getRange(2, 1, sheet.getLastRow() - 1, 8).getValues();
+  const lastCol = (typeof sheet.getLastColumn === 'function' && sheet.getLastColumn() > 0)
+    ? sheet.getLastColumn()
+    : 10;
+  const numCols = Math.min(10, Math.max(8, lastCol));
+  const values = sheet.getRange(2, 1, sheet.getLastRow() - 1, numCols).getValues();
   const list = [];
   for (let i = 0; i < values.length; i++) {
     const row = values[i];
     if (!row[0] || !row[1]) continue;
-    list.push({
+    const rec = {
       id: String(row[0]),
       date: formatDateString(row[1]),
       scene: row[2] === 'remote' ? 'remote' : 'office',
       shirtId: String(row[3] || ''),
       pantsId: String(row[5] || ''),
       timestamp: Number(row[7]) || (new Date(row[1])).getTime()
-    });
+    };
+    if (row[8]) {
+      rec.outerwearId = String(row[8]);
+    }
+    list.push(rec);
   }
   return list.sort((a, b) => b.date.localeCompare(a.date));
 }
 
 function writeWearHistory(ss, list, itemNamesMap) {
   const sheet = getOrCreateSheet(ss, SHEET_NAMES.WEAR_HISTORY);
+  const wearHeaders = ['ID', '日付', 'シーン', 'シャツID', 'シャツ名', 'パンツID', 'パンツ名', 'タイムスタンプ', '羽織りID', '羽織り名'];
+  sheet.getRange(1, 1, 1, wearHeaders.length).setValues([wearHeaders]);
+
+  const lastCol = (typeof sheet.getLastColumn === 'function' && sheet.getLastColumn() > 0)
+    ? sheet.getLastColumn()
+    : 10;
+  const maxCols = Math.max(10, lastCol);
   if (sheet.getLastRow() > 1) {
-    sheet.getRange(2, 1, sheet.getLastRow() - 1, 8).clearContent();
+    sheet.getRange(2, 1, sheet.getLastRow() - 1, maxCols).clearContent();
   }
   if (!list || list.length === 0) return;
 
@@ -555,10 +570,12 @@ function writeWearHistory(ss, list, itemNamesMap) {
     itemNamesMap[item.shirtId] || '',
     item.pantsId,
     itemNamesMap[item.pantsId] || '',
-    item.timestamp || ''
+    item.timestamp || '',
+    item.outerwearId || '',
+    item.outerwearId ? (itemNamesMap[item.outerwearId] || '') : ''
   ]);
 
-  sheet.getRange(2, 1, rows.length, 8).setValues(rows);
+  sheet.getRange(2, 1, rows.length, 10).setValues(rows);
 }
 
 function readWifeNg(ss) {
@@ -644,7 +661,12 @@ function updateAnalyticsSheet(ss, wearHistory, itemNamesMap) {
   });
 
   (wearHistory || []).forEach(record => {
-    [record.shirtId, record.pantsId].forEach(id => {
+    const wornIds = new Set();
+    if (record.shirtId) wornIds.add(record.shirtId);
+    if (record.pantsId) wornIds.add(record.pantsId);
+    if (record.outerwearId) wornIds.add(record.outerwearId);
+
+    wornIds.forEach(id => {
       if (!id) return;
       if (!stats[id]) {
         stats[id] = {

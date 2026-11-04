@@ -26,12 +26,24 @@ export const ManageView: React.FC = () => {
     archivedItems,
     archiveItem,
     unarchiveItem,
+    toggleShirtOuterwear,
   } = useClosetStore();
 
   const [isOrganizeOpen, setIsOrganizeOpen] = useState(false);
+  const [organizeFilter, setOrganizeFilter] = useState<'all' | 'outerwear' | 'single'>('all');
   const [isBackupOpen, setIsBackupOpen] = useState(false);
   const [isRebuildOpen, setIsRebuildOpen] = useState(false);
   const [copiedJsonStatus, setCopiedJsonStatus] = useState<CopyFeedbackStatus>('idle');
+
+  const filterItemByOuterwear = (item: (typeof shirts)[0]) => {
+    if (item.category !== 'shirt') return true;
+    if (organizeFilter === 'outerwear') return Boolean(item.isOuterwear);
+    if (organizeFilter === 'single') return !item.isOuterwear;
+    return true;
+  };
+
+  const displayedArchivedItems = archivedItems.filter(filterItemByOuterwear);
+  const displayedShirts = shirts.filter(filterItemByOuterwear);
 
   const handleDownloadJson = () => {
     const blob = new Blob([JSON.stringify(mergedClosetData, null, 2)], {
@@ -82,20 +94,59 @@ export const ManageView: React.FC = () => {
           着なくなった服やオフシーズンの服を片付けることができます。片付けた服は、毎日の朝画面・相性マトリクス・パッキング計画から除外されます。
         </p>
 
+        {/* 絞り込みピル */}
+        <div className="flex items-center gap-1.5 p-1 bg-slate-900/70 border border-slate-800 rounded-xl">
+          <button
+            type="button"
+            onClick={() => setOrganizeFilter('all')}
+            className={`min-h-[44px] flex-1 py-1.5 px-2 rounded-lg text-xs font-bold transition-all ${
+              organizeFilter === 'all'
+                ? 'bg-blue-600 text-white shadow-sm'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            すべて
+          </button>
+          <button
+            type="button"
+            onClick={() => setOrganizeFilter('single')}
+            className={`min-h-[44px] flex-1 py-1.5 px-2 rounded-lg text-xs font-bold transition-all ${
+              organizeFilter === 'single'
+                ? 'bg-blue-600 text-white shadow-sm'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            👔 1枚もの
+          </button>
+          <button
+            type="button"
+            onClick={() => setOrganizeFilter('outerwear')}
+            className={`min-h-[44px] flex-1 py-1.5 px-2 rounded-lg text-xs font-bold transition-all ${
+              organizeFilter === 'outerwear'
+                ? 'bg-blue-600 text-white shadow-sm'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            🧥 羽織り
+          </button>
+        </div>
+
         {/* 片付けた服一覧 */}
         <div className="space-y-2.5">
           <h3 className="text-xs font-bold text-slate-300 px-1 flex items-center gap-1.5">
             <span>片付けた服</span>
-            <span className="text-[11px] font-mono text-slate-400 font-normal">（{archivedItems.length}着）</span>
+            <span className="text-[11px] font-mono text-slate-400 font-normal">（{displayedArchivedItems.length}着）</span>
           </h3>
 
-          {archivedItems.length === 0 ? (
+          {displayedArchivedItems.length === 0 ? (
             <div className="p-4 bg-slate-900/60 border border-slate-800 rounded-2xl text-center text-xs text-slate-400 leading-relaxed">
-              現在片付けた服はありません。着なくなった服は下の「現役の服から選んで片付ける」から仕舞うことができます。
+              {archivedItems.length === 0
+                ? '現在片付けた服はありません。着なくなった服は下の「現役の服から選んで片付ける」から仕舞うことができます。'
+                : '現在の絞り込み条件に一致する片付けた服はありません。'}
             </div>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-              {archivedItems.map((item) => (
+              {displayedArchivedItems.map((item) => (
                 <div
                   key={item.id}
                   className="p-3 bg-slate-900/90 border border-slate-800 rounded-2xl flex items-center justify-between gap-3 shadow-md"
@@ -116,6 +167,11 @@ export const ManageView: React.FC = () => {
                           {item.id}
                         </span>
                         <span className="text-xs font-bold text-white truncate">{item.name}</span>
+                        {item.category === 'shirt' && item.isOuterwear && (
+                          <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-indigo-950 text-indigo-300 border border-indigo-700/60">
+                            🧥 羽織り
+                          </span>
+                        )}
                         {item.color && (
                           <span className="px-1.5 py-0.5 rounded text-[9px] font-medium text-slate-300 bg-slate-950 border border-slate-800">
                             🎨 {item.color}
@@ -123,22 +179,34 @@ export const ManageView: React.FC = () => {
                         )}
                       </div>
                       <div className="text-[10px] text-slate-400 mt-0.5">
-                        {item.category === 'shirt' ? 'シャツ' : 'パンツ'} • {item.seasonSleeve} • ドレス度 {item.dressScore.toFixed(1)}
+                        {item.category === 'shirt' ? (item.isOuterwear ? '羽織り' : '1枚ものシャツ') : 'パンツ'} • {item.seasonSleeve} • ドレス度 {item.dressScore.toFixed(1)}
                       </div>
                       <div className="text-[10px] text-slate-400 truncate mt-0.5">
                         {item.notes || 'メモなし'}
                       </div>
                     </div>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => unarchiveItem(item.id)}
-                    className="min-h-[44px] min-w-[56px] px-3 py-2 bg-emerald-950/80 hover:bg-emerald-900 text-emerald-300 border border-emerald-800/80 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 flex-shrink-0 active:scale-95 shadow-sm"
-                    title={`${item.name} を現役に復帰させる`}
-                  >
-                    <Undo2 className="w-4 h-4" />
-                    <span>出す</span>
-                  </button>
+                  <div className="flex flex-col gap-1.5 flex-shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => unarchiveItem(item.id)}
+                      className="min-h-[44px] min-w-[56px] px-3 py-2 bg-emerald-950/80 hover:bg-emerald-900 text-emerald-300 border border-emerald-800/80 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 active:scale-95 shadow-sm"
+                      title={`${item.name} を現役に復帰させる`}
+                    >
+                      <Undo2 className="w-4 h-4" />
+                      <span>出す</span>
+                    </button>
+                    {item.category === 'shirt' && (
+                      <button
+                        type="button"
+                        onClick={() => toggleShirtOuterwear(item.id, !item.isOuterwear)}
+                        className="min-h-[44px] px-2 py-1 bg-slate-800/80 hover:bg-slate-700 text-slate-300 rounded-lg text-[10px] font-semibold border border-slate-700 flex items-center justify-center gap-1"
+                        title={item.isOuterwear ? '1枚ものに変更' : '羽織りに変更'}
+                      >
+                        <span>{item.isOuterwear ? '👔 1枚もの' : '🧥 羽織り'}</span>
+                      </button>
+                    )}
+                  </div>
                 </div>
               ))}
             </div>
@@ -163,11 +231,12 @@ export const ManageView: React.FC = () => {
             <div className="mt-3 space-y-4 p-3 bg-slate-950/60 border border-slate-800/80 rounded-2xl">
               {/* シャツ一覧 */}
               <div className="space-y-2">
-                <div className="text-[11px] font-bold text-blue-400 px-1 flex items-center gap-1">
-                  <span>👔 シャツ・トップス（{shirts.length}着）</span>
+                <div className="text-[11px] font-bold text-blue-400 px-1 flex items-center justify-between">
+                  <span>👔 シャツ・トップス（{displayedShirts.length} / 全{shirts.length}着）</span>
+                  <span className="text-[10px] text-slate-400 font-normal">※上のピルで絞り込み中</span>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                  {shirts.map((item) => (
+                  {displayedShirts.map((item) => (
                     <div
                       key={item.id}
                       className="p-2.5 bg-slate-900/80 border border-slate-800 rounded-xl flex items-center justify-between gap-2.5"
@@ -177,26 +246,41 @@ export const ManageView: React.FC = () => {
                           <ItemImage item={item} showBadge={false} className="w-full h-full" />
                         </div>
                         <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-1.5">
+                          <div className="flex items-center gap-1.5 flex-wrap">
                             <span className="px-1.5 py-0.5 rounded text-[9px] font-bold font-mono bg-blue-950/80 text-blue-300 border border-blue-800/60">
                               {item.id}
                             </span>
                             <span className="text-xs font-bold text-slate-200 truncate">{item.name}</span>
+                            {item.isOuterwear && (
+                              <span className="px-1.5 py-0.2 rounded text-[8px] font-bold bg-indigo-950 text-indigo-300 border border-indigo-700/60">
+                                🧥 羽織り
+                              </span>
+                            )}
                           </div>
                           <div className="text-[10px] text-slate-400 mt-0.5 truncate">
                             {item.color ? `🎨 ${item.color} · ` : ''}{item.seasonSleeve}
                           </div>
                         </div>
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => archiveItem(item.id)}
-                        className="min-h-[44px] px-2.5 py-1.5 bg-slate-800/80 hover:bg-slate-800 text-slate-300 hover:text-amber-300 border border-slate-700 rounded-lg text-xs font-semibold transition-all flex items-center gap-1 flex-shrink-0 active:scale-95"
-                        title={`${item.name} を片付ける`}
-                      >
-                        <Package className="w-3.5 h-3.5 text-amber-400" />
-                        <span>片付ける</span>
-                      </button>
+                      <div className="flex items-center gap-1 flex-shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => toggleShirtOuterwear(item.id, !item.isOuterwear)}
+                          className="min-h-[44px] px-2 py-1 bg-slate-800/80 hover:bg-slate-700 text-slate-300 rounded-lg text-[10px] font-semibold border border-slate-700 flex items-center gap-1"
+                          title={item.isOuterwear ? '1枚ものに変更' : '羽織りに変更'}
+                        >
+                          <span>{item.isOuterwear ? '👔 1枚もの' : '🧥 羽織り'}</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => archiveItem(item.id)}
+                          className="min-h-[44px] px-2.5 py-1.5 bg-slate-800/80 hover:bg-slate-800 text-slate-300 hover:text-amber-300 border border-slate-700 rounded-lg text-xs font-semibold transition-all flex items-center gap-1 active:scale-95"
+                          title={`${item.name} を片付ける`}
+                        >
+                          <Package className="w-3.5 h-3.5 text-amber-400" />
+                          <span>片付ける</span>
+                        </button>
+                      </div>
                     </div>
                   ))}
                 </div>
