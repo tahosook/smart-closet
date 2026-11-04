@@ -256,13 +256,13 @@ export const WardrobeRebuildModal: React.FC<WardrobeRebuildModalProps> = ({
 
   const processRebuildJsonText = (rawText: string) => {
     setParseError(null);
-    setRebuildSuccessMessage(null);
     const result = validateAndBuildRebuildDiffs(rawText, closetData.items);
     if (!result.valid || !result.diffs) {
       setParseError(result.error || 'JSONの解析に失敗しました。');
       return false;
     }
 
+    setRebuildSuccessMessage(null);
     setRebuildDiffs(result.diffs);
 
     const initialFieldSelections: Record<string, RebuildFieldSelection> = {};
