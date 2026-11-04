@@ -2,12 +2,13 @@ export type Category = 'shirt' | 'pants';
 export type SceneMode = 'office' | 'remote';
 
 /**
- * 標準色パレット（全12色、青の濃淡3段：濃紺（ネイビー含む）／ブルー／淡青）
- * 奥さんのNG判定3類型（濃紺×濃紺、淡青×ブルー/淡青、生成り×淡色）を再現する語彙
+ * 標準色パレット（全13色、青の濃淡3段：濃紺（ネイビー含む）／ブルー／淡青、淡色：白／生成り／ベージュ／グレージュ等）
+ * 奥さんのNG判定3類型（濃紺×濃紺、淡青×ブルー/淡青、生成り・ベージュ×淡色）を再現する語彙
  */
 export const GARMENT_COLOR_PALETTE = [
   '白',
   '生成り',
+  'ベージュ',
   '黒',
   'チャコール',
   'ミディアムグレー',
@@ -235,6 +236,116 @@ export interface UploadImageResponse {
   itemId?: string;
   fileId?: string;
   modifiedTime?: number;
+}
+
+// ----------------------------------------------------
+// Google ドライブ画像削除関連の型定義 (重複解消用)
+// ----------------------------------------------------
+
+export interface DeleteImagesRequest {
+  action: 'deleteImages';
+  token?: string;
+  itemIds: string[];
+}
+
+export interface DeleteImagesResponse {
+  ok: boolean;
+  error?: string;
+  deletedItemIds?: string[];
+  notFoundItemIds?: string[];
+}
+
+// ----------------------------------------------------
+// 重複検出・統合関連の型定義
+// ----------------------------------------------------
+
+export type DuplicateMatchReason = 'exact_photo' | 'similar_photo' | 'identical_details' | 'manual';
+
+export interface DuplicateGroupCandidate {
+  groupId: string;
+  category: Category;
+  itemIds: string[];
+  defaultSurvivorId: string;
+  reason: DuplicateMatchReason;
+  similarityDetail: string;
+}
+
+export interface DuplicateMergeSelection {
+  survivorId: string;
+  removedIds: string[];
+  included: boolean;
+}
+
+export interface DuplicateMergePreview {
+  totalRemovedCount: number;
+  affectedWearRecordsCount: number;
+  affectedWifeNgCount: number;
+  affectedPeerItemsCount: number;
+  itemsAfterCount: number;
+}
+
+export interface DuplicateMergeExecutionResult {
+  ok: boolean;
+  closetData: ClosetData;
+  wearHistory: WearRecord[];
+  wifeNgPairs: WifeNgPair[];
+  tombstones: SyncTombstones;
+  mergedCount: number;
+  removedItemIds: string[];
+  error?: string;
+}
+
+// ----------------------------------------------------
+// 全件リビルド・差分選択適用関連の型定義
+// ----------------------------------------------------
+
+export interface RebuildCandidateItem {
+  id: string;
+  category: Category;
+  name: string;
+  color?: GarmentColor;
+  seasonSleeve: string;
+  dressScore: number;
+  comfortScore: number;
+  measurements?: GarmentMeasurements;
+  officeRecommendIds: string[];
+  remoteRecommendIds: string[];
+  ngIds: string[];
+  ngReason: string;
+  notes: string;
+}
+
+export interface RebuildPayload {
+  rebuildItems: RebuildCandidateItem[];
+}
+
+export type RebuildFieldKey =
+  | 'name'
+  | 'color'
+  | 'seasonSleeve'
+  | 'scores'
+  | 'measurements'
+  | 'notes'
+  | 'compatibility';
+
+export type RebuildFieldSelection = Record<RebuildFieldKey, boolean>;
+
+export interface RebuildItemDiff {
+  id: string;
+  category: Category;
+  before: ClosetItem;
+  after: ClosetItem;
+  changedFields: RebuildFieldKey[];
+  isColorProtected: boolean;
+  isMeasurementsProtected: boolean;
+  defaultSelection: RebuildFieldSelection;
+}
+
+export interface RebuildApplyResult {
+  valid: boolean;
+  data?: ClosetData;
+  appliedItemsCount: number;
+  error?: string;
 }
 
 // ----------------------------------------------------
