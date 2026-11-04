@@ -2887,7 +2887,7 @@ export function computeRebuildDiffs(params: {
       officeRecommendIds: rebuild.officeRecommendIds,
       remoteRecommendIds: rebuild.remoteRecommendIds,
       ngIds: rebuild.ngIds,
-      ngReason: rebuild.ngReason || current.ngReason,
+      ngReason: rebuild.ngReason,
       measurements: rebuild.measurements || current.measurements,
     };
 

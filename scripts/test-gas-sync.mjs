@@ -4770,6 +4770,33 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
   });
   assert.ok(diffReasonOnly[0].changedFields.includes('compatibility'), 'ngReason difference alone must trigger compatibility diff');
 
+  // 既存 ngReason が非空で候補が空文字のときに、applyRebuildDiffs 後の ngReason が空文字になることの検証
+  const currentWithNgReason = { ...currentItems[0], ngReason: '旧NG理由（要解除）' };
+  const rebuildWithEmptyNgReason = {
+    ...parsed.items[0],
+    officeRecommendIds: currentWithNgReason.officeRecommendIds,
+    remoteRecommendIds: currentWithNgReason.remoteRecommendIds,
+    ngIds: [],
+    ngReason: '',
+  };
+  const diffsReasonClear = computeRebuildDiffs({
+    currentItems: [currentWithNgReason],
+    rebuildItems: [rebuildWithEmptyNgReason],
+  });
+  assert.equal(diffsReasonClear[0].after.ngReason, '', 'afterItem.ngReason must be empty string without fallback');
+  assert.ok(diffsReasonClear[0].changedFields.includes('compatibility'), 'Clearing ngReason must trigger compatibility diff');
+
+  const applyClearRes = applyRebuildDiffs({
+    closetData: { updatedAt: 1000, items: [currentWithNgReason] },
+    diffs: diffsReasonClear,
+    fieldSelections: {
+      S1: { ...diffsReasonClear[0].defaultSelection, compatibility: true },
+    },
+  });
+  assert.equal(applyClearRes.valid, true);
+  const clearedItem = applyClearRes.data.items.find((it) => it.id === 'S1');
+  assert.equal(clearedItem.ngReason, '', 'ngReason must become empty string after applyRebuildDiffs');
+
   const p1Diff = diffs.find((d) => d.id === 'P1');
   assert.ok(p1Diff);
   assert.equal(p1Diff.isColorProtected, false, 'P1 color was unconfirmed, so not protected');
