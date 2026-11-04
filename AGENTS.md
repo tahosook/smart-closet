@@ -20,6 +20,7 @@ This file serves as the operational contract for AI agents (Antigravity, Codex, 
 - `scripts/`: Verification & test suite (`validate-closet.mjs`, `test-gas-sync.mjs`, `sync-images.sh`).
 
 ### Task-Specific Knowledge Routers (Single Sources of Truth)
+- **Feature Map & Rebuild Rules:** Consult [docs/FEATURE_MAP.md](docs/FEATURE_MAP.md) for feature inventory, homes, rebuild tiers, and unified vocabulary.
 - **UI & Logic Specs:** Consult [docs/SPECIFICATION.md](docs/SPECIFICATION.md) for view behaviors and scoring algorithms.
 - **Wardrobe & Styling Rules:** Consult [docs/STYLING_RULES.md](docs/STYLING_RULES.md) for 40s male color/pattern criteria and bias analysis.
 - **Wardrobe Addition Skill:** Follow [.agents/skills/manage-wardrobe/SKILL.md](.agents/skills/manage-wardrobe/SKILL.md) when adding/editing clothes.
