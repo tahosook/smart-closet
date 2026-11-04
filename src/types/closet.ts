@@ -454,15 +454,29 @@ export interface BatchGarmentsMergeResult {
 }
 
 // ----------------------------------------------------
-// クローゼット写真一覧（ギャラリー）関連の型定義
+// 画面共通フィルター定義の再エクスポート
 // ----------------------------------------------------
 
-export type { GalleryCategoryFilter } from '../utils/closetDomain';
+export type {
+  FilterOption,
+  ShirtCategoryFilter,
+  GalleryCategoryFilter,
+  MatrixCategoryFilter,
+  MatrixAnalysisFilter,
+  MatrixFilter,
+  MatrixFilterOption,
+} from '../utils/closetDomain';
+
 export {
+  SHIRT_CATEGORY_FILTER_OPTIONS,
+  GALLERY_CATEGORY_FILTER_OPTIONS,
+  MATRIX_CATEGORY_FILTER_OPTIONS,
+  MATRIX_ANALYSIS_FILTER_OPTIONS,
   filterAndSortGalleryItems,
   computeWearCountMap,
   resolveNextGalleryViewerItemId,
 } from '../utils/closetDomain';
+
 
 
 

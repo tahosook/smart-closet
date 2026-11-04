@@ -71,6 +71,10 @@ const {
   setShirtOuterwear,
   applyBatchOuterwearUpdates,
   buildBatchOuterwearAssessmentPrompt,
+  SHIRT_CATEGORY_FILTER_OPTIONS,
+  GALLERY_CATEGORY_FILTER_OPTIONS,
+  MATRIX_CATEGORY_FILTER_OPTIONS,
+  MATRIX_ANALYSIS_FILTER_OPTIONS,
   filterAndSortGalleryItems,
   computeWearCountMap,
   resolveNextGalleryViewerItemId,
@@ -5372,7 +5376,50 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
     'When list becomes empty, resolves to null'
   );
 
-  console.log('  ✅ Closet gallery domain logic (filtering, sorting, wear counting & viewer index resolution) verified');
+  // 4. Phase 1: 画面共通フィルター定義の単一正本化と用語集整合性検証
+  assert.deepEqual(
+    SHIRT_CATEGORY_FILTER_OPTIONS,
+    [
+      { id: 'all', label: 'すべて' },
+      { id: 'single', label: '👔 1枚もの' },
+      { id: 'outerwear', label: '🧥 羽織り' },
+    ],
+    'SHIRT_CATEGORY_FILTER_OPTIONS must match unified terminology'
+  );
+
+  assert.deepEqual(
+    GALLERY_CATEGORY_FILTER_OPTIONS,
+    [
+      { id: 'all', label: 'すべて' },
+      { id: 'shirt', label: '👔 1枚もの' },
+      { id: 'outerwear', label: '🧥 羽織り' },
+      { id: 'pants', label: '👖 パンツ' },
+    ],
+    'GALLERY_CATEGORY_FILTER_OPTIONS must be ordered as すべて, 👔 1枚もの, 🧥 羽織り, 👖 パンツ'
+  );
+
+  assert.deepEqual(
+    MATRIX_CATEGORY_FILTER_OPTIONS,
+    [
+      { id: 'all', label: 'すべて' },
+      { id: 'single_shirt', label: '👔 1枚もの' },
+      { id: 'outerwear', label: '🧥 羽織り' },
+    ],
+    'MATRIX_CATEGORY_FILTER_OPTIONS must match classification terminology'
+  );
+
+  assert.deepEqual(
+    MATRIX_ANALYSIS_FILTER_OPTIONS,
+    [
+      { id: 'warning', label: '⚠️ 要注意のみ' },
+      { id: 'office', label: '🏢 出社対応のみ' },
+      { id: 'long', label: '長袖のみ' },
+      { id: 'short', label: '☀️ 七分袖・半袖のみ' },
+    ],
+    'MATRIX_ANALYSIS_FILTER_OPTIONS must match analysis/condition terminology'
+  );
+
+  console.log('  ✅ Closet gallery domain logic & centralized filter definitions verified');
 }
 
 console.log('🎉 All GAS backend & sync logic tests passed successfully!');

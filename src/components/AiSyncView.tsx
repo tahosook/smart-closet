@@ -1932,7 +1932,7 @@ ${wifeNgSummary}
                 <div className="flex items-center justify-between mb-1.5">
                   <label className="text-[11px] font-bold text-slate-300 flex items-center gap-1.5">
                     <Palette className="w-3.5 h-3.5 text-blue-400" />
-                    <span>色パレット（12色から1つ選択）</span>
+                    <span>色パレット（13色から1つ選択）</span>
                   </label>
                   <span className="text-[10px] text-blue-400 font-mono">
                     選択中: {draftEditItem.color || '未設定'}
@@ -1944,7 +1944,7 @@ ${wifeNgSummary}
                   <div className="mb-2 p-2 bg-amber-950/60 border border-amber-800/70 rounded-xl flex items-center gap-2 text-xs text-amber-300">
                     <AlertCircle className="w-4 h-4 flex-shrink-0 text-amber-400" />
                     <span>
-                      ⚠️ 色：未確定{draftEditItem.color ? `（目安：${draftEditItem.color}）` : ''} — 下の12色からタップして確定するか、未確定のまま登録できます。
+                      ⚠️ 色：未確定{draftEditItem.color ? `（目安：${draftEditItem.color}）` : ''} — 下の13色からタップして確定するか、未確定のまま登録できます。
                     </span>
                   </div>
                 )}
@@ -2436,7 +2436,7 @@ ${wifeNgSummary}
                                 <div className="mb-2 p-2 bg-amber-950/60 border border-amber-800/70 rounded-xl flex items-center gap-2 text-xs text-amber-300">
                                   <AlertCircle className="w-3.5 h-3.5 flex-shrink-0 text-amber-400" />
                                   <span>
-                                    ⚠️ 色：未確定{draft.color ? `（目安：${draft.color}）` : ''} — 12色チップから選択して確定するか、未確定のまま登録できます。
+                                    ⚠️ 色：未確定{draft.color ? `（目安：${draft.color}）` : ''} — 13色チップから選択して確定するか、未確定のまま登録できます。
                                   </span>
                                 </div>
                               )}

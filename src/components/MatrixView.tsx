@@ -10,22 +10,15 @@ import {
   ShieldAlert,
   Sparkles,
 } from 'lucide-react';
-import { ClosetItem } from '../types/closet';
+import {
+  ClosetItem,
+  MatrixFilter,
+  MATRIX_CATEGORY_FILTER_OPTIONS,
+  MATRIX_ANALYSIS_FILTER_OPTIONS,
+} from '../types/closet';
 import { useClosetStore } from '../hooks/useClosetStore';
 import { ItemImage } from './ItemImage';
 import { analyzeWardrobeStats } from '../utils/closetDomain';
-
-type MatrixFilter = 'all' | 'outerwear' | 'single_shirt' | 'warning' | 'office' | 'long' | 'short';
-
-const FILTER_OPTIONS: { id: MatrixFilter; label: string }[] = [
-  { id: 'all', label: 'すべて' },
-  { id: 'outerwear', label: '🧥 羽織りのみ' },
-  { id: 'single_shirt', label: '👔 1枚もののみ' },
-  { id: 'warning', label: '⚠️ 要注意アイテムのみ' },
-  { id: 'office', label: '🏢 出社対応のみ' },
-  { id: 'long', label: '長袖のみ' },
-  { id: 'short', label: '☀️ 七分袖・半袖のみ' },
-];
 
 export const MatrixView: React.FC = () => {
   const {
@@ -472,27 +465,51 @@ export const MatrixView: React.FC = () => {
 
         {isTableExpanded && (
           <div className="p-3 space-y-3 animate-fade-in">
-            {/* 統一フィルターバー（表の上部に内包） */}
-            <div className="space-y-1.5">
+            {/* 統一フィルターバー（表の上部に内包：分類と分析・季節条件を分離） */}
+            <div className="space-y-2.5 p-2.5 bg-slate-900/60 border border-slate-800 rounded-xl">
               <div className="flex items-center gap-1.5 text-xs font-bold text-slate-300">
                 <Filter className="w-3.5 h-3.5 text-blue-400" />
                 <span>表示フィルター</span>
               </div>
-              <div className="flex flex-wrap gap-1.5">
-                {FILTER_OPTIONS.map((opt) => (
-                  <button
-                    key={opt.id}
-                    type="button"
-                    onClick={() => setActiveFilter(opt.id)}
-                    className={`min-h-[44px] px-3 py-2 rounded-xl text-xs font-bold transition-all ${
-                      activeFilter === opt.id
-                        ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/40 ring-1 ring-blue-400'
-                        : 'bg-slate-800/80 text-slate-300 hover:bg-slate-750 hover:text-white border border-slate-700/60'
-                    }`}
-                  >
-                    {opt.label}
-                  </button>
-                ))}
+              <div className="space-y-2">
+                <div className="flex flex-col sm:flex-row sm:items-center gap-1.5 sm:gap-2">
+                  <span className="text-[11px] font-semibold text-slate-400 min-w-[36px]">分類</span>
+                  <div className="flex flex-wrap gap-1.5 flex-1">
+                    {MATRIX_CATEGORY_FILTER_OPTIONS.map((opt) => (
+                      <button
+                        key={opt.id}
+                        type="button"
+                        onClick={() => setActiveFilter(opt.id)}
+                        className={`min-h-[44px] px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                          activeFilter === opt.id
+                            ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/40 ring-1 ring-blue-400'
+                            : 'bg-slate-800/80 text-slate-300 hover:bg-slate-750 hover:text-white border border-slate-700/60'
+                        }`}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="flex flex-col sm:flex-row sm:items-center gap-1.5 sm:gap-2 pt-2 border-t border-slate-800/80">
+                  <span className="text-[11px] font-semibold text-slate-400 min-w-[36px]">条件</span>
+                  <div className="flex flex-wrap gap-1.5 flex-1">
+                    {MATRIX_ANALYSIS_FILTER_OPTIONS.map((opt) => (
+                      <button
+                        key={opt.id}
+                        type="button"
+                        onClick={() => setActiveFilter(opt.id)}
+                        className={`min-h-[44px] px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                          activeFilter === opt.id
+                            ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/40 ring-1 ring-blue-400'
+                            : 'bg-slate-800/80 text-slate-300 hover:bg-slate-750 hover:text-white border border-slate-700/60'
+                        }`}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
               </div>
             </div>
 
