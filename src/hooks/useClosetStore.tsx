@@ -1210,6 +1210,16 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         return result;
       }
 
+      // localStorage への保存前に最終データへ validateClosetDataSchema を適用
+      const schemaValidation = validateClosetDataSchema(result.data);
+      if (!schemaValidation.valid) {
+        return {
+          valid: false,
+          appliedItemsCount: 0,
+          error: `リビルド適用データのスキーマ検証に失敗しました: ${schemaValidation.error}`,
+        };
+      }
+
       mutationSeqRef.current++;
       customDataSeqRef.current++;
 

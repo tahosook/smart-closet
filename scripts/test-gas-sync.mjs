@@ -4675,10 +4675,18 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
       "seasonSleeve": "長袖・通年",
       "dressScore": 3.5,
       "comfortScore": 4.5,
+      "measurements": {
+        "bodyLength": 72.3,
+        "chestWidth": 54.2,
+        "shoulderWidth": 46.0,
+        "sleeveLength": 61.0,
+        "invalidKey": "ignored"
+      },
       "notes": "新メモ",
-      "officeRecommendIds": ["P1"],
-      "remoteRecommendIds": [],
-      "ngIds": []
+      "officeRecommendIds": ["P1", "P99", "S2"],
+      "remoteRecommendIds": ["P1"],
+      "ngIds": ["P1"],
+      "ngReason": "更新されたNG理由"
     },
     {
       "id": "P1",
@@ -4687,6 +4695,7 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
       "seasonSleeve": "通年",
       "dressScore": 4.0,
       "comfortScore": 4.0,
+      "measurements": { "invalidField": -10 },
       "notes": "新メモ",
       "officeRecommendIds": ["S1"],
       "remoteRecommendIds": [],
@@ -4696,12 +4705,48 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
 }
 \`\`\``;
 
-  const parsed = parseRebuildInputJson(jsonWithFence);
+  const parsed = parseRebuildInputJson(jsonWithFence, currentItems);
   assert.equal(parsed.valid, true);
   assert.equal(parsed.items.length, 2);
   // ネイビーが濃紺に自動補正されていること
   assert.equal(parsed.items[0].color, '濃紺');
   assert.equal(parsed.items[1].color, 'ベージュ');
+
+  // measurements が validateGarmentMeasurements で正規化（0.5cm刻み）されていること
+  assert.deepEqual(parsed.items[0].measurements, {
+    bodyLength: 72.5,
+    chestWidth: 54.0,
+    shoulderWidth: 46.0,
+    sleeveLength: 61.0,
+  });
+  // 不正な measurements は undefined として処理されること
+  assert.equal(parsed.items[1].measurements, undefined);
+
+  // 相性配列の正規化検証:
+  // - 非実在ID 'P99' や同カテゴリ 'S2' が除外されていること
+  // - ngIds にある 'P1' が優先され、office/remote から除外されていること
+  assert.deepEqual(parsed.items[0].ngIds, ['P1']);
+  assert.deepEqual(parsed.items[0].officeRecommendIds, []);
+  assert.deepEqual(parsed.items[0].remoteRecommendIds, []);
+
+  // dressScore / comfortScore の厳格検証（範囲外・不正値でエラーとなること）
+  const invalidScoreJson = JSON.stringify({
+    rebuildItems: [
+      { id: 'S1', dressScore: 0.5, comfortScore: 4.0 },
+    ],
+  });
+  const invalidScoreParsed = parseRebuildInputJson(invalidScoreJson, currentItems);
+  assert.equal(invalidScoreParsed.valid, false);
+  assert.ok(invalidScoreParsed.error.includes('dressScore'));
+
+  const invalidComfortJson = JSON.stringify({
+    rebuildItems: [
+      { id: 'S1', dressScore: 3.0, comfortScore: 5.5 },
+    ],
+  });
+  const invalidComfortParsed = parseRebuildInputJson(invalidComfortJson, currentItems);
+  assert.equal(invalidComfortParsed.valid, false);
+  assert.ok(invalidComfortParsed.error.includes('comfortScore'));
 
   // 2. computeRebuildDiffs の保護ロック検証
   const diffs = computeRebuildDiffs({
@@ -4716,6 +4761,14 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
   assert.equal(s1Diff.isMeasurementsProtected, true, 'S1 measurements must be protected');
   assert.equal(s1Diff.defaultSelection.color, false, 'Default color selection must be false (protected)');
   assert.equal(s1Diff.defaultSelection.name, true, 'Default name selection must be true (changed)');
+  assert.equal(s1Diff.changedFields.includes('compatibility'), true, 'compatibility must be marked changed due to ngReason');
+
+  // ngReason のみの変更でも compatibility が差分として検出されることの単体検証
+  const diffReasonOnly = computeRebuildDiffs({
+    currentItems: [{ ...currentItems[0], ngReason: '旧理由' }],
+    rebuildItems: [{ ...parsed.items[0], officeRecommendIds: currentItems[0].officeRecommendIds, remoteRecommendIds: currentItems[0].remoteRecommendIds, ngIds: currentItems[0].ngIds, ngReason: '新理由のみ変更' }],
+  });
+  assert.ok(diffReasonOnly[0].changedFields.includes('compatibility'), 'ngReason difference alone must trigger compatibility diff');
 
   const p1Diff = diffs.find((d) => d.id === 'P1');
   assert.ok(p1Diff);
@@ -4744,6 +4797,14 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
 
   const appliedP1 = applyRes.data.items.find((it) => it.id === 'P1');
   assert.equal(appliedP1.color, 'ベージュ', 'P1 color must be updated to ベージュ');
+
+  // 4. validateClosetDataSchema による最終データ保護の検証
+  const schemaRes = validateClosetDataSchema(applyRes.data);
+  assert.equal(schemaRes.valid, true, 'Rebuild applied data must pass validateClosetDataSchema');
+
+  // 不正データ（例: 不正スコア等）を含む場合にスキーマ検証が失敗することの確認
+  const brokenData = { ...applyRes.data, items: [{ ...appliedS1, dressScore: 99 }] };
+  assert.equal(validateClosetDataSchema(brokenData).valid, false, 'Invalid schema must be rejected');
 
   console.log('  ✅ Wardrobe rebuild pure domain logic (protected lock & selective apply) verified');
 }

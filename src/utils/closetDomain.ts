@@ -2612,7 +2612,10 @@ ${pantsList}
 /**
  * ユーザーが貼り付けたリビルドJSONを検証・パースする純粋関数
  */
-export function parseRebuildInputJson(jsonStr: string): {
+export function parseRebuildInputJson(
+  jsonStr: string,
+  existingItems?: ClosetItem[]
+): {
   valid: boolean;
   items?: RebuildCandidateItem[];
   error?: string;
@@ -2654,6 +2657,14 @@ export function parseRebuildInputJson(jsonStr: string): {
     return { valid: false, error: 'リビルド対象アイテムの配列が空です。' };
   }
 
+  // 反対カテゴリの有効なID集合（existingItems が渡されている場合）
+  const validOppositePantsIds = existingItems
+    ? new Set(existingItems.filter((it) => it.category === 'pants').map((it) => it.id))
+    : null;
+  const validOppositeShirtIds = existingItems
+    ? new Set(existingItems.filter((it) => it.category === 'shirt').map((it) => it.id))
+    : null;
+
   const validatedItems: RebuildCandidateItem[] = [];
   const seenIds = new Set<string>();
 
@@ -2689,17 +2700,74 @@ export function parseRebuildInputJson(jsonStr: string): {
     }
 
     const seasonSleeve = typeof raw.seasonSleeve === 'string' ? raw.seasonSleeve.trim() : '通年';
-    const dressScore = typeof raw.dressScore === 'number' && !isNaN(raw.dressScore) ? raw.dressScore : 3.0;
-    const comfortScore = typeof raw.comfortScore === 'number' && !isNaN(raw.comfortScore) ? raw.comfortScore : 3.0;
 
+    // dressScore / comfortScore: 1.0〜5.0 の有限数のみを有効とし、範囲外・不正値はエラー
+    if (
+      typeof raw.dressScore !== 'number' ||
+      !Number.isFinite(raw.dressScore) ||
+      raw.dressScore < 1.0 ||
+      raw.dressScore > 5.0
+    ) {
+      return {
+        valid: false,
+        error: `アイテム [${id}] の dressScore (${raw.dressScore}) が不正です。1.0〜5.0 の数値を指定してください。`,
+      };
+    }
+
+    if (
+      typeof raw.comfortScore !== 'number' ||
+      !Number.isFinite(raw.comfortScore) ||
+      raw.comfortScore < 1.0 ||
+      raw.comfortScore > 5.0
+    ) {
+      return {
+        valid: false,
+        error: `アイテム [${id}] の comfortScore (${raw.comfortScore}) が不正です。1.0〜5.0 の数値を指定してください。`,
+      };
+    }
+
+    const dressScore = raw.dressScore;
+    const comfortScore = raw.comfortScore;
+
+    // measurements: validateGarmentMeasurements を通し、不正な場合は undefined
+    const measurements = validateGarmentMeasurements(raw.measurements, category);
+
+    // 相性配列の検証と正規化
     const toStringArray = (arr: unknown): string[] => {
       if (!Array.isArray(arr)) return [];
       return arr.map((x) => String(x).trim().toUpperCase()).filter((x) => x.length > 0);
     };
 
-    const officeRecommendIds = toStringArray(raw.officeRecommendIds);
-    const remoteRecommendIds = toStringArray(raw.remoteRecommendIds);
-    const ngIds = toStringArray(raw.ngIds);
+    const targetOppositeIds = category === 'shirt' ? validOppositePantsIds : validOppositeShirtIds;
+    const filterOppositeIds = (ids: string[]): string[] => {
+      const res: string[] = [];
+      const seen = new Set<string>();
+      for (const tid of ids) {
+        if (seen.has(tid)) continue;
+        seen.add(tid);
+        const isOpposite = targetOppositeIds
+          ? targetOppositeIds.has(tid)
+          : category === 'shirt'
+          ? tid.startsWith('P')
+          : tid.startsWith('S');
+        if (isOpposite) {
+          res.push(tid);
+        }
+      }
+      return res;
+    };
+
+    // 推薦とNGに同じIDが含まれる場合は、NGを優先して推薦側から除外
+    const rawNg = toStringArray(raw.ngIds);
+    const ngIds = filterOppositeIds(rawNg);
+    const ngSet = new Set(ngIds);
+
+    const rawOffice = toStringArray(raw.officeRecommendIds);
+    const officeRecommendIds = filterOppositeIds(rawOffice).filter((tid) => !ngSet.has(tid));
+
+    const rawRemote = toStringArray(raw.remoteRecommendIds);
+    const remoteRecommendIds = filterOppositeIds(rawRemote).filter((tid) => !ngSet.has(tid));
+
     const ngReason = typeof raw.ngReason === 'string' ? raw.ngReason.trim() : '';
     const notes = typeof raw.notes === 'string' ? raw.notes.trim() : '';
 
@@ -2711,7 +2779,7 @@ export function parseRebuildInputJson(jsonStr: string): {
       seasonSleeve,
       dressScore,
       comfortScore,
-      measurements: raw.measurements,
+      measurements,
       officeRecommendIds,
       remoteRecommendIds,
       ngIds,
@@ -2773,7 +2841,7 @@ export function computeRebuildDiffs(params: {
       changedFields.push('notes');
     }
 
-    // 7. compatibility (office, remote, ng)
+    // 7. compatibility (office, remote, ng, ngReason)
     const arrayEqual = (a: string[] = [], b: string[] = []) => {
       if (a.length !== b.length) return false;
       const sortedA = [...a].sort();
@@ -2781,10 +2849,13 @@ export function computeRebuildDiffs(params: {
       return sortedA.every((v, i) => v === sortedB[i]);
     };
 
+    const hasNgReasonDiff = (current.ngReason || '').trim() !== (rebuild.ngReason || '').trim();
+
     if (
       !arrayEqual(current.officeRecommendIds, rebuild.officeRecommendIds) ||
       !arrayEqual(current.remoteRecommendIds, rebuild.remoteRecommendIds) ||
-      !arrayEqual(current.ngIds, rebuild.ngIds)
+      !arrayEqual(current.ngIds, rebuild.ngIds) ||
+      hasNgReasonDiff
     ) {
       changedFields.push('compatibility');
     }

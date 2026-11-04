@@ -251,9 +251,32 @@ export const WardrobeRebuildModal: React.FC<WardrobeRebuildModalProps> = ({
 
   const handleParseRebuildJson = () => {
     setParseError(null);
-    const parsed = parseRebuildInputJson(rebuildJsonInput);
+    const parsed = parseRebuildInputJson(rebuildJsonInput, closetData.items);
     if (!parsed.valid || !parsed.items) {
       setParseError(parsed.error || 'JSONの解析に失敗しました。');
+      return;
+    }
+
+    // 全件の完全性チェック: Gemini 回答のID集合がリビルド対象のID集合と完全一致するか（不足・余分・重複なし）
+    const targetItemIds = closetData.items.map((it) => it.id);
+    const targetIdSet = new Set(targetItemIds);
+    const parsedItemIds = parsed.items.map((it) => it.id);
+    const parsedIdSet = new Set(parsedItemIds);
+
+    const missingIds = targetItemIds.filter((id) => !parsedIdSet.has(id));
+    const extraIds = parsedItemIds.filter((id) => !targetIdSet.has(id));
+
+    if (missingIds.length > 0 || extraIds.length > 0) {
+      const errorParts: string[] = [];
+      if (missingIds.length > 0) {
+        errorParts.push(`不足しているアイテムID (${missingIds.length}着): ${missingIds.join(', ')}`);
+      }
+      if (extraIds.length > 0) {
+        errorParts.push(`対象外の余分なアイテムID (${extraIds.length}着): ${extraIds.join(', ')}`);
+      }
+      setParseError(
+        `リビルド対象（全${targetItemIds.length}着）と回答内容が完全一致しません。\n${errorParts.join('\n')}`
+      );
       return;
     }
 
@@ -982,14 +1005,16 @@ export const WardrobeRebuildModal: React.FC<WardrobeRebuildModalProps> = ({
                                 className="w-4 h-4 mt-0.5 text-indigo-600 rounded"
                               />
                               <div className="flex-1">
-                                <span className="font-bold text-slate-700">相性・NGリスト:</span>
+                                <span className="font-bold text-slate-700">相性・NG・理由:</span>
                                 <div className="text-slate-500">
                                   現行: 出社[{(diff.before.officeRecommendIds || []).join(',')}] / NG[
                                   {(diff.before.ngIds || []).join(',')}]
+                                  {diff.before.ngReason ? ` (理由: ${diff.before.ngReason})` : ''}
                                 </div>
                                 <div className="text-emerald-700 font-medium">
                                   新: 出社[{(diff.after.officeRecommendIds || []).join(',')}] / NG[
                                   {(diff.after.ngIds || []).join(',')}]
+                                  {diff.after.ngReason ? ` (理由: ${diff.after.ngReason})` : ''}
                                 </div>
                               </div>
                             </label>
