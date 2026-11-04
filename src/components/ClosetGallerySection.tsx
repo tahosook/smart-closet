@@ -9,7 +9,11 @@ import {
   Undo2,
   Check,
 } from 'lucide-react';
-import { ClosetItem, GalleryCategoryFilter } from '../types/closet';
+import {
+  ClosetItem,
+  GalleryCategoryFilter,
+  GALLERY_CATEGORY_FILTER_OPTIONS,
+} from '../types/closet';
 import { useClosetStore } from '../hooks/useClosetStore';
 import { ItemImage } from './ItemImage';
 import {
@@ -206,50 +210,20 @@ export const ClosetGallerySection: React.FC = () => {
       <div className="space-y-2">
         {/* カテゴリ絞り込み（44px以上のタップターゲット） */}
         <div className="flex items-center gap-1.5 p-1 bg-slate-900/80 border border-slate-800 rounded-xl">
-          <button
-            type="button"
-            onClick={() => setFilter('all')}
-            className={`min-h-[44px] flex-1 py-1.5 px-2 rounded-lg text-xs font-bold transition-all ${
-              filter === 'all'
-                ? 'bg-blue-600 text-white shadow-sm'
-                : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            すべて
-          </button>
-          <button
-            type="button"
-            onClick={() => setFilter('shirt')}
-            className={`min-h-[44px] flex-1 py-1.5 px-2 rounded-lg text-xs font-bold transition-all ${
-              filter === 'shirt'
-                ? 'bg-blue-600 text-white shadow-sm'
-                : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            👔 シャツ
-          </button>
-          <button
-            type="button"
-            onClick={() => setFilter('pants')}
-            className={`min-h-[44px] flex-1 py-1.5 px-2 rounded-lg text-xs font-bold transition-all ${
-              filter === 'pants'
-                ? 'bg-blue-600 text-white shadow-sm'
-                : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            👖 パンツ
-          </button>
-          <button
-            type="button"
-            onClick={() => setFilter('outerwear')}
-            className={`min-h-[44px] flex-1 py-1.5 px-2 rounded-lg text-xs font-bold transition-all ${
-              filter === 'outerwear'
-                ? 'bg-blue-600 text-white shadow-sm'
-                : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            🧥 羽織り
-          </button>
+          {GALLERY_CATEGORY_FILTER_OPTIONS.map((opt) => (
+            <button
+              key={opt.id}
+              type="button"
+              onClick={() => setFilter(opt.id)}
+              className={`min-h-[44px] flex-1 py-1.5 px-2 rounded-lg text-xs font-bold transition-all ${
+                filter === opt.id
+                  ? 'bg-blue-600 text-white shadow-sm'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              {opt.label}
+            </button>
+          ))}
         </div>
 
         {/* 片付けた服も表示トグル */}
@@ -335,7 +309,7 @@ export const ClosetGallerySection: React.FC = () => {
                   {/* 保管中バッジ */}
                   {isArchived && (
                     <span className="absolute bottom-1 left-1 right-1 text-center py-0.5 rounded text-[9px] font-bold bg-amber-950/95 text-amber-300 border border-amber-800/80 shadow-md truncate">
-                      📦 保管中
+                      📦 片付けた服
                     </span>
                   )}
                 </div>
@@ -389,7 +363,7 @@ export const ClosetGallerySection: React.FC = () => {
               )}
               {currentViewerItem.archived && (
                 <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-950 text-amber-300 border border-amber-700/60">
-                  📦 保管中
+                  📦 片付けた服
                 </span>
               )}
             </div>
@@ -491,7 +465,7 @@ export const ClosetGallerySection: React.FC = () => {
                   {currentViewerItem.category === 'shirt'
                     ? currentViewerItem.isOuterwear
                       ? '羽織り'
-                      : '1枚ものシャツ'
+                      : '1枚もの'
                     : 'パンツ'}
                 </span>
                 {currentViewerItem.notes && (
@@ -514,7 +488,7 @@ export const ClosetGallerySection: React.FC = () => {
                   title={`${currentViewerItem.name} を現役に復帰させる`}
                 >
                   <Undo2 className="w-4 h-4" />
-                  <span>現役に復帰する（出す）</span>
+                  <span>出す</span>
                 </button>
               ) : (
                 <button
@@ -524,7 +498,7 @@ export const ClosetGallerySection: React.FC = () => {
                   title={`${currentViewerItem.name} を片付ける`}
                 >
                   <Package className="w-4 h-4 text-amber-400" />
-                  <span>片付ける（オフシーズン保管）</span>
+                  <span>片付ける</span>
                 </button>
               )}
 
@@ -537,7 +511,7 @@ export const ClosetGallerySection: React.FC = () => {
                   title={currentViewerItem.isOuterwear ? '1枚ものに変更' : '羽織りに変更'}
                 >
                   <span>
-                    {currentViewerItem.isOuterwear ? '👔 1枚ものに戻す' : '🧥 羽織りに変更'}
+                    {currentViewerItem.isOuterwear ? '👔 1枚ものに変更' : '🧥 羽織りに変更'}
                   </span>
                 </button>
               )}

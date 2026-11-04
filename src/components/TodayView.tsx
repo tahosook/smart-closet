@@ -14,7 +14,13 @@ import {
   Maximize2,
   ArrowUp,
 } from 'lucide-react';
-import { SceneMode, ClosetItem, GarmentMeasurements } from '../types/closet';
+import {
+  SceneMode,
+  ClosetItem,
+  GarmentMeasurements,
+  ShirtCategoryFilter,
+  SHIRT_CATEGORY_FILTER_OPTIONS,
+} from '../types/closet';
 import { useClosetStore } from '../hooks/useClosetStore';
 import { WeatherWidget, WeatherData } from './WeatherWidget';
 import { ItemImage } from './ItemImage';
@@ -61,7 +67,7 @@ export const TodayView: React.FC = () => {
 
   const [scene, setScene] = useState<SceneMode>('office');
   const [sleeveCategory, setSleeveCategory] = useState<'short' | 'seven' | 'long'>('long');
-  const [shirtTypeFilter, setShirtTypeFilter] = useState<'all' | 'single' | 'outerwear'>('all');
+  const [shirtTypeFilter, setShirtTypeFilter] = useState<ShirtCategoryFilter>('all');
   const [showHiddenShirts, setShowHiddenShirts] = useState(false);
   const [showOtherPants, setShowOtherPants] = useState(false);
   const [showNgAccordion, setShowNgAccordion] = useState(false);
@@ -357,7 +363,7 @@ export const TodayView: React.FC = () => {
         <div className="text-3xl">👕</div>
         <h3 className="text-base font-bold text-white">利用可能なシャツがありません</h3>
         <p className="text-xs text-slate-400 leading-relaxed max-w-sm mx-auto">
-          すべてのシャツが「片付けた服」に入っているか、登録されていません。「服追加・AI」タブの「ワードローブ整理」セクションから「出す」で戻すことができます。
+          すべてのシャツが「片付けた服」に入っているか、登録されていません。「管理」タブの「ワードローブ整理」セクションから「出す」で戻すことができます。
         </p>
       </div>
     );
@@ -463,39 +469,20 @@ export const TodayView: React.FC = () => {
 
         {/* Shirt Category Type Filter Pills */}
         <div className="flex items-center gap-1.5 p-1 bg-slate-900/70 border border-slate-800 rounded-xl">
-          <button
-            type="button"
-            onClick={() => setShirtTypeFilter('all')}
-            className={`min-h-[44px] flex-1 py-1.5 px-2 rounded-lg text-xs font-bold transition-all ${
-              shirtTypeFilter === 'all'
-                ? 'bg-blue-600 text-white shadow-sm'
-                : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            すべて
-          </button>
-          <button
-            type="button"
-            onClick={() => setShirtTypeFilter('single')}
-            className={`min-h-[44px] flex-1 py-1.5 px-2 rounded-lg text-xs font-bold transition-all ${
-              shirtTypeFilter === 'single'
-                ? 'bg-blue-600 text-white shadow-sm'
-                : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            👔 1枚もの
-          </button>
-          <button
-            type="button"
-            onClick={() => setShirtTypeFilter('outerwear')}
-            className={`min-h-[44px] flex-1 py-1.5 px-2 rounded-lg text-xs font-bold transition-all ${
-              shirtTypeFilter === 'outerwear'
-                ? 'bg-blue-600 text-white shadow-sm'
-                : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            🧥 羽織り
-          </button>
+          {SHIRT_CATEGORY_FILTER_OPTIONS.map((opt) => (
+            <button
+              key={opt.id}
+              type="button"
+              onClick={() => setShirtTypeFilter(opt.id)}
+              className={`min-h-[44px] flex-1 py-1.5 px-2 rounded-lg text-xs font-bold transition-all ${
+                shirtTypeFilter === opt.id
+                  ? 'bg-blue-600 text-white shadow-sm'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              {opt.label}
+            </button>
+          ))}
         </div>
 
         {/* Matching Shirts (Primary View - Large 3-Column Grid) */}

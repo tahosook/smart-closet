@@ -12,6 +12,10 @@ import {
   FolderSync,
   Layers,
 } from 'lucide-react';
+import {
+  ShirtCategoryFilter,
+  SHIRT_CATEGORY_FILTER_OPTIONS,
+} from '../types/closet';
 import { useClosetStore } from '../hooks/useClosetStore';
 import { ItemImage } from './ItemImage';
 import { TravelPlannerView } from './TravelPlannerView';
@@ -31,7 +35,7 @@ export const ManageView: React.FC = () => {
   } = useClosetStore();
 
   const [isOrganizeOpen, setIsOrganizeOpen] = useState(false);
-  const [organizeFilter, setOrganizeFilter] = useState<'all' | 'outerwear' | 'single'>('all');
+  const [organizeFilter, setOrganizeFilter] = useState<ShirtCategoryFilter>('all');
   const [isBackupOpen, setIsBackupOpen] = useState(false);
   const [isRebuildOpen, setIsRebuildOpen] = useState(false);
   const [copiedJsonStatus, setCopiedJsonStatus] = useState<CopyFeedbackStatus>('idle');
@@ -90,7 +94,7 @@ export const ManageView: React.FC = () => {
             <span>📦 ワードローブ整理</span>
           </h2>
           <span className="text-xs font-mono font-bold text-amber-300 bg-amber-950/60 border border-amber-800/60 px-2.5 py-1 rounded-full">
-            {archivedItems.length}着 保管中
+            {archivedItems.length}着 片付けた服
           </span>
         </div>
 
@@ -100,39 +104,20 @@ export const ManageView: React.FC = () => {
 
         {/* 絞り込みピル */}
         <div className="flex items-center gap-1.5 p-1 bg-slate-900/70 border border-slate-800 rounded-xl">
-          <button
-            type="button"
-            onClick={() => setOrganizeFilter('all')}
-            className={`min-h-[44px] flex-1 py-1.5 px-2 rounded-lg text-xs font-bold transition-all ${
-              organizeFilter === 'all'
-                ? 'bg-blue-600 text-white shadow-sm'
-                : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            すべて
-          </button>
-          <button
-            type="button"
-            onClick={() => setOrganizeFilter('single')}
-            className={`min-h-[44px] flex-1 py-1.5 px-2 rounded-lg text-xs font-bold transition-all ${
-              organizeFilter === 'single'
-                ? 'bg-blue-600 text-white shadow-sm'
-                : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            👔 1枚もの
-          </button>
-          <button
-            type="button"
-            onClick={() => setOrganizeFilter('outerwear')}
-            className={`min-h-[44px] flex-1 py-1.5 px-2 rounded-lg text-xs font-bold transition-all ${
-              organizeFilter === 'outerwear'
-                ? 'bg-blue-600 text-white shadow-sm'
-                : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            🧥 羽織り
-          </button>
+          {SHIRT_CATEGORY_FILTER_OPTIONS.map((opt) => (
+            <button
+              key={opt.id}
+              type="button"
+              onClick={() => setOrganizeFilter(opt.id)}
+              className={`min-h-[44px] flex-1 py-1.5 px-2 rounded-lg text-xs font-bold transition-all ${
+                organizeFilter === opt.id
+                  ? 'bg-blue-600 text-white shadow-sm'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              {opt.label}
+            </button>
+          ))}
         </div>
 
         {/* 片付けた服一覧 */}
@@ -145,7 +130,7 @@ export const ManageView: React.FC = () => {
           {displayedArchivedItems.length === 0 ? (
             <div className="p-4 bg-slate-900/60 border border-slate-800 rounded-2xl text-center text-xs text-slate-400 leading-relaxed">
               {archivedItems.length === 0
-                ? '現在片付けた服はありません。着なくなった服は下の「現役の服から選んで片付ける」から仕舞うことができます。'
+                ? '現在片付けた服はありません。着なくなった服は下の「現役の服から選んで片付ける」から片付けることができます。'
                 : '現在の絞り込み条件に一致する片付けた服はありません。'}
             </div>
           ) : (
@@ -183,7 +168,7 @@ export const ManageView: React.FC = () => {
                         )}
                       </div>
                       <div className="text-[10px] text-slate-400 mt-0.5">
-                        {item.category === 'shirt' ? (item.isOuterwear ? '羽織り' : '1枚ものシャツ') : 'パンツ'} • {item.seasonSleeve} • ドレス度 {item.dressScore.toFixed(1)}
+                        {item.category === 'shirt' ? (item.isOuterwear ? '羽織り' : '1枚もの') : 'パンツ'} • {item.seasonSleeve} • ドレス度 {item.dressScore.toFixed(1)}
                       </div>
                       <div className="text-[10px] text-slate-400 truncate mt-0.5">
                         {item.notes || 'メモなし'}
@@ -207,7 +192,7 @@ export const ManageView: React.FC = () => {
                         className="min-h-[44px] px-2 py-1 bg-slate-800/80 hover:bg-slate-700 text-slate-300 rounded-lg text-[10px] font-semibold border border-slate-700 flex items-center justify-center gap-1"
                         title={item.isOuterwear ? '1枚ものに変更' : '羽織りに変更'}
                       >
-                        <span>{item.isOuterwear ? '👔 1枚もの' : '🧥 羽織り'}</span>
+                        <span>{item.isOuterwear ? '👔 1枚ものに変更' : '🧥 羽織りに変更'}</span>
                       </button>
                     )}
                   </div>
@@ -273,7 +258,7 @@ export const ManageView: React.FC = () => {
                           className="min-h-[44px] px-2 py-1 bg-slate-800/80 hover:bg-slate-700 text-slate-300 rounded-lg text-[10px] font-semibold border border-slate-700 flex items-center gap-1"
                           title={item.isOuterwear ? '1枚ものに変更' : '羽織りに変更'}
                         >
-                          <span>{item.isOuterwear ? '👔 1枚もの' : '🧥 羽織り'}</span>
+                          <span>{item.isOuterwear ? '👔 1枚ものに変更' : '🧥 羽織りに変更'}</span>
                         </button>
                         <button
                           type="button"

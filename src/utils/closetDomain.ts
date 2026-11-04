@@ -106,7 +106,7 @@ export function appendUnconfirmedColorNote(notes: string, unconfirmedColor: stri
 }
 
 /**
- * 指定された値が12色パレットに含まれる有効な色であるかを判定する
+ * 指定された値が13色パレットに含まれる有効な色であるかを判定する
  */
 export function isValidGarmentColor(val: unknown): val is GarmentColor {
   return typeof val === 'string' && (GARMENT_COLOR_PALETTE as readonly string[]).includes(val);
@@ -3298,10 +3298,65 @@ export function validateAndBuildRebuildDiffs(
 }
 
 // ----------------------------------------------------
-// クローゼット写真一覧（ギャラリー）関連のドメインロジック
+// 画面共通フィルター定義（単一の正本）
 // ----------------------------------------------------
 
-export type GalleryCategoryFilter = 'all' | 'shirt' | 'pants' | 'outerwear';
+export interface FilterOption<T extends string = string> {
+  id: T;
+  label: string;
+}
+
+/**
+ * シャツ分類フィルター（朝画面・ワードローブ整理）
+ */
+export type ShirtCategoryFilter = 'all' | 'single' | 'outerwear';
+
+export const SHIRT_CATEGORY_FILTER_OPTIONS: readonly FilterOption<ShirtCategoryFilter>[] = [
+  { id: 'all', label: 'すべて' },
+  { id: 'single', label: '👔 1枚もの' },
+  { id: 'outerwear', label: '🧥 羽織り' },
+] as const;
+
+/**
+ * ギャラリー分類フィルター（写真一覧）
+ * 並び順: すべて / 1枚もの / 羽織り / パンツ
+ */
+export type GalleryCategoryFilter = 'all' | 'shirt' | 'outerwear' | 'pants';
+
+export const GALLERY_CATEGORY_FILTER_OPTIONS: readonly FilterOption<GalleryCategoryFilter>[] = [
+  { id: 'all', label: 'すべて' },
+  { id: 'shirt', label: '👔 1枚もの' },
+  { id: 'outerwear', label: '🧥 羽織り' },
+  { id: 'pants', label: '👖 パンツ' },
+] as const;
+
+/**
+ * 相性マトリクス表示フィルター
+ * 分類軸（すべて / 1枚もの / 羽織り）と分析・季節条件軸（要注意 / 出社 / 長袖 / 半袖）に分離
+ */
+export type MatrixCategoryFilter = 'all' | 'single_shirt' | 'outerwear';
+
+export const MATRIX_CATEGORY_FILTER_OPTIONS: readonly FilterOption<MatrixCategoryFilter>[] = [
+  { id: 'all', label: 'すべて' },
+  { id: 'single_shirt', label: '👔 1枚もの' },
+  { id: 'outerwear', label: '🧥 羽織り' },
+] as const;
+
+export type MatrixAnalysisFilter = 'warning' | 'office' | 'long' | 'short';
+
+export const MATRIX_ANALYSIS_FILTER_OPTIONS: readonly FilterOption<MatrixAnalysisFilter>[] = [
+  { id: 'warning', label: '⚠️ 要注意のみ' },
+  { id: 'office', label: '🏢 出社対応のみ' },
+  { id: 'long', label: '長袖のみ' },
+  { id: 'short', label: '半袖のみ' },
+] as const;
+
+export type MatrixFilter = MatrixCategoryFilter | MatrixAnalysisFilter;
+export type MatrixFilterOption = FilterOption<MatrixFilter>;
+
+// ----------------------------------------------------
+// クローゼット写真一覧（ギャラリー）関連のドメインロジック
+// ----------------------------------------------------
 
 /**
  * クローゼット写真一覧（ギャラリー）用の絞り込みとソートを行う純粋関数
