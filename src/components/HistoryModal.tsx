@@ -70,6 +70,7 @@ export const HistoryModal: React.FC<HistoryModalProps> = ({ isOpen, onClose }) =
             wearHistory.map((rec) => {
               const shirt = itemMap.get(rec.shirtId);
               const p = itemMap.get(rec.pantsId);
+              const outerwear = rec.outerwearId ? itemMap.get(rec.outerwearId) : undefined;
 
               return (
                 <div
@@ -79,13 +80,18 @@ export const HistoryModal: React.FC<HistoryModalProps> = ({ isOpen, onClose }) =
                   <div className="flex items-center gap-2.5 min-w-0">
                     <div className="flex -space-x-2 flex-shrink-0">
                       {shirt && (
-                        <div className="w-8 h-8 rounded-lg overflow-hidden bg-slate-900 border border-slate-700">
+                        <div className="w-8 h-8 rounded-lg overflow-hidden bg-slate-900 border border-slate-700" title={`シャツ: ${shirt.name}`}>
                           <ItemImage item={shirt} showBadge={false} className="w-full h-full" />
                         </div>
                       )}
                       {p && (
-                        <div className="w-8 h-8 rounded-lg overflow-hidden bg-slate-900 border border-slate-700">
+                        <div className="w-8 h-8 rounded-lg overflow-hidden bg-slate-900 border border-slate-700" title={`パンツ: ${p.name}`}>
                           <ItemImage item={p} showBadge={false} className="w-full h-full" />
+                        </div>
+                      )}
+                      {outerwear && (
+                        <div className="w-8 h-8 rounded-lg overflow-hidden bg-slate-900 border border-amber-600/60 ring-1 ring-amber-500/40" title={`羽織り: ${outerwear.name}`}>
+                          <ItemImage item={outerwear} showBadge={false} className="w-full h-full" />
                         </div>
                       )}
                     </div>
@@ -95,6 +101,11 @@ export const HistoryModal: React.FC<HistoryModalProps> = ({ isOpen, onClose }) =
                       </div>
                       <div className="text-xs font-semibold text-white truncate">
                         {shirt?.name || rec.shirtId} × {p?.name || rec.pantsId}
+                        {outerwear && (
+                          <span className="text-amber-300 ml-1">
+                            ＋ 🧥 {outerwear.name}
+                          </span>
+                        )}
                       </div>
                     </div>
                   </div>

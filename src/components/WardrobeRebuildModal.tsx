@@ -332,6 +332,7 @@ export const WardrobeRebuildModal: React.FC<WardrobeRebuildModalProps> = ({
         measurements: false,
         notes: false,
         compatibility: false,
+        isOuterwear: false,
       };
       return {
         ...prev,
@@ -356,6 +357,7 @@ export const WardrobeRebuildModal: React.FC<WardrobeRebuildModalProps> = ({
             measurements: false,
             notes: false,
             compatibility: false,
+            isOuterwear: false,
           };
         } else if (filterProtected) {
           next[d.id] = { ...d.defaultSelection };
@@ -368,6 +370,7 @@ export const WardrobeRebuildModal: React.FC<WardrobeRebuildModalProps> = ({
             measurements: d.changedFields.includes('measurements'),
             notes: d.changedFields.includes('notes'),
             compatibility: d.changedFields.includes('compatibility'),
+            isOuterwear: d.changedFields.includes('isOuterwear'),
           };
         }
       }
@@ -1132,6 +1135,27 @@ export const WardrobeRebuildModal: React.FC<WardrobeRebuildModalProps> = ({
                                 <span className="font-bold text-slate-700">メモ:</span>
                                 <div className="text-slate-500 line-through">{diff.before.notes || 'なし'}</div>
                                 <div className="text-emerald-700 font-medium">{diff.after.notes || 'なし'}</div>
+                              </div>
+                            </label>
+                          )}
+
+                          {/* 7. 羽織り分類 */}
+                          {diff.changedFields.includes('isOuterwear') && (
+                            <label className="flex items-start gap-2 p-2 rounded bg-slate-50 hover:bg-slate-100 cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={selection.isOuterwear}
+                                onChange={() => handleToggleField(diff.id, 'isOuterwear')}
+                                className="w-4 h-4 mt-0.5 text-indigo-600 rounded"
+                              />
+                              <div className="flex-1">
+                                <span className="font-bold text-slate-700">羽織り分類:</span>
+                                <div className="text-slate-500 line-through">
+                                  {diff.before.isOuterwear ? '🧥 羽織り' : '👔 1枚もの'}
+                                </div>
+                                <div className="text-emerald-700 font-medium">
+                                  {diff.after.isOuterwear ? '🧥 羽織り' : '👔 1枚もの'}
+                                </div>
                               </div>
                             </label>
                           )}

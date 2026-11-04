@@ -65,6 +65,7 @@ export interface ClosetItem {
   notes: string;
   color?: GarmentColor;
   measurements?: GarmentMeasurements;
+  isOuterwear?: boolean; // シャツのうち羽織り（カーディガン・ジップアップ・ジップパーカー・ニットジャケット等）の場合 true
   archived?: boolean;
 }
 
@@ -80,6 +81,18 @@ export interface BatchColorUpdatesPayload {
   colorUpdates: ColorUpdateItem[];
 }
 
+/**
+ * 既存シャツの羽織り分類一括相談用のペイロード型（isOuterwear のみを更新し名前・相性は書き換えない）
+ */
+export interface OuterwearUpdateItem {
+  id: string;
+  isOuterwear: boolean;
+}
+
+export interface BatchOuterwearUpdatesPayload {
+  outerwearUpdates: OuterwearUpdateItem[];
+}
+
 export interface ClosetData {
   items: ClosetItem[];
   updatedAt?: number; // カスタム服データの作成・インポート時刻
@@ -90,6 +103,7 @@ export interface WearRecord {
   date: string; // YYYY-MM-DD
   shirtId: string;
   pantsId: string;
+  outerwearId?: string; // 追加選択された羽織りID（任意・1着まで）
   scene: SceneMode;
   timestamp: number;
 }
@@ -304,6 +318,7 @@ export interface RebuildCandidateItem {
   category: Category;
   name: string;
   color?: GarmentColor;
+  isOuterwear?: boolean;
   seasonSleeve: string;
   dressScore: number;
   comfortScore: number;
@@ -322,6 +337,7 @@ export interface RebuildPayload {
 export type RebuildFieldKey =
   | 'name'
   | 'color'
+  | 'isOuterwear'
   | 'seasonSleeve'
   | 'scores'
   | 'measurements'
@@ -396,6 +412,9 @@ export {
   loadFailedDriveUploadsFromStorage,
   processDriveRetryUploads,
   buildShoppingConsultationPrompt,
+  setShirtOuterwear,
+  applyBatchOuterwearUpdates,
+  buildBatchOuterwearAssessmentPrompt,
 } from '../utils/closetDomain';
 
 /**

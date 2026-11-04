@@ -231,6 +231,14 @@ export function runValidation() {
     if (item.archived !== undefined && typeof item.archived !== 'boolean') {
       errors.push(`[${item.id}] archived must be a boolean if present`);
     }
+
+    if (item.isOuterwear !== undefined) {
+      if (typeof item.isOuterwear !== 'boolean') {
+        errors.push(`[${item.id}] isOuterwear must be a boolean if present`);
+      } else if (item.category === 'pants' && item.isOuterwear === true) {
+        errors.push(`[${item.id}] pants item cannot have isOuterwear: true`);
+      }
+    }
   }
 
   // Check private photos in public/
