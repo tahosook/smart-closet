@@ -15,6 +15,7 @@ import {
 import { useClosetStore } from '../hooks/useClosetStore';
 import { ItemImage } from './ItemImage';
 import { TravelPlannerView } from './TravelPlannerView';
+import { ClosetGallerySection } from './ClosetGallerySection';
 import { copyTextToClipboard, CopyFeedbackStatus } from '../utils/closetDomain';
 import { WardrobeRebuildModal } from './WardrobeRebuildModal';
 
@@ -74,12 +75,15 @@ export const ManageView: React.FC = () => {
           <span>クローゼット管理・整理・旅行 (Wardrobe Management)</span>
         </div>
         <p className="text-xs text-slate-300 leading-relaxed">
-          オフシーズンの服の片付け・復帰、旅行時のミニマルパッキング計画、およびデータのバックアップ・復元を行えます。
+          手持ち写真の一覧・整理、オフシーズンの服の片付け・復帰、旅行時のミニマルパッキング計画、およびデータのバックアップ・復元を行えます。
         </p>
       </div>
 
-      {/* セクション 1: ワードローブ整理 */}
-      <section className="space-y-4">
+      {/* セクション 1: クローゼット写真一覧（ギャラリー） */}
+      <ClosetGallerySection />
+
+      {/* セクション 2: ワードローブ整理 */}
+      <section className="pt-6 border-t border-slate-800 space-y-4">
         <div className="flex items-center justify-between px-1">
           <h2 className="text-base font-bold text-white flex items-center gap-2">
             <Archive className="w-5 h-5 text-amber-400" />
@@ -331,12 +335,12 @@ export const ManageView: React.FC = () => {
         </div>
       </section>
 
-      {/* セクション 2: 旅行パッキングプランナー */}
+      {/* セクション 3: 旅行パッキングプランナー */}
       <section className="pt-6 border-t border-slate-800">
         <TravelPlannerView />
       </section>
 
-      {/* セクション 3: バックアップ・復旧 */}
+      {/* セクション 4: バックアップ・復旧 */}
       <section className="pt-6 border-t border-slate-800 space-y-3">
         <button
           type="button"

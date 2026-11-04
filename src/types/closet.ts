@@ -453,4 +453,16 @@ export interface BatchGarmentsMergeResult {
   error?: string;
 }
 
+// ----------------------------------------------------
+// クローゼット写真一覧（ギャラリー）関連の型定義
+// ----------------------------------------------------
+
+export type { GalleryCategoryFilter } from '../utils/closetDomain';
+export {
+  filterAndSortGalleryItems,
+  computeWearCountMap,
+  resolveNextGalleryViewerItemId,
+} from '../utils/closetDomain';
+
+
 

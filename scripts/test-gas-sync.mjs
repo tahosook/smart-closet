@@ -71,6 +71,9 @@ const {
   setShirtOuterwear,
   applyBatchOuterwearUpdates,
   buildBatchOuterwearAssessmentPrompt,
+  filterAndSortGalleryItems,
+  computeWearCountMap,
+  resolveNextGalleryViewerItemId,
 } = closetDomain;
 
 const imageProcessorTsPath = path.join(projectRoot, 'src/utils/imageProcessor.ts');
@@ -5216,6 +5219,160 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
   assert.equal(rebuildApplyRes.data.items[0].isOuterwear, true, 'Applied item must have isOuterwear: true');
 
   console.log('  ✅ Shirt outerwear classification, batch updates, GAS 10-column history & rebuild integration verified');
+}
+
+// -------------------------------------------------------------
+// Test Case 36: クローゼット写真一覧（ギャラリー）純粋ドメイン関数テスト
+// -------------------------------------------------------------
+{
+  const testItems = [
+    {
+      id: 'S10',
+      category: 'shirt',
+      name: '白オックスフォードシャツ',
+      isOuterwear: false,
+      archived: false,
+    },
+    {
+      id: 'S2',
+      category: 'shirt',
+      name: 'ジップアップニットカーディガン',
+      isOuterwear: true,
+      archived: false,
+    },
+    {
+      id: 'S1',
+      category: 'shirt',
+      name: 'ブルー半袖Tシャツ',
+      isOuterwear: false,
+      archived: true, // 保管中
+    },
+    {
+      id: 'P15',
+      category: 'pants',
+      name: 'ベージュチノパン',
+      archived: false,
+    },
+    {
+      id: 'P2',
+      category: 'pants',
+      name: '黒イージーパンツ',
+      archived: true, // 保管中
+    },
+    {
+      id: 'P1',
+      category: 'pants',
+      name: '濃紺スラックス',
+      archived: false,
+    },
+  ];
+
+  // 1. filterAndSortGalleryItems
+  // 1-1. filter === 'all', includeArchived === false
+  const allActive = filterAndSortGalleryItems(testItems, 'all', false);
+  // S1(archived) と P2(archived) が除外され、ID自然順（S2, S10, P1, P15）になること
+  assert.deepEqual(
+    allActive.map((it) => it.id),
+    ['S2', 'S10', 'P1', 'P15'],
+    'Active all items must be sorted as S2, S10, P1, P15'
+  );
+
+  // 1-2. filter === 'all', includeArchived === true
+  const allWithArchived = filterAndSortGalleryItems(testItems, 'all', true);
+  assert.deepEqual(
+    allWithArchived.map((it) => it.id),
+    ['S1', 'S2', 'S10', 'P1', 'P2', 'P15'],
+    'All items with archived must be sorted as S1, S2, S10, P1, P2, P15'
+  );
+
+  // 1-3. filter === 'shirt' (計画からの最優先変更点: 1枚ものシャツのみ、羽織り除外)
+  const shirtsActive = filterAndSortGalleryItems(testItems, 'shirt', false);
+  // S10 のみ（S2は羽織り、S1は保管中）
+  assert.deepEqual(
+    shirtsActive.map((it) => it.id),
+    ['S10'],
+    'filter === "shirt" must only return single shirts without outerwear'
+  );
+
+  const shirtsWithArchived = filterAndSortGalleryItems(testItems, 'shirt', true);
+  // S1, S10（S2は羽織りなので含まれない）
+  assert.deepEqual(
+    shirtsWithArchived.map((it) => it.id),
+    ['S1', 'S10'],
+    'filter === "shirt" with archived must only return single shirts S1, S10'
+  );
+
+  // 1-4. filter === 'outerwear' (羽織りシャツのみ)
+  const outerwearActive = filterAndSortGalleryItems(testItems, 'outerwear', false);
+  assert.deepEqual(
+    outerwearActive.map((it) => it.id),
+    ['S2'],
+    'filter === "outerwear" must return only outerwear shirt S2'
+  );
+
+  // 1-5. filter === 'pants'
+  const pantsActive = filterAndSortGalleryItems(testItems, 'pants', false);
+  assert.deepEqual(
+    pantsActive.map((it) => it.id),
+    ['P1', 'P15'],
+    'filter === "pants" must return active pants P1, P15'
+  );
+
+  const pantsWithArchived = filterAndSortGalleryItems(testItems, 'pants', true);
+  assert.deepEqual(
+    pantsWithArchived.map((it) => it.id),
+    ['P1', 'P2', 'P15'],
+    'filter === "pants" with archived must return pants P1, P2, P15'
+  );
+
+  // 2. computeWearCountMap
+  const testWearHistory = [
+    { shirtId: 'S10', pantsId: 'P1', outerwearId: 'S2' },
+    { shirtId: 'S10', pantsId: 'P1' },
+    { shirtId: 'S2', pantsId: 'P15', outerwearId: 'S2' }, // outerwearId === shirtId は重複カウントしない
+    { shirtId: 'S1', pantsId: 'P1', outerwearId: 'S2' },
+  ];
+  const wearMap = computeWearCountMap(testWearHistory);
+  assert.equal(wearMap.get('S10'), 2, 'S10 wear count must be 2');
+  assert.equal(wearMap.get('S1'), 1, 'S1 wear count must be 1');
+  assert.equal(wearMap.get('S2'), 3, 'S2 wear count must be 1 (shirt) + 2 (outerwear) = 3');
+  assert.equal(wearMap.get('P1'), 3, 'P1 wear count must be 3');
+  assert.equal(wearMap.get('P15'), 1, 'P15 wear count must be 1');
+  assert.equal(wearMap.get('P99'), undefined, 'Unworn items must be undefined');
+
+  // 3. resolveNextGalleryViewerItemId
+  const prevItems = [{ id: 'S1' }, { id: 'S2' }, { id: 'S10' }];
+  // 3-1. 新リストに対象IDが残っている場合
+  assert.equal(
+    resolveNextGalleryViewerItemId('S2', prevItems, prevItems),
+    'S2',
+    'When item remains, it stays on current item'
+  );
+
+  // 3-2. 対象IDが外れ、中間位置だった場合（S2が外れ、残り[S1, S10]）
+  const nextWithoutS2 = [{ id: 'S1' }, { id: 'S10' }];
+  assert.equal(
+    resolveNextGalleryViewerItemId('S2', prevItems, nextWithoutS2),
+    'S10',
+    'When intermediate item removed, index 1 becomes S10'
+  );
+
+  // 3-3. 対象IDが末尾で外れた場合（S10が外れ、残り[S1, S2]）
+  const nextWithoutS10 = [{ id: 'S1' }, { id: 'S2' }];
+  assert.equal(
+    resolveNextGalleryViewerItemId('S10', prevItems, nextWithoutS10),
+    'S2',
+    'When last item removed, resolves to new last item S2'
+  );
+
+  // 3-4. 新リストが空になった場合
+  assert.equal(
+    resolveNextGalleryViewerItemId('S1', [{ id: 'S1' }], []),
+    null,
+    'When list becomes empty, resolves to null'
+  );
+
+  console.log('  ✅ Closet gallery domain logic (filtering, sorting, wear counting & viewer index resolution) verified');
 }
 
 console.log('🎉 All GAS backend & sync logic tests passed successfully!');

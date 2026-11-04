@@ -3297,3 +3297,95 @@ export function validateAndBuildRebuildDiffs(
   };
 }
 
+// ----------------------------------------------------
+// クローゼット写真一覧（ギャラリー）関連のドメインロジック
+// ----------------------------------------------------
+
+export type GalleryCategoryFilter = 'all' | 'shirt' | 'pants' | 'outerwear';
+
+/**
+ * クローゼット写真一覧（ギャラリー）用の絞り込みとソートを行う純粋関数
+ * - includeArchived === false の場合、archived: true の服を除外
+ * - filter === 'all': すべて
+ * - filter === 'shirt': 1枚ものシャツのみ（category === 'shirt' && !Boolean(isOuterwear)）
+ * - filter === 'pants': パンツのみ（category === 'pants'）
+ * - filter === 'outerwear': 羽織りシャツのみ（category === 'shirt' && Boolean(isOuterwear)）
+ * - ソート順: カテゴリ順（shirt -> pants）、同一カテゴリ内は ID 昇順（自然順数値比較）
+ */
+export function filterAndSortGalleryItems(
+  items: ClosetItem[],
+  filter: GalleryCategoryFilter = 'all',
+  includeArchived = false
+): ClosetItem[] {
+  const filtered = items.filter((item) => {
+    if (!includeArchived && item.archived) {
+      return false;
+    }
+    switch (filter) {
+      case 'shirt':
+        return item.category === 'shirt' && !Boolean(item.isOuterwear);
+      case 'pants':
+        return item.category === 'pants';
+      case 'outerwear':
+        return item.category === 'shirt' && Boolean(item.isOuterwear);
+      case 'all':
+      default:
+        return true;
+    }
+  });
+
+  return filtered.sort((a, b) => {
+    if (a.category !== b.category) {
+      return a.category === 'shirt' ? -1 : 1;
+    }
+    return a.id.localeCompare(b.id, undefined, { numeric: true });
+  });
+}
+
+/**
+ * 着用履歴から各アイテムIDの着用回数を集計する純粋関数
+ * （shirtId, pantsId, および outerwearId !== shirtId の outerwearId をカウント）
+ */
+export function computeWearCountMap(wearHistory: WearRecord[]): Map<string, number> {
+  const map = new Map<string, number>();
+  for (const record of wearHistory) {
+    if (record.shirtId) {
+      map.set(record.shirtId, (map.get(record.shirtId) || 0) + 1);
+    }
+    if (record.pantsId) {
+      map.set(record.pantsId, (map.get(record.pantsId) || 0) + 1);
+    }
+    if (record.outerwearId && record.outerwearId !== record.shirtId) {
+      map.set(record.outerwearId, (map.get(record.outerwearId) || 0) + 1);
+    }
+  }
+  return map;
+}
+
+/**
+ * ビューア表示中に服の「片付け」や「羽織り切り替え」等によって表示アイテムが絞り込み結果から除外された場合、
+ * 次に表示すべきアイテムIDを決定論的に解決する純粋関数。
+ * - 新しいリストが空なら null
+ * - 現在のアイテムIDが新しいリストに残っていればそのID
+ * - 外れた場合、旧インデックス位置（または新しい末尾）のアイテムIDを返す
+ */
+export function resolveNextGalleryViewerItemId(
+  currentItemId: string,
+  previousItems: ClosetItem[],
+  nextItems: ClosetItem[]
+): string | null {
+  if (nextItems.length === 0) {
+    return null;
+  }
+  if (nextItems.some((it) => it.id === currentItemId)) {
+    return currentItemId;
+  }
+  const prevIndex = previousItems.findIndex((it) => it.id === currentItemId);
+  if (prevIndex === -1) {
+    return nextItems[0].id;
+  }
+  const nextIndex = Math.min(prevIndex, nextItems.length - 1);
+  return nextItems[nextIndex].id;
+}
+
+
