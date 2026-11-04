@@ -81,6 +81,43 @@ export const ClosetGallerySection: React.FC = () => {
     setViewerItemId(displayedItems[nextIdx].id);
   }, [displayedItems, currentIndex]);
 
+  // アイテム操作ハンドラー（同一イベント内で次の表示IDを解決し、モーダルのチラつきを防止）
+  const handleArchive = useCallback(
+    (item: ClosetItem) => {
+      if (!includeArchived) {
+        const nextDisplayed = displayedItems.filter((it) => it.id !== item.id);
+        const nextId = resolveNextGalleryViewerItemId(item.id, displayedItems, nextDisplayed);
+        setViewerItemId(nextId);
+      }
+      archiveItem(item.id);
+    },
+    [includeArchived, displayedItems, archiveItem]
+  );
+
+  const handleUnarchive = useCallback(
+    (item: ClosetItem) => {
+      unarchiveItem(item.id);
+    },
+    [unarchiveItem]
+  );
+
+  const handleToggleOuterwear = useCallback(
+    (item: ClosetItem) => {
+      const nextIsOuterwear = !item.isOuterwear;
+      const willBeExcluded =
+        (filter === 'shirt' && nextIsOuterwear) ||
+        (filter === 'outerwear' && !nextIsOuterwear);
+
+      if (willBeExcluded) {
+        const nextDisplayed = displayedItems.filter((it) => it.id !== item.id);
+        const nextId = resolveNextGalleryViewerItemId(item.id, displayedItems, nextDisplayed);
+        setViewerItemId(nextId);
+      }
+      toggleShirtOuterwear(item.id, nextIsOuterwear);
+    },
+    [filter, displayedItems, toggleShirtOuterwear]
+  );
+
   // キーボード操作（Escapeで閉じる、左右キーで移動）
   useEffect(() => {
     if (!currentViewerItem) return;
@@ -472,7 +509,7 @@ export const ClosetGallerySection: React.FC = () => {
               {currentViewerItem.archived ? (
                 <button
                   type="button"
-                  onClick={() => unarchiveItem(currentViewerItem.id)}
+                  onClick={() => handleUnarchive(currentViewerItem)}
                   className="flex-1 min-h-[44px] py-2.5 px-4 bg-emerald-950/90 hover:bg-emerald-900 text-emerald-300 border border-emerald-800 rounded-xl text-xs sm:text-sm font-bold flex items-center justify-center gap-2 transition-all active:scale-[0.98] shadow-sm"
                   title={`${currentViewerItem.name} を現役に復帰させる`}
                 >
@@ -482,7 +519,7 @@ export const ClosetGallerySection: React.FC = () => {
               ) : (
                 <button
                   type="button"
-                  onClick={() => archiveItem(currentViewerItem.id)}
+                  onClick={() => handleArchive(currentViewerItem)}
                   className="flex-1 min-h-[44px] py-2.5 px-4 bg-slate-800/90 hover:bg-slate-800 text-amber-300 hover:text-amber-200 border border-slate-700 hover:border-amber-700/80 rounded-xl text-xs sm:text-sm font-bold flex items-center justify-center gap-2 transition-all active:scale-[0.98] shadow-sm"
                   title={`${currentViewerItem.name} を片付ける`}
                 >
@@ -495,9 +532,7 @@ export const ClosetGallerySection: React.FC = () => {
               {currentViewerItem.category === 'shirt' && (
                 <button
                   type="button"
-                  onClick={() =>
-                    toggleShirtOuterwear(currentViewerItem.id, !currentViewerItem.isOuterwear)
-                  }
+                  onClick={() => handleToggleOuterwear(currentViewerItem)}
                   className="flex-1 min-h-[44px] py-2.5 px-3 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-xl text-xs sm:text-sm font-semibold flex items-center justify-center gap-1.5 transition-all active:scale-[0.98]"
                   title={currentViewerItem.isOuterwear ? '1枚ものに変更' : '羽織りに変更'}
                 >
