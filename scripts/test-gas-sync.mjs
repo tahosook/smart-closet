@@ -5034,6 +5034,8 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
   assert.ok(!outerwearPrompt.includes('P1'), 'Prompt must NOT include pants P1');
   assert.ok(outerwearPrompt.includes('outerwearUpdates'), 'Prompt must mention outerwearUpdates schema');
   assert.ok(outerwearPrompt.includes('isOuterwear'), 'Prompt must mention isOuterwear');
+  assert.ok(!outerwearPrompt.includes('写真一覧'), 'Prompt must NOT assume photo list');
+  assert.ok(outerwearPrompt.includes('アイテム名、色、季節袖丈、メモから'), 'Prompt must judge from name, color, season/sleeve, and notes');
 
   // 5. parseSyncInputJson: batch_outerwear の自動判定
   const parsedOuterwearJson = parseSyncInputJson(

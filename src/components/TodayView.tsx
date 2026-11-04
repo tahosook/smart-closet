@@ -246,18 +246,16 @@ export const TodayView: React.FC = () => {
     [selectedShirtId, matchingShirts, shirts]
   );
 
-  // todayRecord の変更に追従
+  // todayRecord の変更に追従（undefined を含め常に同期）
   useEffect(() => {
-    if (todayRecord?.outerwearId !== undefined) {
-      setSelectedOuterwearId(todayRecord.outerwearId);
-    }
+    setSelectedOuterwearId(todayRecord?.outerwearId);
   }, [todayRecord?.outerwearId]);
 
   // 利用可能な羽織り候補（現役シャツのうち isOuterwear: true かつ 選択中シャツ以外）
-  const availableOuterwears = useMemo(
-    () => shirts.filter((s) => Boolean(s.isOuterwear) && s.id !== selectedShirt.id),
-    [shirts, selectedShirt.id]
-  );
+  const availableOuterwears = useMemo(() => {
+    if (!selectedShirt) return [];
+    return shirts.filter((s) => Boolean(s.isOuterwear) && s.id !== selectedShirt.id);
+  }, [shirts, selectedShirt?.id]);
 
   const selectedOuterwear = useMemo(
     () => (selectedOuterwearId ? itemMap.get(selectedOuterwearId) : undefined),
@@ -269,7 +267,7 @@ export const TodayView: React.FC = () => {
     const nextId = selectedOuterwearId === outerwearItem.id ? undefined : outerwearItem.id;
     setSelectedOuterwearId(nextId);
 
-    if (todayRecord && todayRecord.shirtId === selectedShirt.id) {
+    if (todayRecord && selectedShirt && todayRecord.shirtId === selectedShirt.id) {
       updateTodayOuterwear(nextId);
       if (nextId) {
         showToast(`🧥 羽織り「${outerwearItem.name}」を追加しました`);
@@ -287,9 +285,19 @@ export const TodayView: React.FC = () => {
 
   const handleClearOuterwear = () => {
     setSelectedOuterwearId(undefined);
-    if (todayRecord && todayRecord.shirtId === selectedShirt.id) {
+    if (todayRecord && selectedShirt && todayRecord.shirtId === selectedShirt.id) {
       updateTodayOuterwear(undefined);
       showToast('🧥 羽織りを解除しました');
+    }
+  };
+
+  const handleClearBannerOuterwear = () => {
+    if (todayRecord) {
+      updateTodayOuterwear(undefined);
+      showToast('🧥 羽織りを解除しました');
+    }
+    if (selectedShirt && todayRecord?.shirtId === selectedShirt.id) {
+      setSelectedOuterwearId(undefined);
     }
   };
 
@@ -309,10 +317,11 @@ export const TodayView: React.FC = () => {
     () =>
       Boolean(
         todayRecord &&
+          selectedShirt &&
           todayRecord.shirtId === selectedShirt.id &&
           ngList.some((item) => item.pants.id === todayRecord.pantsId)
       ),
-    [todayRecord, selectedShirt.id, ngList]
+    [todayRecord, selectedShirt?.id, ngList]
   );
 
   // Auto-expand NG accordion once when selected shirt's worn pants is in NG list,
@@ -426,7 +435,7 @@ export const TodayView: React.FC = () => {
             {todayRecord.outerwearId && (
               <button
                 type="button"
-                onClick={handleClearOuterwear}
+                onClick={handleClearBannerOuterwear}
                 className="min-h-[44px] px-2 py-1 text-[10px] bg-slate-800/80 hover:bg-slate-700 text-slate-300 rounded-lg border border-slate-600"
                 title="羽織りを外す"
               >
