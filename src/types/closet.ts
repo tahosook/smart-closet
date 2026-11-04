@@ -69,30 +69,6 @@ export interface ClosetItem {
   archived?: boolean;
 }
 
-/**
- * 既存服の色パレット一括相談用のペイロード型（色のみを更新し名前は書き換えない）
- */
-export interface ColorUpdateItem {
-  id: string;
-  color: GarmentColor;
-}
-
-export interface BatchColorUpdatesPayload {
-  colorUpdates: ColorUpdateItem[];
-}
-
-/**
- * 既存シャツの羽織り分類一括相談用のペイロード型（isOuterwear のみを更新し名前・相性は書き換えない）
- */
-export interface OuterwearUpdateItem {
-  id: string;
-  isOuterwear: boolean;
-}
-
-export interface BatchOuterwearUpdatesPayload {
-  outerwearUpdates: OuterwearUpdateItem[];
-}
-
 export interface ClosetData {
   items: ClosetItem[];
   updatedAt?: number; // カスタム服データの作成・インポート時刻
@@ -413,8 +389,6 @@ export {
   processDriveRetryUploads,
   buildShoppingConsultationPrompt,
   setShirtOuterwear,
-  applyBatchOuterwearUpdates,
-  buildBatchOuterwearAssessmentPrompt,
 } from '../utils/closetDomain';
 
 /**

@@ -80,7 +80,7 @@ const AppShell: React.FC = () => {
             <button
               onClick={() => setIsHistoryOpen(true)}
               className="min-w-[44px] min-h-[44px] p-2.5 text-slate-300 hover:text-white rounded-xl bg-slate-800/80 hover:bg-slate-700 transition-colors border border-slate-700/60 flex items-center justify-center"
-              title="着用履歴と冷却テスト"
+              title="着用履歴"
             >
               <History className="w-4 h-4" />
             </button>
