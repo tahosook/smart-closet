@@ -63,6 +63,7 @@ const {
   previewDuplicateMerge,
   executeDuplicateMerge,
   buildWardrobeRebuildPrompt,
+  buildQuickRebuildPrompt,
   parseRebuildInputJson,
   computeRebuildDiffs,
   validateAndBuildRebuildDiffs,
@@ -5218,6 +5219,358 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
   );
 
   console.log('  ✅ Closet gallery domain logic & centralized filter definitions verified');
+}
+
+// -------------------------------------------------------------
+// Test Case 37: クイックリビルド（buildQuickRebuildPrompt, parse, 差分・適用対象の厳格制限, 聖域保護）
+// -------------------------------------------------------------
+{
+  const rawCloset = JSON.parse(fs.readFileSync(path.join(projectRoot, 'src/data/closet.json'), 'utf-8'));
+
+  const mockCurrentItems = [
+    {
+      id: 'S1',
+      category: 'shirt',
+      name: '濃インディゴ無地長袖シャツ',
+      color: '濃紺',
+      imageUrl: '/images/S1.jpg',
+      seasonSleeve: '長袖・通年',
+      dressScore: 3.5,
+      comfortScore: 3.5,
+      measurements: { bodyLength: 72, chestWidth: 54 },
+      isOuterwear: false,
+      officeRecommendIds: ['P1'],
+      remoteRecommendIds: ['P2'],
+      ngIds: [],
+      ngReason: '',
+      notes: '定番シャツ',
+      archived: false,
+    },
+    {
+      id: 'S2',
+      category: 'shirt',
+      name: '白無地長袖シャツ',
+      color: '白',
+      imageUrl: '/images/S2.jpg',
+      seasonSleeve: '長袖・通年',
+      dressScore: 4.0,
+      comfortScore: 4.0,
+      measurements: { bodyLength: 74, chestWidth: 56 },
+      isOuterwear: true, // 羽織り
+      officeRecommendIds: ['P1', 'P2'],
+      remoteRecommendIds: [],
+      ngIds: [],
+      ngReason: '',
+      notes: '白シャツ羽織り',
+      archived: true, // 片付け中
+    },
+    {
+      id: 'P1',
+      category: 'pants',
+      name: '濃紺ベイカーパンツ',
+      color: '濃紺',
+      imageUrl: '/images/P1.jpg',
+      seasonSleeve: '通年',
+      dressScore: 3.5,
+      comfortScore: 4.0,
+      measurements: { waist: 82, inseam: 72 },
+      officeRecommendIds: ['S1'],
+      remoteRecommendIds: [],
+      ngIds: [],
+      ngReason: '',
+      notes: '万能ベイカー',
+      archived: false,
+    },
+    {
+      id: 'P2',
+      category: 'pants',
+      name: '黒イージーパンツ',
+      color: '黒',
+      imageUrl: '/images/P2.jpg',
+      seasonSleeve: '通年',
+      dressScore: 2.5,
+      comfortScore: 5.0,
+      measurements: { waist: 80, inseam: 70 },
+      officeRecommendIds: [],
+      remoteRecommendIds: ['S1'],
+      ngIds: [],
+      ngReason: '',
+      notes: '快適イージー',
+      archived: false,
+    },
+  ];
+
+  const mockWifeNgs = [
+    { shirtId: 'S1', pantsId: 'P1', reason: '上下濃紺で作業着見え', createdAt: '2026-11-01' },
+  ];
+
+  // 1. buildQuickRebuildPrompt のプロンプト内容検証
+  const quickPrompt = buildQuickRebuildPrompt({
+    items: mockCurrentItems,
+    wifeNgPairs: mockWifeNgs,
+  });
+
+  // (a) 写真不要・相性と羽織りのみの再判定指示
+  assert.ok(quickPrompt.includes('写真を使わずテキスト情報から【組み合わせ相性】およびシャツの【羽織り分類】のみを再判定'));
+  assert.ok(quickPrompt.includes('服の名前、色、スコア、寸法などの基本属性は変更せず'));
+
+  // (b) スタイリング絶対原則（奥様ダメ出し回避ルール）の含有
+  assert.ok(quickPrompt.includes('同系色・濃紺同士の禁止'));
+  assert.ok(quickPrompt.includes('淡青×青デニムの禁止'));
+  assert.ok(quickPrompt.includes('淡色×淡色の膨張禁止'));
+  assert.ok(quickPrompt.includes('柄×柄の完全禁止'));
+  assert.ok(quickPrompt.includes('TPO分離と出社スウェット除外'));
+
+  // (c) 登録済み奥様NGの注意喚起
+  assert.ok(quickPrompt.includes('【注意喚起】登録済みの奥様NGペア'));
+  assert.ok(quickPrompt.includes('S1 × P1: 上下濃紺で作業着見え'));
+
+  // (d) 対象アイテム一覧の含有（羽織り区分・片付け中表示を含む）
+  assert.ok(quickPrompt.includes('[S1] 濃インディゴ無地長袖シャツ'));
+  assert.ok(quickPrompt.includes('現在区分: 1枚もの'));
+  assert.ok(quickPrompt.includes('[S2] 白無地長袖シャツ'));
+  assert.ok(quickPrompt.includes('現在区分: 羽織り'));
+  assert.ok(quickPrompt.includes('※現在片付け中'));
+  assert.ok(quickPrompt.includes('[P1] 濃紺ベイカーパンツ'));
+  assert.ok(quickPrompt.includes('[P2] 黒イージーパンツ'));
+
+  // 2. parseRebuildInputJson (mode: 'quick') の省略属性フォールバック検証
+  // クイックリビルドの回答: id, isOuterwear, 相性のみ（name, color, score, measurements, notes は省略）
+  const minimalQuickJson = JSON.stringify({
+    rebuildItems: [
+      {
+        id: 'S1',
+        isOuterwear: true, // 1枚もの -> 羽織りに変更
+        officeRecommendIds: ['P1'],
+        remoteRecommendIds: ['P2'],
+        ngIds: ['P1'], // P1 を NG に
+        ngReason: '上下濃紺衝突',
+      },
+      {
+        id: 'S2',
+        isOuterwear: false, // 羽織り -> 1枚ものに変更
+        officeRecommendIds: ['P1'],
+        remoteRecommendIds: ['P2'],
+        ngIds: [],
+        ngReason: '',
+      },
+      {
+        id: 'P1',
+        officeRecommendIds: ['S2'],
+        remoteRecommendIds: [],
+        ngIds: ['S1'],
+        ngReason: '上下濃紺衝突',
+      },
+      {
+        id: 'P2',
+        officeRecommendIds: [],
+        remoteRecommendIds: ['S1', 'S2'],
+        ngIds: [],
+        ngReason: '',
+      },
+    ],
+  });
+
+  const parsedQuick = parseRebuildInputJson(minimalQuickJson, mockCurrentItems, 'quick');
+  assert.equal(parsedQuick.valid, true, 'Quick rebuild JSON with omitted fields must be valid');
+  assert.equal(parsedQuick.items.length, 4);
+
+  // S1: 省略された name, color, scores, measurements, notes が既存から正しく補完されていること
+  const parsedS1 = parsedQuick.items.find((it) => it.id === 'S1');
+  assert.equal(parsedS1.name, '濃インディゴ無地長袖シャツ');
+  assert.equal(parsedS1.color, '濃紺');
+  assert.equal(parsedS1.dressScore, 3.5);
+  assert.equal(parsedS1.comfortScore, 3.5);
+  assert.deepEqual(parsedS1.measurements, { bodyLength: 72, chestWidth: 54 });
+  assert.equal(parsedS1.notes, '定番シャツ');
+  assert.equal(parsedS1.isOuterwear, true);
+  assert.deepEqual(parsedS1.ngIds, ['P1']);
+  assert.deepEqual(parsedS1.officeRecommendIds, []); // ngIds にある P1 は除外される
+
+  // 一方、mode === 'full' の場合は scores 欠落でエラー拒否されること（後方互換性保証）
+  const parsedFullReject = parseRebuildInputJson(minimalQuickJson, mockCurrentItems, 'full');
+  assert.equal(parsedFullReject.valid, false);
+  assert.ok(parsedFullReject.error.includes('dressScore'));
+
+  // 3. computeRebuildDiffs (mode: 'quick') の差分厳格制限検証
+  // 回答 JSON 内に誤って（あるいは AI の勝手な出力で）name, color, dressScore, measurements などの変更が含まれている場合
+  const bloatedQuickJson = JSON.stringify({
+    rebuildItems: [
+      {
+        id: 'S1',
+        name: 'AIが勝手に変えたシャツ名',
+        color: 'ベージュ', // 確定色を勝手に変更しようとしている
+        seasonSleeve: '秋冬・長袖',
+        dressScore: 5.0,
+        comfortScore: 1.0,
+        measurements: { bodyLength: 80, chestWidth: 60 },
+        notes: 'AIが勝手に書いたメモ',
+        isOuterwear: true, // 有効な羽織り変更
+        officeRecommendIds: [],
+        remoteRecommendIds: ['P2'],
+        ngIds: ['P1'],
+        ngReason: '濃紺衝突',
+      },
+      {
+        id: 'S2',
+        isOuterwear: false, // 有効な羽織り変更
+        officeRecommendIds: ['P1'],
+        remoteRecommendIds: [],
+        ngIds: [],
+        ngReason: '',
+      },
+      {
+        id: 'P1',
+        name: 'AIが勝手に変えたパンツ名',
+        color: 'オリーブ',
+        officeRecommendIds: ['S2'],
+        remoteRecommendIds: [],
+        ngIds: ['S1'],
+        ngReason: '濃紺衝突',
+      },
+      {
+        id: 'P2',
+        officeRecommendIds: [],
+        remoteRecommendIds: ['S1'],
+        ngIds: [],
+        ngReason: '',
+      },
+    ],
+  });
+
+  const parsedBloated = parseRebuildInputJson(bloatedQuickJson, mockCurrentItems, 'quick');
+  assert.equal(parsedBloated.valid, true);
+
+  const diffsQuick = computeRebuildDiffs({
+    currentItems: mockCurrentItems,
+    rebuildItems: parsedBloated.items,
+    mode: 'quick',
+  });
+
+  assert.equal(diffsQuick.length, 4);
+  const s1Diff = diffsQuick.find((d) => d.id === 'S1');
+  assert.ok(s1Diff);
+
+  // 【最重要条件】クイックリビルドでは、回答 JSON に他の項目が含まれても changedFields には現れない！
+  assert.equal(s1Diff.changedFields.includes('name'), false, 'name must NOT be in changedFields for quick rebuild');
+  assert.equal(s1Diff.changedFields.includes('color'), false, 'color must NOT be in changedFields for quick rebuild');
+  assert.equal(s1Diff.changedFields.includes('scores'), false, 'scores must NOT be in changedFields for quick rebuild');
+  assert.equal(s1Diff.changedFields.includes('measurements'), false, 'measurements must NOT be in changedFields for quick rebuild');
+  assert.equal(s1Diff.changedFields.includes('seasonSleeve'), false, 'seasonSleeve must NOT be in changedFields for quick rebuild');
+  assert.equal(s1Diff.changedFields.includes('notes'), false, 'notes must NOT be in changedFields for quick rebuild');
+
+  // changedFields に含まれ得るのは isOuterwear と compatibility のみ！
+  assert.ok(s1Diff.changedFields.includes('isOuterwear'), 'isOuterwear must be detected as changed');
+  assert.ok(s1Diff.changedFields.includes('compatibility'), 'compatibility must be detected as changed');
+  assert.deepEqual(s1Diff.changedFields.sort(), ['compatibility', 'isOuterwear'].sort());
+
+  // defaultSelection も compatibility と isOuterwear 以外はすべて false
+  assert.equal(s1Diff.defaultSelection.name, false);
+  assert.equal(s1Diff.defaultSelection.color, false);
+  assert.equal(s1Diff.defaultSelection.scores, false);
+  assert.equal(s1Diff.defaultSelection.measurements, false);
+  assert.equal(s1Diff.defaultSelection.isOuterwear, true);
+  assert.equal(s1Diff.defaultSelection.compatibility, true);
+
+  // afterItem の属性も current の値が完全保持されていること
+  assert.equal(s1Diff.after.name, '濃インディゴ無地長袖シャツ', 'afterItem.name must remain current name');
+  assert.equal(s1Diff.after.color, '濃紺', 'afterItem.color must remain current color');
+  assert.equal(s1Diff.after.dressScore, 3.5, 'afterItem.dressScore must remain current score');
+  assert.deepEqual(s1Diff.after.measurements, { bodyLength: 72, chestWidth: 54 }, 'afterItem.measurements must remain current');
+  assert.equal(s1Diff.after.isOuterwear, true, 'afterItem.isOuterwear must adopt rebuild value');
+  assert.deepEqual(s1Diff.after.ngIds, ['P1'], 'afterItem.ngIds must adopt rebuild value');
+
+  // パンツ（P1）は isOuterwear の対象外
+  const p1Diff = diffsQuick.find((d) => d.id === 'P1');
+  assert.ok(p1Diff);
+  assert.equal(p1Diff.changedFields.includes('isOuterwear'), false, 'Pants must not have isOuterwear in changedFields');
+  assert.deepEqual(p1Diff.changedFields, ['compatibility']);
+  assert.equal(p1Diff.after.name, '濃紺ベイカーパンツ', 'Pants name must remain unchanged');
+  assert.equal(p1Diff.after.color, '濃紺', 'Pants color must remain unchanged');
+
+  // 4. validateAndBuildRebuildDiffs (mode: 'quick') の全件完全性チェック検証
+  // (a) 不足IDがある場合
+  const missingQuickJson = JSON.stringify({
+    rebuildItems: [
+      { id: 'S1', officeRecommendIds: [], remoteRecommendIds: [], ngIds: [] },
+      { id: 'S2', officeRecommendIds: [], remoteRecommendIds: [], ngIds: [] },
+      { id: 'P1', officeRecommendIds: [], remoteRecommendIds: [], ngIds: [] },
+      // P2 が不足
+    ],
+  });
+  const missingQuickRes = validateAndBuildRebuildDiffs(missingQuickJson, mockCurrentItems, 'quick');
+  assert.equal(missingQuickRes.valid, false);
+  assert.ok(missingQuickRes.error.includes('不足しているアイテムID'));
+  assert.ok(missingQuickRes.error.includes('P2'));
+
+  // (b) 余分なIDがある場合
+  const extraQuickJson = JSON.stringify({
+    rebuildItems: [
+      { id: 'S1', officeRecommendIds: [], remoteRecommendIds: [], ngIds: [] },
+      { id: 'S2', officeRecommendIds: [], remoteRecommendIds: [], ngIds: [] },
+      { id: 'P1', officeRecommendIds: [], remoteRecommendIds: [], ngIds: [] },
+      { id: 'P2', officeRecommendIds: [], remoteRecommendIds: [], ngIds: [] },
+      { id: 'P99', officeRecommendIds: [], remoteRecommendIds: [], ngIds: [] }, // 余分
+    ],
+  });
+  const extraQuickRes = validateAndBuildRebuildDiffs(extraQuickJson, mockCurrentItems, 'quick');
+  assert.equal(extraQuickRes.valid, false);
+  assert.ok(extraQuickRes.error.includes('対象外の余分なアイテムID'));
+  assert.ok(extraQuickRes.error.includes('P99'));
+
+  // 5. applyRebuildDiffs による適用と聖域データ保護検証
+  const initialClosetData = {
+    updatedAt: 1000,
+    items: mockCurrentItems,
+  };
+
+  const fieldSelections = {
+    S1: { ...s1Diff.defaultSelection },
+    S2: { ...diffsQuick.find((d) => d.id === 'S2').defaultSelection },
+    P1: { ...p1Diff.defaultSelection },
+    P2: { ...diffsQuick.find((d) => d.id === 'P2').defaultSelection },
+  };
+
+  const applyRes = applyRebuildDiffs({
+    closetData: initialClosetData,
+    diffs: diffsQuick,
+    fieldSelections,
+  });
+
+  assert.equal(applyRes.valid, true);
+  assert.ok(applyRes.appliedItemsCount > 0);
+
+  const appliedS1 = applyRes.data.items.find((it) => it.id === 'S1');
+  const appliedS2 = applyRes.data.items.find((it) => it.id === 'S2');
+  const appliedP1 = applyRes.data.items.find((it) => it.id === 'P1');
+
+  // 【更新項目】羽織りと相性のみが更新されていること
+  assert.equal(appliedS1.isOuterwear, true, 'S1 isOuterwear must be updated to true');
+  assert.deepEqual(appliedS1.ngIds, ['P1'], 'S1 ngIds must be updated to P1');
+  assert.equal(appliedS2.isOuterwear, undefined, 'S2 isOuterwear must be reverted to false/undefined');
+  assert.deepEqual(appliedP1.ngIds, ['S1'], 'P1 ngIds must be updated to S1');
+
+  // 【聖域保護】名前、色、スコア、寸法、メモ、片付け状態が一切書き換わっていないこと
+  assert.equal(appliedS1.name, '濃インディゴ無地長袖シャツ', 'Name must be 100% preserved');
+  assert.equal(appliedS1.color, '濃紺', 'Color must be 100% preserved');
+  assert.equal(appliedS1.dressScore, 3.5, 'dressScore must be preserved');
+  assert.equal(appliedS1.comfortScore, 3.5, 'comfortScore must be preserved');
+  assert.deepEqual(appliedS1.measurements, { bodyLength: 72, chestWidth: 54 }, 'Measurements must be preserved');
+  assert.equal(appliedS1.notes, '定番シャツ', 'Notes must be preserved');
+  assert.equal(appliedS1.archived, false, 'archived state must be preserved');
+
+  assert.equal(appliedS2.name, '白無地長袖シャツ', 'S2 name preserved');
+  assert.equal(appliedS2.archived, true, 'S2 archived: true must be strictly preserved');
+
+  assert.equal(appliedP1.name, '濃紺ベイカーパンツ', 'P1 name preserved');
+  assert.equal(appliedP1.color, '濃紺', 'P1 color preserved');
+  assert.deepEqual(appliedP1.measurements, { waist: 82, inseam: 72 }, 'P1 measurements preserved');
+
+  // 最終スキーマ検証
+  const schemaCheck = validateClosetDataSchema(applyRes.data);
+  assert.equal(schemaCheck.valid, true, 'Applied data must pass validateClosetDataSchema');
+
+  console.log('  ✅ Quick rebuild (prompt, parse fallback, strict diff bounds & sanctuary protection) verified');
 }
 
 console.log('🎉 All GAS backend & sync logic tests passed successfully!');

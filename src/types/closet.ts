@@ -289,6 +289,8 @@ export interface DuplicateMergeExecutionResult {
 // 全件リビルド・差分選択適用関連の型定義
 // ----------------------------------------------------
 
+export type RebuildMode = 'quick' | 'full';
+
 export interface RebuildCandidateItem {
   id: string;
   category: Category;
@@ -380,6 +382,7 @@ export type {
   FailedDriveUploadItem,
   RetryUploadResult,
   ShoppingConsultationPromptInput,
+  QuickRebuildPromptInput,
 } from '../utils/closetDomain';
 export {
   FAILED_DRIVE_UPLOADS_STORAGE_KEY,
@@ -388,6 +391,7 @@ export {
   loadFailedDriveUploadsFromStorage,
   processDriveRetryUploads,
   buildShoppingConsultationPrompt,
+  buildQuickRebuildPrompt,
   setShirtOuterwear,
 } from '../utils/closetDomain';
 
