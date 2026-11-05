@@ -2,7 +2,6 @@ import React, { useState } from 'react';
 import {
   Archive,
   Package,
-  Undo2,
   ChevronDown,
   ChevronUp,
   Download,
@@ -18,6 +17,8 @@ import {
 } from '../types/closet';
 import { useClosetStore } from '../hooks/useClosetStore';
 import { ItemImage } from './ItemImage';
+import { FilterPillBar } from './FilterPillBar';
+import { ArchiveToggleButton, OuterwearToggleButton } from './GarmentActionButtons';
 import { TravelPlannerView } from './TravelPlannerView';
 import { ClosetGallerySection } from './ClosetGallerySection';
 import { copyTextToClipboard, CopyFeedbackStatus } from '../utils/closetDomain';
@@ -103,22 +104,11 @@ export const ManageView: React.FC = () => {
         </p>
 
         {/* 絞り込みピル */}
-        <div className="flex items-center gap-1.5 p-1 bg-slate-900/70 border border-slate-800 rounded-xl">
-          {SHIRT_CATEGORY_FILTER_OPTIONS.map((opt) => (
-            <button
-              key={opt.id}
-              type="button"
-              onClick={() => setOrganizeFilter(opt.id)}
-              className={`min-h-[44px] flex-1 py-1.5 px-2 rounded-lg text-xs font-bold transition-all ${
-                organizeFilter === opt.id
-                  ? 'bg-blue-600 text-white shadow-sm'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              {opt.label}
-            </button>
-          ))}
-        </div>
+        <FilterPillBar
+          options={SHIRT_CATEGORY_FILTER_OPTIONS}
+          activeId={organizeFilter}
+          onSelect={setOrganizeFilter}
+        />
 
         {/* 片付けた服一覧 */}
         <div className="space-y-2.5">
@@ -176,25 +166,17 @@ export const ManageView: React.FC = () => {
                     </div>
                   </div>
                   <div className="flex flex-col gap-1.5 flex-shrink-0">
-                    <button
-                      type="button"
-                      onClick={() => unarchiveItem(item.id)}
-                      className="min-h-[44px] min-w-[56px] px-3 py-2 bg-emerald-950/80 hover:bg-emerald-900 text-emerald-300 border border-emerald-800/80 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 active:scale-95 shadow-sm"
-                      title={`${item.name} を現役に復帰させる`}
-                    >
-                      <Undo2 className="w-4 h-4" />
-                      <span>出す</span>
-                    </button>
-                    {item.category === 'shirt' && (
-                      <button
-                        type="button"
-                        onClick={() => toggleShirtOuterwear(item.id, !item.isOuterwear)}
-                        className="min-h-[44px] px-2 py-1 bg-slate-800/80 hover:bg-slate-700 text-slate-300 rounded-lg text-[10px] font-semibold border border-slate-700 flex items-center justify-center gap-1"
-                        title={item.isOuterwear ? '1枚ものに変更' : '羽織りに変更'}
-                      >
-                        <span>{item.isOuterwear ? '👔 1枚ものに変更' : '🧥 羽織りに変更'}</span>
-                      </button>
-                    )}
+                    <ArchiveToggleButton
+                      item={item}
+                      onArchive={(it) => archiveItem(it.id)}
+                      onUnarchive={(it) => unarchiveItem(it.id)}
+                      variant="compact"
+                    />
+                    <OuterwearToggleButton
+                      item={item}
+                      onToggle={(it) => toggleShirtOuterwear(it.id, !it.isOuterwear)}
+                      variant="compact"
+                    />
                   </div>
                 </div>
               ))}
@@ -252,23 +234,17 @@ export const ManageView: React.FC = () => {
                         </div>
                       </div>
                       <div className="flex items-center gap-1 flex-shrink-0">
-                        <button
-                          type="button"
-                          onClick={() => toggleShirtOuterwear(item.id, !item.isOuterwear)}
-                          className="min-h-[44px] px-2 py-1 bg-slate-800/80 hover:bg-slate-700 text-slate-300 rounded-lg text-[10px] font-semibold border border-slate-700 flex items-center gap-1"
-                          title={item.isOuterwear ? '1枚ものに変更' : '羽織りに変更'}
-                        >
-                          <span>{item.isOuterwear ? '👔 1枚ものに変更' : '🧥 羽織りに変更'}</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => archiveItem(item.id)}
-                          className="min-h-[44px] px-2.5 py-1.5 bg-slate-800/80 hover:bg-slate-800 text-slate-300 hover:text-amber-300 border border-slate-700 rounded-lg text-xs font-semibold transition-all flex items-center gap-1 active:scale-95"
-                          title={`${item.name} を片付ける`}
-                        >
-                          <Package className="w-3.5 h-3.5 text-amber-400" />
-                          <span>片付ける</span>
-                        </button>
+                        <OuterwearToggleButton
+                          item={item}
+                          onToggle={(it) => toggleShirtOuterwear(it.id, !it.isOuterwear)}
+                          variant="compact"
+                        />
+                        <ArchiveToggleButton
+                          item={item}
+                          onArchive={(it) => archiveItem(it.id)}
+                          onUnarchive={(it) => unarchiveItem(it.id)}
+                          variant="compact"
+                        />
                       </div>
                     </div>
                   ))}
@@ -302,15 +278,12 @@ export const ManageView: React.FC = () => {
                           </div>
                         </div>
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => archiveItem(item.id)}
-                        className="min-h-[44px] px-2.5 py-1.5 bg-slate-800/80 hover:bg-slate-800 text-slate-300 hover:text-amber-300 border border-slate-700 rounded-lg text-xs font-semibold transition-all flex items-center gap-1 flex-shrink-0 active:scale-95"
-                        title={`${item.name} を片付ける`}
-                      >
-                        <Package className="w-3.5 h-3.5 text-amber-400" />
-                        <span>片付ける</span>
-                      </button>
+                      <ArchiveToggleButton
+                        item={item}
+                        onArchive={(it) => archiveItem(it.id)}
+                        onUnarchive={(it) => unarchiveItem(it.id)}
+                        variant="compact"
+                      />
                     </div>
                   ))}
                 </div>
