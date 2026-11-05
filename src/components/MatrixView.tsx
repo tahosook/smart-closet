@@ -18,6 +18,7 @@ import {
 } from '../types/closet';
 import { useClosetStore } from '../hooks/useClosetStore';
 import { ItemImage } from './ItemImage';
+import { FilterPillBar } from './FilterPillBar';
 import { analyzeWardrobeStats } from '../utils/closetDomain';
 
 export const MatrixView: React.FC = () => {
@@ -474,41 +475,21 @@ export const MatrixView: React.FC = () => {
               <div className="space-y-2">
                 <div className="flex flex-col sm:flex-row sm:items-center gap-1.5 sm:gap-2">
                   <span className="text-[11px] font-semibold text-slate-400 min-w-[36px]">分類</span>
-                  <div className="flex flex-wrap gap-1.5 flex-1">
-                    {MATRIX_CATEGORY_FILTER_OPTIONS.map((opt) => (
-                      <button
-                        key={opt.id}
-                        type="button"
-                        onClick={() => setActiveFilter(opt.id)}
-                        className={`min-h-[44px] px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
-                          activeFilter === opt.id
-                            ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/40 ring-1 ring-blue-400'
-                            : 'bg-slate-800/80 text-slate-300 hover:bg-slate-750 hover:text-white border border-slate-700/60'
-                        }`}
-                      >
-                        {opt.label}
-                      </button>
-                    ))}
-                  </div>
+                  <FilterPillBar
+                    options={MATRIX_CATEGORY_FILTER_OPTIONS}
+                    activeId={activeFilter}
+                    onSelect={setActiveFilter}
+                    variant="wrap"
+                  />
                 </div>
                 <div className="flex flex-col sm:flex-row sm:items-center gap-1.5 sm:gap-2 pt-2 border-t border-slate-800/80">
                   <span className="text-[11px] font-semibold text-slate-400 min-w-[36px]">条件</span>
-                  <div className="flex flex-wrap gap-1.5 flex-1">
-                    {MATRIX_ANALYSIS_FILTER_OPTIONS.map((opt) => (
-                      <button
-                        key={opt.id}
-                        type="button"
-                        onClick={() => setActiveFilter(opt.id)}
-                        className={`min-h-[44px] px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
-                          activeFilter === opt.id
-                            ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/40 ring-1 ring-blue-400'
-                            : 'bg-slate-800/80 text-slate-300 hover:bg-slate-750 hover:text-white border border-slate-700/60'
-                        }`}
-                      >
-                        {opt.label}
-                      </button>
-                    ))}
-                  </div>
+                  <FilterPillBar
+                    options={MATRIX_ANALYSIS_FILTER_OPTIONS}
+                    activeId={activeFilter}
+                    onSelect={setActiveFilter}
+                    variant="wrap"
+                  />
                 </div>
               </div>
             </div>

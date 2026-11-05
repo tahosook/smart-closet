@@ -3970,14 +3970,10 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
 {
   const todayCode = fs.readFileSync(path.join(projectRoot, 'src/components/TodayView.tsx'), 'utf-8');
 
-  // 1. 状態管理（singleZoomItem・zoomItemPair・タッチ管理）の定義と初期化
+  // 1. 状態管理（singleZoomItem・zoomItemPair）の定義と初期化
   assert.ok(
     todayCode.includes('const [singleZoomItem, setSingleZoomItem] = useState<ClosetItem | null>(null);'),
     'TodayView must define singleZoomItem state'
-  );
-  assert.ok(
-    todayCode.includes('touchStartRef') && todayCode.includes('didSwipeRef'),
-    'TodayView must define touch refs for swipe gesture tracking'
   );
 
   // 2. ペアモーダル内のシャツ写真・パンツ写真がそれぞれタップ可能（button）であり、singleZoomItem をセットすること
@@ -3990,97 +3986,24 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
     'TodayView must allow clicking pants photo in pair modal to set singleZoomItem'
   );
 
-  // 3. レイヤー順序（z-index）と重ね順の検証:
-  //    上下コーディネート詳細モーダル (z-50) より前面の z-[60] で全画面拡大オーバーレイが表示されること
+  // 3. 共通全画面写真ビューア（FullscreenPhotoViewer）の利用とレイヤー順序の検証
+  assert.ok(
+    todayCode.includes('<FullscreenPhotoViewer') && todayCode.includes('singleZoomItem && zoomItemPair'),
+    'TodayView must use FullscreenPhotoViewer for enlarged single garment display'
+  );
   assert.ok(
     todayCode.includes('fixed inset-0 z-50 flex items-center justify-center') &&
     todayCode.includes('上下コーディネート詳細'),
     'Pair modal must use z-50'
   );
-  assert.ok(
-    todayCode.includes('fixed inset-0 z-[60]') && todayCode.includes('singleZoomItem &&'),
-    'Single item fullscreen zoom overlay must use z-[60] (above pair modal z-50)'
-  );
 
-  // 4. 復帰動作とスワイプ/タップ非競合の検証:
-  //    - オーバーレイクリック時は didSwipeRef を判定し、スワイプ直後は閉じず、タップ時のみ setSingleZoomItem(null)
-  //    - 閉じるボタン（✕）は明示的に setSingleZoomItem(null)
-  //    - zoomItemPair は破棄せず保持していること（元のペアモーダルへ戻る）
-  assert.ok(
-    todayCode.includes('onClick={handleSingleZoomOverlayClick}') &&
-    todayCode.includes('cursor-zoom-out'),
-    'Overlay must handle overlay click with swipe check and cursor-zoom-out'
-  );
-  assert.ok(
-    todayCode.includes('if (didSwipeRef.current)') && todayCode.includes('setSingleZoomItem(null)'),
-    'handleSingleZoomOverlayClick must respect didSwipeRef and close on tap'
-  );
-  assert.ok(
-    todayCode.includes('title="拡大表示を閉じる"'),
-    'Overlay must have an explicit close button with title'
-  );
-
-  // 5. 左右スワイプ切替（シャツ⇔パンツ）の検証:
-  //    - SWIPE_THRESHOLD_PX と TAP_MOVE_LIMIT_PX によるスワイプ判定
-  //    - handleToggleSingleZoomItem によるペア内2着のトグル切替
-  //    - onTouchStart と onTouchEnd によるジェスチャー検知
-  assert.ok(
-    todayCode.includes('SWIPE_THRESHOLD_PX') && todayCode.includes('TAP_MOVE_LIMIT_PX'),
-    'TodayView must define swipe and tap distance constants'
-  );
-  assert.ok(
-    todayCode.includes('prev.id === zoomItemPair.shirt.id ? zoomItemPair.pants : zoomItemPair.shirt'),
-    'handleToggleSingleZoomItem must toggle between pair shirt and pants'
-  );
-  assert.ok(
-    todayCode.includes('onTouchStart={handleZoomTouchStart}') &&
-    todayCode.includes('onTouchEnd={handleZoomTouchEnd}'),
-    'Overlay must bind touch start and end handlers'
-  );
-
-  // 6. 表示最大化・アスペクト比・フォールバックの検証:
-  //    - 余白・枠を排し、flex-1 min-h-0 w-full h-full で画面領域を最大限利用
-  //    - 内側コンテナは一方向（w-full）から寸法を決め、aspect-[3/4] を有効化して3:4の箱を保証（w-full と h-full の同時指定によるアスペクト比無効化を防止）
-  //    - aspect-[3/4] と object-contain により 900x1200 の比率を保って最大表示
-  //    - ItemImage コンポーネントを使用し、写真なしアイテムでも SVG フォールバックで安全に表示
-  //    - singleZoomItem.id と singleZoomItem.name がヘッダーに連動表示されること
-  assert.ok(
-    todayCode.includes('flex-1 min-h-0 w-full h-full flex items-center justify-center overflow-hidden bg-black'),
-    'Single zoom overlay must maximize image area without card margins or padding'
-  );
-  assert.ok(
-    todayCode.includes('aspect-[3/4]') &&
-    todayCode.includes('max-w-[calc((100dvh-4rem)*0.75)]') &&
-    !todayCode.includes('aspect-[3/4] w-full h-full'),
-    'Inner container must size from one direction without simultaneous w-full h-full, preserving 3:4 box dimension'
-  );
-  assert.ok(
-    todayCode.includes('aspect-[3/4]') && todayCode.includes('object-contain'),
-    'Single zoom overlay must preserve 3:4 aspect ratio with object-contain'
-  );
-  assert.ok(
-    todayCode.includes('<ItemImage') && todayCode.includes('item={singleZoomItem}'),
-    'Single zoom overlay must render ItemImage for consistent photo & SVG fallback'
-  );
-  assert.ok(
-    todayCode.includes('singleZoomItem.id') && todayCode.includes('singleZoomItem.name'),
-    'Single zoom overlay must display dynamic item ID and name'
-  );
-
-  // 7. タップターゲット 44x44px 以上と既存動作維持の検証:
-  //    - 閉じるボタンに min-w-[44px] min-h-[44px] が設定されていること
-  //    - ペアモーダルを閉じる際および「この組み合わせを着る」実行時に状態が安全にリセットされること
-  //    - 「この組み合わせを着る」処理（handleSelectWear）が変更なく維持されていること
-  assert.ok(
-    todayCode.includes('min-w-[44px] min-h-[44px]'),
-    'Close buttons must satisfy 44x44px minimum tap target'
-  );
+  // 4. 着用処理（handleSelectWear）が維持されていること
   assert.ok(
     todayCode.includes('handleSelectWear(zoomItemPair.pants);'),
     'Wear selection action must remain intact'
   );
 
-  // 8. SPECIFICATION.md のドキュメント整合性検証
+  // 5. SPECIFICATION.md のドキュメント整合性検証
   const specContent = fs.readFileSync(path.join(projectRoot, 'docs/SPECIFICATION.md'), 'utf-8');
   assert.ok(
     specContent.includes('全画面拡大表示可能') && specContent.includes('左右スワイプでペアのシャツ⇔パンツを瞬時に切り替え'),
