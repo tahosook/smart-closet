@@ -10,7 +10,7 @@ This file serves as the operational contract for AI agents (Antigravity, Codex, 
 ## 2. Architecture & Knowledge Map
 
 ### Layer Responsibilities
-- `src/components/`: Pure presentation & UI panels (TodayView, AiSyncView, MatrixView, modals).
+- `src/components/`: Pure presentation & UI panels (TodayView, AiSyncView, MatrixView, ManageView, shared components like FilterPillBar/FullscreenPhotoViewer/GarmentActionButtons, and modals).
 - `src/hooks/`: React state orchestration (`useClosetStore.tsx` context & cooling).
 - `src/utils/`: Pure domain logic & storage engines (`closetDomain.ts`, `imageStore.ts`, `imageProcessor.ts`, `syncReconcile.ts`).
 - `src/types/`: TypeScript domain interfaces (`closet.ts`).
@@ -20,7 +20,7 @@ This file serves as the operational contract for AI agents (Antigravity, Codex, 
 - `scripts/`: Verification & test suite (`validate-closet.mjs`, `test-gas-sync.mjs`, `sync-images.sh`).
 
 ### Task-Specific Knowledge Routers (Single Sources of Truth)
-- **Feature Map & Rebuild Rules:** Consult [docs/FEATURE_MAP.md](docs/FEATURE_MAP.md) for feature inventory, homes, rebuild tiers, and unified vocabulary.
+- **Feature Map & Rebuild Rules:** Consult [docs/FEATURE_MAP.md](docs/FEATURE_MAP.md) for feature inventory, homes, rebuild tiers, and unified vocabulary. **Before planning any feature addition, UI change, or restructuring (especially in /plan mode with Argon or other models), agents MUST FIRST READ [docs/FEATURE_MAP.md](docs/FEATURE_MAP.md) to inspect existing homes, vocabulary, and shared components.**
 - **UI & Logic Specs:** Consult [docs/SPECIFICATION.md](docs/SPECIFICATION.md) for view behaviors and scoring algorithms.
 - **Wardrobe & Styling Rules:** Consult [docs/STYLING_RULES.md](docs/STYLING_RULES.md) for 40s male color/pattern criteria and bias analysis.
 - **Wardrobe Addition Skill:** Follow [.agents/skills/manage-wardrobe/SKILL.md](.agents/skills/manage-wardrobe/SKILL.md) when adding/editing clothes.
@@ -55,6 +55,13 @@ This file serves as the operational contract for AI agents (Antigravity, Codex, 
 3. **Cooling Period Invariant:** Pants worn yesterday (`wearHistory`) are demoted to the bottom with a `⚠️ 昨日着用（冷却中）` badge.
 4. **Wife NG Invariant:** Runtime flags (`smart_closet_wife_ng`) immediately exclude pairs from recommendation and take precedence.
 5. **Styling Criteria Authority:** All color/pattern/tonal pairing rules and bias insights belong strictly to [docs/STYLING_RULES.md](docs/STYLING_RULES.md). Do not duplicate or invent ad-hoc fashion rules in code or constitution.
+6. **UI Consolidation Principles:**
+   - **Single Home:** Every feature, setting, and state mutation has exactly one official home. Shortcuts in other views are allowed only when contextually essential and must share identical appearance, labels, and shared components (`FilterPillBar`, `FullscreenPhotoViewer`, `GarmentActionButtons`).
+   - **Unified Vocabulary:** Use standard terms from [docs/FEATURE_MAP.md](docs/FEATURE_MAP.md) (`👔 1枚もの`, `🧥 羽織り`, `片付ける / 出す`, `全体見直し（クイック見直し／フル見直し）`, `13色パレット`, etc.) across all views, modals, and prompts without inventing ad-hoc terms.
+   - **Progressive Disclosure:** Keep morning 1-second decision actions on the top level; place low-frequency operations (rebuilds, backups, settings, troubleshooting) inside accordions or dedicated modals.
+   - **Zero Cognitive Load:** Complex mechanisms (bidirectional links, push/pull ordering, protection locks for sanctuary data, rebuild tier routing) are handled by the system.
+7. **Map & Vocabulary First Rule:**
+   - When adding or modifying entry points, views, modals, or terminology, agents MUST FIRST update [docs/FEATURE_MAP.md](docs/FEATURE_MAP.md) and [docs/SPECIFICATION.md](docs/SPECIFICATION.md). Always reuse existing shared components (`FilterPillBar.tsx`, `FullscreenPhotoViewer.tsx`, `GarmentActionButtons.tsx`) rather than creating ad-hoc UI duplicates.
 
 ## 6. Definition of Done (DoD) & Guardrails
 1. **No-Actionable Finding, Stop:** If research shows no problem or speculative changes are unwarranted, do not manufacture unnecessary code changes. Complete the task with an investigation report.
@@ -63,4 +70,4 @@ This file serves as the operational contract for AI agents (Antigravity, Codex, 
 4. **Run Full Verification:** Always run `npm run check` and ensure exit code 0.
 5. **Mobile Usability:** Keep mobile layout clean with tap targets at least 44x44px.
 6. **Testing Policy:** Permanent automated tests are restricted to logic (data validation, domain functions, and GAS handlers). Because the Node test harness can only verify UI behavior via source-string matching, do not add new UI source-string tests. If an existing UI string assertion breaks due to a harmless change, delete the assertion rather than contorting code or tests to make it pass. UI quality is assured via code review against the plan/PR checklist and manual device verification.
-7. **PR Etiquette:** Include a checklist of design conditions in every PR description (and explicitly note the GAS redeployment requirement whenever `gas/Code.gs` is modified). The implementer must never merge their own PR.
+7. **PR Etiquette:** Include a checklist of design conditions in every PR description (specifically checking: 1. Feature Map & Glossary updated first if adding entry points/terms; 2. SPECIFICATION.md kept in sync; 3. Existing shared components reused; 4. Explicit GAS redeployment note whenever `gas/Code.gs` is modified; 5. `npm run check` passes with exit code 0). The implementer must never merge their own PR.
