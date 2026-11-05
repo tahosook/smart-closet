@@ -20,6 +20,7 @@ import type {
   DuplicateMergeSelection,
   DuplicateMergePreview,
   DuplicateMergeExecutionResult,
+  RebuildMode,
   RebuildCandidateItem,
   RebuildFieldKey,
   RebuildFieldSelection,
@@ -2485,6 +2486,92 @@ export function executeDuplicateMerge(params: {
 // 全件リビルド・差分比較・選択適用ロジック
 // ----------------------------------------------------
 
+export interface QuickRebuildPromptInput {
+  items: ClosetItem[];
+  wifeNgPairs?: WifeNgPair[];
+}
+
+/**
+ * 写真を使わず、文字情報とスタイリングルールから相性と羽織り分類のみを再判定するクイックリビルド用プロンプトを生成する純粋関数
+ */
+export function buildQuickRebuildPrompt(params: QuickRebuildPromptInput): string {
+  const { items, wifeNgPairs = [] } = params;
+
+  const shirts = items.filter((it) => it.category === 'shirt');
+  const pants = items.filter((it) => it.category === 'pants');
+
+  const shirtsList = shirts
+    .map(
+      (s) =>
+        `- [${s.id}] ${s.name} (色: ${s.color || '未設定'}, 現在区分: ${s.isOuterwear ? '羽織り' : '1枚もの'}, 季節袖丈: ${s.seasonSleeve || '通年'}, ドレス度${s.dressScore}, 快適度${s.comfortScore}${s.notes ? `, メモ: ${s.notes}` : ''}${s.archived ? ', ※現在片付け中' : ''})`
+    )
+    .join('\n');
+
+  const pantsList = pants
+    .map(
+      (p) =>
+        `- [${p.id}] ${p.name} (色: ${p.color || '未設定'}, 季節袖丈: ${p.seasonSleeve || '通年'}, ドレス度${p.dressScore}, 快適度${p.comfortScore}${p.notes ? `, メモ: ${p.notes}` : ''}${p.archived ? ', ※現在片付け中' : ''})`
+    )
+    .join('\n');
+
+  const wifeNgSection =
+    wifeNgPairs.length > 0
+      ? `### 【注意喚起】登録済みの奥様NGペア（全${wifeNgPairs.length}件）\n※妻から実際にダメ出しされた組み合わせです。絶対におすすめに含めず、NGとして扱ってください。\n` +
+        wifeNgPairs.map((ng) => `- ${ng.shirtId} × ${ng.pantsId}: ${ng.reason || '奥様NG指定'}`).join('\n') +
+        '\n\n'
+      : '';
+
+  return `あなたは40代男性（ハイブリッド勤務：出社＋リモート）専任のプロスタイリストAIです。
+登録済みの服の属性情報をもとに、写真を使わずテキスト情報から【組み合わせ相性】およびシャツの【羽織り分類】のみを再判定してください。
+※服の名前、色、スコア、寸法などの基本属性は変更せず、相性リスト（出社おすすめ／リモートおすすめ／NG）およびシャツの羽織りフラグ（isOuterwear）のみを出力してください。
+
+### スタイリング絶対原則（奥様ダメ出し回避ルール）
+1. 同系色・濃紺同士の禁止: 上下ともに濃紺・インディゴになる組み合わせ（例: 濃紺シャツ × 濃紺パンツ）は作業着・パジャマに見えるためNG。
+2. 淡青×青デニムの禁止: サックス（淡青）にブルーデニム（ブルー）を合わせると全身が水色で繋がり休日のおじさん感が出るためNG。
+3. 淡色×淡色の膨張禁止: 生成り・ベージュシャツに淡いグレージュやライトグレー、白、ベージュのパンツを合わせると輪郭がぼやけて膨張して見えるためNG。
+4. 柄×柄の完全禁止: チェック・ストライプ・小紋柄シャツと柄パンツはNG。柄パンツは白無地シャツで消化すること。
+5. TPO分離と出社スウェット除外:
+   - 出社時: パンツのドレス度3.5以上を優先。スウェット・ジョガー系（ドレス度3.0未満）は出社候補から除外。
+   - リモート時: 快適度4.0以上を優先。
+
+${wifeNgSection}### 対象アイテム一覧
+【シャツ・トップス（全${shirts.length}着）】
+${shirtsList}
+
+【パンツ・ボトムス（全${pants.length}着）】
+${pantsList}
+
+### 出力フォーマット指示
+必ず以下のJSON形式のみを出力してください。Markdownの説明文や前置きは不要です。
+全アイテム（全${items.length}着）のIDを網羅してください。
+\`\`\`json
+{
+  "rebuildItems": [
+    {
+      "id": "S1",
+      "isOuterwear": false,
+      "officeRecommendIds": ["P3", "P8"],
+      "remoteRecommendIds": ["P1", "P2"],
+      "ngIds": ["P5"],
+      "ngReason": "上下同系色の濃紺になり作業着見えするため"
+    },
+    {
+      "id": "P1",
+      "officeRecommendIds": ["S2"],
+      "remoteRecommendIds": ["S1"],
+      "ngIds": ["S1"],
+      "ngReason": "上下同系色の濃紺のため"
+    }
+  ]
+}
+\`\`\`
+
+※注意事項:
+- isOuterwear はシャツのうち、カーディガン・ジップアップ・ジップパーカー・ニットジャケット等の羽織り系なら true、1枚着なら false を指定してください（パンツは省略または false）。
+- officeRecommendIds, remoteRecommendIds, ngIds に指定する相手IDは実在する相手カテゴリのIDのみ（シャツにはパンツのID、パンツにはシャツのID）。
+- 同一のIDが recommendIds と ngIds の双方に重複して存在しないようにしてください。`;
+}
+
 /**
  * Geminiに提出する全件リビルド用の分析プロンプトを生成する純粋関数
  */
@@ -2567,7 +2654,8 @@ ${pantsList}
  */
 export function parseRebuildInputJson(
   jsonStr: string,
-  existingItems?: ClosetItem[]
+  existingItems?: ClosetItem[],
+  mode: RebuildMode = 'full'
 ): {
   valid: boolean;
   items?: RebuildCandidateItem[];
@@ -2610,6 +2698,8 @@ export function parseRebuildInputJson(
     return { valid: false, error: 'リビルド対象アイテムの配列が空です。' };
   }
 
+  const existingMap = new Map((existingItems || []).map((it) => [it.id, it]));
+
   // 反対カテゴリの有効なID集合（existingItems が渡されている場合）
   const validOppositePantsIds = existingItems
     ? new Set(existingItems.filter((it) => it.category === 'pants').map((it) => it.id))
@@ -2637,11 +2727,22 @@ export function parseRebuildInputJson(
     }
     seenIds.add(id);
 
+    const existing = existingMap.get(id);
     const category: Category = id.startsWith('S') ? 'shirt' : 'pants';
-    const name = typeof raw.name === 'string' && raw.name.trim() ? raw.name.trim() : id;
+    const name =
+      typeof raw.name === 'string' && raw.name.trim()
+        ? raw.name.trim()
+        : existing?.name || id;
 
     // 羽織り分類（シャツのみ有効）
-    const isOuterwear = category === 'shirt' && typeof raw.isOuterwear === 'boolean' ? raw.isOuterwear : undefined;
+    const isOuterwear =
+      category === 'shirt'
+        ? typeof raw.isOuterwear === 'boolean'
+          ? raw.isOuterwear
+          : mode === 'quick' && existing?.category === 'shirt'
+          ? existing.isOuterwear
+          : undefined
+        : undefined;
 
     // 色の検証（ネイビーは濃紺へ自動補正）
     let color: GarmentColor | undefined = undefined;
@@ -2653,40 +2754,72 @@ export function parseRebuildInputJson(
       if (isValidGarmentColor(trimmedColor)) {
         color = trimmedColor;
       }
+    } else if (mode === 'quick' && existing) {
+      color = existing.color;
     }
 
-    const seasonSleeve = typeof raw.seasonSleeve === 'string' ? raw.seasonSleeve.trim() : '通年';
+    const seasonSleeve =
+      typeof raw.seasonSleeve === 'string' && raw.seasonSleeve.trim()
+        ? raw.seasonSleeve.trim()
+        : existing?.seasonSleeve || '通年';
 
-    // dressScore / comfortScore: 1.0〜5.0 の有限数のみを有効とし、範囲外・不正値はエラー
-    if (
-      typeof raw.dressScore !== 'number' ||
-      !Number.isFinite(raw.dressScore) ||
-      raw.dressScore < 1.0 ||
-      raw.dressScore > 5.0
-    ) {
-      return {
-        valid: false,
-        error: `アイテム [${id}] の dressScore (${raw.dressScore}) が不正です。1.0〜5.0 の数値を指定してください。`,
-      };
+    // dressScore / comfortScore:
+    let dressScore: number;
+    let comfortScore: number;
+
+    if (mode === 'quick') {
+      // クイックモードでは既存スコアを優先（省略または無効時は既存値を使用）
+      dressScore =
+        typeof raw.dressScore === 'number' &&
+        Number.isFinite(raw.dressScore) &&
+        raw.dressScore >= 1.0 &&
+        raw.dressScore <= 5.0
+          ? raw.dressScore
+          : existing?.dressScore ?? 3.5;
+      comfortScore =
+        typeof raw.comfortScore === 'number' &&
+        Number.isFinite(raw.comfortScore) &&
+        raw.comfortScore >= 1.0 &&
+        raw.comfortScore <= 5.0
+          ? raw.comfortScore
+          : existing?.comfortScore ?? 3.5;
+    } else {
+      // フルモードでは 1.0〜5.0 の有限数を厳格検証
+      if (
+        typeof raw.dressScore !== 'number' ||
+        !Number.isFinite(raw.dressScore) ||
+        raw.dressScore < 1.0 ||
+        raw.dressScore > 5.0
+      ) {
+        return {
+          valid: false,
+          error: `アイテム [${id}] の dressScore (${raw.dressScore}) が不正です。1.0〜5.0 の数値を指定してください。`,
+        };
+      }
+
+      if (
+        typeof raw.comfortScore !== 'number' ||
+        !Number.isFinite(raw.comfortScore) ||
+        raw.comfortScore < 1.0 ||
+        raw.comfortScore > 5.0
+      ) {
+        return {
+          valid: false,
+          error: `アイテム [${id}] の comfortScore (${raw.comfortScore}) が不正です。1.0〜5.0 の数値を指定してください。`,
+        };
+      }
+
+      dressScore = raw.dressScore;
+      comfortScore = raw.comfortScore;
     }
 
-    if (
-      typeof raw.comfortScore !== 'number' ||
-      !Number.isFinite(raw.comfortScore) ||
-      raw.comfortScore < 1.0 ||
-      raw.comfortScore > 5.0
-    ) {
-      return {
-        valid: false,
-        error: `アイテム [${id}] の comfortScore (${raw.comfortScore}) が不正です。1.0〜5.0 の数値を指定してください。`,
-      };
-    }
-
-    const dressScore = raw.dressScore;
-    const comfortScore = raw.comfortScore;
-
-    // measurements: validateGarmentMeasurements を通し、不正な場合は undefined
-    const measurements = validateGarmentMeasurements(raw.measurements, category);
+    // measurements:
+    const measurements =
+      raw.measurements !== undefined
+        ? validateGarmentMeasurements(raw.measurements, category)
+        : mode === 'quick' && existing
+        ? existing.measurements
+        : undefined;
 
     // 相性配列の検証と正規化
     const toStringArray = (arr: unknown): string[] => {
@@ -2725,7 +2858,12 @@ export function parseRebuildInputJson(
     const remoteRecommendIds = filterOppositeIds(rawRemote).filter((tid) => !ngSet.has(tid));
 
     const ngReason = typeof raw.ngReason === 'string' ? raw.ngReason.trim() : '';
-    const notes = typeof raw.notes === 'string' ? raw.notes.trim() : '';
+    const notes =
+      typeof raw.notes === 'string'
+        ? raw.notes.trim()
+        : mode === 'quick' && existing
+        ? existing.notes || ''
+        : '';
 
     validatedItems.push({
       id,
@@ -2757,10 +2895,18 @@ export function parseRebuildInputJson(
 export function computeRebuildDiffs(params: {
   currentItems: ClosetItem[];
   rebuildItems: RebuildCandidateItem[];
+  mode?: RebuildMode;
 }): RebuildItemDiff[] {
-  const { currentItems, rebuildItems } = params;
+  const { currentItems, rebuildItems, mode = 'full' } = params;
   const currentMap = new Map(currentItems.map((it) => [it.id, it]));
   const diffs: RebuildItemDiff[] = [];
+
+  const arrayEqual = (a: string[] = [], b: string[] = []) => {
+    if (a.length !== b.length) return false;
+    const sortedA = [...a].sort();
+    const sortedB = [...b].sort();
+    return sortedA.every((v, i) => v === sortedB[i]);
+  };
 
   for (const rebuild of rebuildItems) {
     const current = currentMap.get(rebuild.id);
@@ -2768,103 +2914,161 @@ export function computeRebuildDiffs(params: {
 
     const changedFields: RebuildFieldKey[] = [];
 
-    // 1. name
-    if (current.name.trim() !== rebuild.name.trim()) {
-      changedFields.push('name');
+    if (mode === 'quick') {
+      // クイックリビルド: 差分・適用対象は compatibility と isOuterwear (シャツのみ) に厳格制限
+      // 1. isOuterwear (シャツのみ)
+      if (
+        current.category === 'shirt' &&
+        rebuild.isOuterwear !== undefined &&
+        Boolean(current.isOuterwear) !== Boolean(rebuild.isOuterwear)
+      ) {
+        changedFields.push('isOuterwear');
+      }
+
+      // 2. compatibility (office, remote, ng, ngReason)
+      const hasNgReasonDiff = (current.ngReason || '').trim() !== (rebuild.ngReason || '').trim();
+
+      if (
+        !arrayEqual(current.officeRecommendIds, rebuild.officeRecommendIds) ||
+        !arrayEqual(current.remoteRecommendIds, rebuild.remoteRecommendIds) ||
+        !arrayEqual(current.ngIds, rebuild.ngIds) ||
+        hasNgReasonDiff
+      ) {
+        changedFields.push('compatibility');
+      }
+
+      const defaultSelection: RebuildFieldSelection = {
+        name: false,
+        color: false,
+        isOuterwear: changedFields.includes('isOuterwear'),
+        seasonSleeve: false,
+        scores: false,
+        measurements: false,
+        notes: false,
+        compatibility: changedFields.includes('compatibility'),
+      };
+
+      // 仮想的な after アイテム: クイックでは compatibility と isOuterwear 以外は必ず current を完全保持
+      const afterItem: ClosetItem = {
+        ...current,
+        isOuterwear:
+          current.category === 'shirt' && rebuild.isOuterwear !== undefined
+            ? rebuild.isOuterwear
+            : current.isOuterwear,
+        officeRecommendIds: rebuild.officeRecommendIds,
+        remoteRecommendIds: rebuild.remoteRecommendIds,
+        ngIds: rebuild.ngIds,
+        ngReason: rebuild.ngReason,
+      };
+
+      diffs.push({
+        id: current.id,
+        category: current.category,
+        before: current,
+        after: afterItem,
+        changedFields,
+        isColorProtected: true,
+        isMeasurementsProtected: true,
+        defaultSelection,
+      });
+    } else {
+      // フルリビルド: 全項目を対象に差分検出・保護判定
+      // 1. name
+      if (current.name.trim() !== rebuild.name.trim()) {
+        changedFields.push('name');
+      }
+
+      // 2. color
+      if (rebuild.color && current.color !== rebuild.color) {
+        changedFields.push('color');
+      }
+
+      // 2.5 isOuterwear (シャツのみ)
+      if (
+        current.category === 'shirt' &&
+        rebuild.isOuterwear !== undefined &&
+        Boolean(current.isOuterwear) !== Boolean(rebuild.isOuterwear)
+      ) {
+        changedFields.push('isOuterwear');
+      }
+
+      // 3. seasonSleeve
+      if (current.seasonSleeve !== rebuild.seasonSleeve) {
+        changedFields.push('seasonSleeve');
+      }
+
+      // 4. scores
+      if (current.dressScore !== rebuild.dressScore || current.comfortScore !== rebuild.comfortScore) {
+        changedFields.push('scores');
+      }
+
+      // 5. measurements
+      if (rebuild.measurements && JSON.stringify(current.measurements) !== JSON.stringify(rebuild.measurements)) {
+        changedFields.push('measurements');
+      }
+
+      // 6. notes
+      if ((current.notes || '').trim() !== (rebuild.notes || '').trim()) {
+        changedFields.push('notes');
+      }
+
+      // 7. compatibility (office, remote, ng, ngReason)
+      const hasNgReasonDiff = (current.ngReason || '').trim() !== (rebuild.ngReason || '').trim();
+
+      if (
+        !arrayEqual(current.officeRecommendIds, rebuild.officeRecommendIds) ||
+        !arrayEqual(current.remoteRecommendIds, rebuild.remoteRecommendIds) ||
+        !arrayEqual(current.ngIds, rebuild.ngIds) ||
+        hasNgReasonDiff
+      ) {
+        changedFields.push('compatibility');
+      }
+
+      // 保護判定
+      const isColorProtected = Boolean(current.color && isValidGarmentColor(current.color));
+      const isMeasurementsProtected = Boolean(current.measurements && Object.keys(current.measurements).length > 0);
+
+      // デフォルト選択状態（確定色や既存実寸はデフォルトで保護＝OFF）
+      const defaultSelection: RebuildFieldSelection = {
+        name: changedFields.includes('name'),
+        color: changedFields.includes('color') && !isColorProtected,
+        isOuterwear: changedFields.includes('isOuterwear'),
+        seasonSleeve: changedFields.includes('seasonSleeve'),
+        scores: changedFields.includes('scores'),
+        measurements: changedFields.includes('measurements') && !isMeasurementsProtected,
+        notes: changedFields.includes('notes'),
+        compatibility: changedFields.includes('compatibility'),
+      };
+
+      // 仮想的な after アイテム
+      const afterItem: ClosetItem = {
+        ...current,
+        name: rebuild.name,
+        color: rebuild.color || current.color,
+        isOuterwear:
+          current.category === 'shirt' && rebuild.isOuterwear !== undefined ? rebuild.isOuterwear : current.isOuterwear,
+        seasonSleeve: rebuild.seasonSleeve,
+        dressScore: rebuild.dressScore,
+        comfortScore: rebuild.comfortScore,
+        notes: rebuild.notes,
+        officeRecommendIds: rebuild.officeRecommendIds,
+        remoteRecommendIds: rebuild.remoteRecommendIds,
+        ngIds: rebuild.ngIds,
+        ngReason: rebuild.ngReason,
+        measurements: rebuild.measurements || current.measurements,
+      };
+
+      diffs.push({
+        id: current.id,
+        category: current.category,
+        before: current,
+        after: afterItem,
+        changedFields,
+        isColorProtected,
+        isMeasurementsProtected,
+        defaultSelection,
+      });
     }
-
-    // 2. color
-    if (rebuild.color && current.color !== rebuild.color) {
-      changedFields.push('color');
-    }
-
-    // 2.5 isOuterwear (シャツのみ)
-    if (current.category === 'shirt' && rebuild.isOuterwear !== undefined && Boolean(current.isOuterwear) !== Boolean(rebuild.isOuterwear)) {
-      changedFields.push('isOuterwear');
-    }
-
-    // 3. seasonSleeve
-    if (current.seasonSleeve !== rebuild.seasonSleeve) {
-      changedFields.push('seasonSleeve');
-    }
-
-    // 4. scores
-    if (current.dressScore !== rebuild.dressScore || current.comfortScore !== rebuild.comfortScore) {
-      changedFields.push('scores');
-    }
-
-    // 5. measurements
-    if (rebuild.measurements && JSON.stringify(current.measurements) !== JSON.stringify(rebuild.measurements)) {
-      changedFields.push('measurements');
-    }
-
-    // 6. notes
-    if ((current.notes || '').trim() !== (rebuild.notes || '').trim()) {
-      changedFields.push('notes');
-    }
-
-    // 7. compatibility (office, remote, ng, ngReason)
-    const arrayEqual = (a: string[] = [], b: string[] = []) => {
-      if (a.length !== b.length) return false;
-      const sortedA = [...a].sort();
-      const sortedB = [...b].sort();
-      return sortedA.every((v, i) => v === sortedB[i]);
-    };
-
-    const hasNgReasonDiff = (current.ngReason || '').trim() !== (rebuild.ngReason || '').trim();
-
-    if (
-      !arrayEqual(current.officeRecommendIds, rebuild.officeRecommendIds) ||
-      !arrayEqual(current.remoteRecommendIds, rebuild.remoteRecommendIds) ||
-      !arrayEqual(current.ngIds, rebuild.ngIds) ||
-      hasNgReasonDiff
-    ) {
-      changedFields.push('compatibility');
-    }
-
-    // 保護判定
-    const isColorProtected = Boolean(current.color && isValidGarmentColor(current.color));
-    const isMeasurementsProtected = Boolean(current.measurements && Object.keys(current.measurements).length > 0);
-
-    // デフォルト選択状態（確定色や既存実寸はデフォルトで保護＝OFF）
-    const defaultSelection: RebuildFieldSelection = {
-      name: changedFields.includes('name'),
-      color: changedFields.includes('color') && !isColorProtected,
-      isOuterwear: changedFields.includes('isOuterwear'),
-      seasonSleeve: changedFields.includes('seasonSleeve'),
-      scores: changedFields.includes('scores'),
-      measurements: changedFields.includes('measurements') && !isMeasurementsProtected,
-      notes: changedFields.includes('notes'),
-      compatibility: changedFields.includes('compatibility'),
-    };
-
-    // 仮想的な after アイテム
-    const afterItem: ClosetItem = {
-      ...current,
-      name: rebuild.name,
-      color: rebuild.color || current.color,
-      isOuterwear: current.category === 'shirt' && rebuild.isOuterwear !== undefined ? rebuild.isOuterwear : current.isOuterwear,
-      seasonSleeve: rebuild.seasonSleeve,
-      dressScore: rebuild.dressScore,
-      comfortScore: rebuild.comfortScore,
-      notes: rebuild.notes,
-      officeRecommendIds: rebuild.officeRecommendIds,
-      remoteRecommendIds: rebuild.remoteRecommendIds,
-      ngIds: rebuild.ngIds,
-      ngReason: rebuild.ngReason,
-      measurements: rebuild.measurements || current.measurements,
-    };
-
-    diffs.push({
-      id: current.id,
-      category: current.category,
-      before: current,
-      after: afterItem,
-      changedFields,
-      isColorProtected,
-      isMeasurementsProtected,
-      defaultSelection,
-    });
   }
 
   return diffs;
@@ -2968,7 +3172,8 @@ export function applyRebuildDiffs(params: {
  */
 export function validateAndBuildRebuildDiffs(
   rawText: string,
-  currentItems: ClosetItem[]
+  currentItems: ClosetItem[],
+  mode: RebuildMode = 'full'
 ): RebuildValidationResult {
   if (!rawText || !rawText.trim()) {
     return {
@@ -2977,7 +3182,7 @@ export function validateAndBuildRebuildDiffs(
     };
   }
 
-  const parsed = parseRebuildInputJson(rawText, currentItems);
+  const parsed = parseRebuildInputJson(rawText, currentItems, mode);
   if (!parsed.valid || !parsed.items) {
     return {
       valid: false,
@@ -3011,6 +3216,7 @@ export function validateAndBuildRebuildDiffs(
   const diffs = computeRebuildDiffs({
     currentItems,
     rebuildItems: parsed.items,
+    mode,
   });
 
   return {
