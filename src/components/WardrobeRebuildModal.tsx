@@ -427,7 +427,7 @@ export const WardrobeRebuildModal: React.FC<WardrobeRebuildModalProps> = ({
         setRebuildSuccessMessage(
           rebuildMode === 'quick'
             ? `クイック見直しの適用が完了しました（${res.appliedItemsCount}着のデータを更新）。変更は自動でクラウドへ同期されます。`
-            : `全件リビルドの適用が完了しました（${res.appliedItemsCount}着のデータを更新）。変更は自動でクラウドへ同期されます。`
+            : `フル見直しの適用が完了しました（${res.appliedItemsCount}着のデータを更新）。変更は自動でクラウドへ同期されます。`
         );
         contentScrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
       } else {
@@ -453,7 +453,7 @@ export const WardrobeRebuildModal: React.FC<WardrobeRebuildModalProps> = ({
       aria-label={
         rebuildMode === 'quick'
           ? 'ワードローブ クイック見直し'
-          : '写真からの全件リビルド＆重複解消'
+          : 'ワードローブ フル見直し＆重複統合'
       }
       className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4 overflow-y-auto"
     >
@@ -1062,7 +1062,7 @@ export const WardrobeRebuildModal: React.FC<WardrobeRebuildModalProps> = ({
                   </div>
                   <div className="space-y-1.5">
                     <h3 className="text-base font-bold text-emerald-950">
-                      {rebuildMode === 'quick' ? 'クイック見直しの適用が完了しました' : '全件リビルドの適用が完了しました'}
+                      {rebuildMode === 'quick' ? 'クイック見直しの適用が完了しました' : 'フル見直しの適用が完了しました'}
                     </h3>
                     <p className="text-xs sm:text-sm text-emerald-800 max-w-lg mx-auto leading-relaxed">
                       {rebuildSuccessMessage}
