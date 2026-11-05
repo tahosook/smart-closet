@@ -960,7 +960,7 @@ export function validateSingleClosetItem(
     }
   } else {
     finalColor = undefined;
-    warning = '色が未設定のため「未確定」として扱います（後から写真からの全件リビルドで確定可能）。';
+    warning = '色が未設定のため「未確定」として扱います（後から写真からのフル見直しで確定可能）。';
   }
 
   // 一時プロパティ (cropBox, garmentBox 等) を除外したクリーンな ClosetItem を返却

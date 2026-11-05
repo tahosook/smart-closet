@@ -22,7 +22,6 @@ import {
   ShoppingBag,
   Layers,
 } from 'lucide-react';
-import { WardrobeRebuildModal } from './WardrobeRebuildModal';
 import { useClosetStore } from '../hooks/useClosetStore';
 import {
   Category,
@@ -111,7 +110,6 @@ export const AiSyncView: React.FC = () => {
 
   const [copiedPromptStatus, setCopiedPromptStatus] = useState<CopyFeedbackStatus>('idle');
   const [copiedConsultPromptStatus, setCopiedConsultPromptStatus] = useState<CopyFeedbackStatus>('idle');
-  const [isRebuildModalOpen, setIsRebuildModalOpen] = useState(false);
 
   const promptTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const consultPromptTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -2659,38 +2657,24 @@ ${wifeNgSummary}
             </button>
           </div>
 
-          {/* 2. 写真からの全件リビルド ＆ 重複解消 */}
-          <div className="p-4 bg-slate-900/90 border border-slate-800 rounded-2xl space-y-3 shadow-md">
+          {/* 2. ワードローブの全体見直し（案内） */}
+          <div className="p-4 bg-slate-900/60 border border-slate-800 rounded-2xl space-y-2">
             <div className="flex items-center justify-between">
-              <span className="text-sm font-bold text-indigo-300 flex items-center gap-2">
+              <span className="text-xs font-bold text-slate-300 flex items-center gap-2">
                 <Layers className="w-4 h-4 text-indigo-400" />
-                <span>🔄 写真からの全件リビルド ＆ 重複解消</span>
+                <span>🔄 ワードローブの全体見直し（クイック・フル）</span>
               </span>
-              <span className="text-[10px] px-2 py-0.5 rounded bg-indigo-950 text-indigo-300 border border-indigo-800 font-mono">
-                13色新パレット対応
+              <span className="text-[10px] px-2 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700">
+                管理タブへ集約
               </span>
             </div>
 
             <p className="text-[11px] text-slate-400 leading-relaxed">
-              保存されている写真を正本として、全アイテムの名前・13色パレット確定色・季節・ドレス度・相性を再分析し、データを丸ごと作り直します。同一写真の重複登録も自動検出して1着に統合できます。
+              相性・羽織りの再判定（⚡ クイック見直し）や、写真を正本としたフル見直し・重複統合（📸 フル見直し）は<strong>「管理」タブ</strong>へ集約されました。保守・見直しを行う際は管理タブの「🔄 全体見直し」をご利用ください。
             </p>
-
-            <button
-              type="button"
-              onClick={() => setIsRebuildModalOpen(true)}
-              className="w-full min-h-[44px] py-2.5 px-3 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all shadow-md bg-indigo-600 hover:bg-indigo-500 text-white shadow-indigo-950 active:scale-[0.98]"
-            >
-              <Layers className="w-4 h-4" />
-              <span>全件リビルド ＆ 重複解消ウィザードを開く</span>
-            </button>
           </div>
         </div>
       </section>
-
-      <WardrobeRebuildModal
-        isOpen={isRebuildModalOpen}
-        onClose={() => setIsRebuildModalOpen(false)}
-      />
     </div>
   );
 };
