@@ -425,7 +425,9 @@ export const WardrobeRebuildModal: React.FC<WardrobeRebuildModalProps> = ({
       const res = applyWardrobeRebuild(rebuildDiffs, fieldSelections);
       if (res.valid) {
         setRebuildSuccessMessage(
-          `全件リビルドの適用が完了しました（${res.appliedItemsCount}着のデータを更新）。変更は自動でクラウドへ同期されます。`
+          rebuildMode === 'quick'
+            ? `クイック見直しの適用が完了しました（${res.appliedItemsCount}着のデータを更新）。変更は自動でクラウドへ同期されます。`
+            : `全件リビルドの適用が完了しました（${res.appliedItemsCount}着のデータを更新）。変更は自動でクラウドへ同期されます。`
         );
         contentScrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
       } else {
