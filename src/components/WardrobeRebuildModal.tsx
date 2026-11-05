@@ -14,6 +14,7 @@ import {
   Info,
   Upload,
   FileText,
+  Zap,
 } from 'lucide-react';
 import { useClosetStore } from '../hooks/useClosetStore';
 import { ItemImage } from './ItemImage';
@@ -28,6 +29,7 @@ import {
   detectDuplicateGarmentGroups,
   previewDuplicateMerge,
   buildWardrobeRebuildPrompt,
+  buildQuickRebuildPrompt,
   validateAndBuildRebuildDiffs,
   copyTextToClipboard,
 } from '../utils/closetDomain';
@@ -37,16 +39,19 @@ import type {
   RebuildItemDiff,
   RebuildFieldSelection,
   RebuildFieldKey,
+  RebuildMode,
 } from '../types/closet';
 
 interface WardrobeRebuildModalProps {
   isOpen: boolean;
   onClose: () => void;
+  initialMode?: RebuildMode;
 }
 
 export const WardrobeRebuildModal: React.FC<WardrobeRebuildModalProps> = ({
   isOpen,
   onClose,
+  initialMode = 'quick',
 }) => {
   const {
     closetData,
@@ -57,6 +62,7 @@ export const WardrobeRebuildModal: React.FC<WardrobeRebuildModalProps> = ({
     gasConfig,
   } = useClosetStore();
 
+  const [rebuildMode, setRebuildMode] = useState<RebuildMode>(initialMode);
   const [activeStep, setActiveStep] = useState<1 | 2 | 3>(1);
 
   // ----------------------------------------------------
@@ -89,7 +95,7 @@ export const WardrobeRebuildModal: React.FC<WardrobeRebuildModalProps> = ({
   const [isApplyingRebuild, setIsApplyingRebuild] = useState(false);
   const [rebuildSuccessMessage, setRebuildSuccessMessage] = useState<string | null>(null);
 
-  // モーダルオープン時の重複検出
+  // モーダルオープン時の初期化
   useEffect(() => {
     if (!isOpen) {
       // モーダルが閉じたら初期化
@@ -98,6 +104,19 @@ export const WardrobeRebuildModal: React.FC<WardrobeRebuildModalProps> = ({
       setRebuildSuccessMessage(null);
       setParseError(null);
       setSelectedFileName(null);
+      setRebuildDiffs([]);
+      setFieldSelections({});
+      setRebuildJsonInput('');
+      return;
+    }
+
+    setRebuildMode(initialMode);
+    setActiveStep(1);
+  }, [isOpen, initialMode]);
+
+  // フルリビルド時の重複検出（フルモード選択時のみ写真ハッシュ照合を実行）
+  useEffect(() => {
+    if (!isOpen || rebuildMode !== 'full') {
       return;
     }
 
@@ -148,7 +167,19 @@ export const WardrobeRebuildModal: React.FC<WardrobeRebuildModalProps> = ({
     return () => {
       isMounted = false;
     };
-  }, [isOpen, closetData.items]);
+  }, [isOpen, rebuildMode, closetData.items]);
+
+  const handleSwitchMode = (newMode: RebuildMode) => {
+    if (newMode === rebuildMode) return;
+    setRebuildMode(newMode);
+    setActiveStep(1);
+    setParseError(null);
+    setRebuildSuccessMessage(null);
+    setRebuildDiffs([]);
+    setFieldSelections({});
+    setRebuildJsonInput('');
+    setSelectedFileName(null);
+  };
 
   // 重複解消プレビューの計算
   const mergePreview = useMemo(() => {
@@ -237,12 +268,18 @@ export const WardrobeRebuildModal: React.FC<WardrobeRebuildModalProps> = ({
   };
 
   const generatedPrompt = useMemo(() => {
+    if (rebuildMode === 'quick') {
+      return buildQuickRebuildPrompt({
+        items: closetData.items,
+        wifeNgPairs,
+      });
+    }
     const sheetsCount = contactSheets.length > 0 ? contactSheets.length : Math.ceil(closetData.items.length / 12);
     return buildWardrobeRebuildPrompt({
       items: closetData.items,
       contactSheetsCount: sheetsCount,
     });
-  }, [closetData.items, contactSheets.length]);
+  }, [rebuildMode, closetData.items, wifeNgPairs, contactSheets.length]);
 
   const handleCopyPrompt = async () => {
     const ok = await copyTextToClipboard(generatedPrompt);
@@ -256,7 +293,7 @@ export const WardrobeRebuildModal: React.FC<WardrobeRebuildModalProps> = ({
 
   const processRebuildJsonText = (rawText: string) => {
     setParseError(null);
-    const result = validateAndBuildRebuildDiffs(rawText, closetData.items);
+    const result = validateAndBuildRebuildDiffs(rawText, closetData.items, rebuildMode);
     if (!result.valid || !result.diffs) {
       setParseError(result.error || 'JSONの解析に失敗しました。');
       return false;
@@ -270,7 +307,8 @@ export const WardrobeRebuildModal: React.FC<WardrobeRebuildModalProps> = ({
       initialFieldSelections[d.id] = { ...d.defaultSelection };
     }
     setFieldSelections(initialFieldSelections);
-    setActiveStep(3);
+    // クイックは Step 2 (全2ステップ)、フルは Step 3 (全3ステップ) へ遷移
+    setActiveStep(rebuildMode === 'quick' ? 2 : 3);
     return true;
   };
 
@@ -402,11 +440,19 @@ export const WardrobeRebuildModal: React.FC<WardrobeRebuildModalProps> = ({
 
   if (!isOpen) return null;
 
+  const isDiffStep = rebuildMode === 'quick' ? activeStep === 2 : activeStep === 3;
+  const isPromptInputStep = rebuildMode === 'quick' ? activeStep === 1 : activeStep === 2;
+  const isDuplicateStep = rebuildMode === 'full' && activeStep === 1;
+
   return (
     <div
       role="dialog"
       aria-modal="true"
-      aria-label="写真からの全件リビルド＆重複解消"
+      aria-label={
+        rebuildMode === 'quick'
+          ? 'ワードローブ クイック見直し'
+          : '写真からの全件リビルド＆重複解消'
+      }
       className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4 overflow-y-auto"
     >
       <div className="bg-white w-full max-w-4xl rounded-2xl shadow-2xl flex flex-col max-h-[92vh] overflow-hidden">
@@ -414,11 +460,22 @@ export const WardrobeRebuildModal: React.FC<WardrobeRebuildModalProps> = ({
         <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between bg-slate-900 text-white">
           <div>
             <h2 className="text-lg font-bold flex items-center gap-2">
-              <Layers className="w-5 h-5 text-indigo-400" />
-              写真からの全件リビルド ＆ 重複解消
+              {rebuildMode === 'quick' ? (
+                <>
+                  <Zap className="w-5 h-5 text-amber-400" />
+                  ⚡ ワードローブ クイック見直し（相性・羽織り）
+                </>
+              ) : (
+                <>
+                  <Layers className="w-5 h-5 text-indigo-400" />
+                  📸 ワードローブ フル見直し ＆ 重複統合
+                </>
+              )}
             </h2>
             <p className="text-xs text-slate-300 mt-0.5">
-              保存写真を正本として、13色パレット・属性・相性を丸ごと再構築します
+              {rebuildMode === 'quick'
+                ? '写真を使わず、登録済みの文字情報と最新ルールから相性・羽織りを高速に再判定します'
+                : '保存写真を正本として、13色パレット・属性・相性を丸ごと再構築します'}
             </p>
           </div>
           <button
@@ -430,61 +487,123 @@ export const WardrobeRebuildModal: React.FC<WardrobeRebuildModalProps> = ({
           </button>
         </div>
 
+        {/* モード切替タブ */}
+        <div className="flex border-b border-slate-200 bg-slate-100 text-xs font-medium">
+          <button
+            type="button"
+            onClick={() => handleSwitchMode('quick')}
+            className={`flex-1 py-2.5 px-3 text-center border-b-2 flex items-center justify-center gap-1.5 transition-colors min-h-[44px] ${
+              rebuildMode === 'quick'
+                ? 'border-indigo-600 text-indigo-700 bg-white font-bold'
+                : 'border-transparent text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <Zap className="w-3.5 h-3.5 text-amber-500" />
+            <span>⚡ クイック見直し（写真不要・約1分）</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => handleSwitchMode('full')}
+            className={`flex-1 py-2.5 px-3 text-center border-b-2 flex items-center justify-center gap-1.5 transition-colors min-h-[44px] ${
+              rebuildMode === 'full'
+                ? 'border-indigo-600 text-indigo-700 bg-white font-bold'
+                : 'border-transparent text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <Layers className="w-3.5 h-3.5 text-indigo-500" />
+            <span>📸 フル見直し ＆ 重複統合（写真を正本）</span>
+          </button>
+        </div>
+
         {/* ステップナビゲーション */}
         <div className="flex border-b border-slate-200 bg-slate-50 text-xs sm:text-sm font-medium">
-          <button
-            onClick={() => setActiveStep(1)}
-            className={`flex-1 py-3 px-2 sm:px-4 text-center border-b-2 transition-colors min-h-[44px] flex items-center justify-center gap-1.5 ${
-              activeStep === 1
-                ? 'border-indigo-600 text-indigo-700 bg-white font-bold'
-                : 'border-transparent text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            <span className="w-5 h-5 rounded-full bg-slate-200 text-slate-700 flex items-center justify-center text-xs font-bold">
-              1
-            </span>
-            <span>重複の検出・統合</span>
-            {duplicateGroups.length > 0 && (
-              <span className="px-1.5 py-0.2 text-[10px] bg-amber-500 text-white rounded-full">
-                {duplicateGroups.length}
-              </span>
-            )}
-          </button>
-          <button
-            onClick={() => setActiveStep(2)}
-            className={`flex-1 py-3 px-2 sm:px-4 text-center border-b-2 transition-colors min-h-[44px] flex items-center justify-center gap-1.5 ${
-              activeStep === 2
-                ? 'border-indigo-600 text-indigo-700 bg-white font-bold'
-                : 'border-transparent text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            <span className="w-5 h-5 rounded-full bg-slate-200 text-slate-700 flex items-center justify-center text-xs font-bold">
-              2
-            </span>
-            <span>写真シート＆Gemini分析</span>
-          </button>
-          <button
-            onClick={() => setActiveStep(3)}
-            disabled={rebuildDiffs.length === 0}
-            className={`flex-1 py-3 px-2 sm:px-4 text-center border-b-2 transition-colors min-h-[44px] flex items-center justify-center gap-1.5 ${
-              activeStep === 3
-                ? 'border-indigo-600 text-indigo-700 bg-white font-bold'
-                : 'border-transparent text-slate-400 disabled:opacity-50'
-            }`}
-          >
-            <span className="w-5 h-5 rounded-full bg-slate-200 text-slate-700 flex items-center justify-center text-xs font-bold">
-              3
-            </span>
-            <span>差分比較＆選択適用</span>
-          </button>
+          {rebuildMode === 'quick' ? (
+            <>
+              <button
+                onClick={() => setActiveStep(1)}
+                className={`flex-1 py-3 px-2 sm:px-4 text-center border-b-2 transition-colors min-h-[44px] flex items-center justify-center gap-1.5 ${
+                  activeStep === 1
+                    ? 'border-indigo-600 text-indigo-700 bg-white font-bold'
+                    : 'border-transparent text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <span className="w-5 h-5 rounded-full bg-slate-200 text-slate-700 flex items-center justify-center text-xs font-bold">
+                  1
+                </span>
+                <span>プロンプト生成 ＆ JSON取り込み</span>
+              </button>
+              <button
+                onClick={() => setActiveStep(2)}
+                disabled={rebuildDiffs.length === 0}
+                className={`flex-1 py-3 px-2 sm:px-4 text-center border-b-2 transition-colors min-h-[44px] flex items-center justify-center gap-1.5 ${
+                  activeStep === 2
+                    ? 'border-indigo-600 text-indigo-700 bg-white font-bold'
+                    : 'border-transparent text-slate-400 disabled:opacity-50'
+                }`}
+              >
+                <span className="w-5 h-5 rounded-full bg-slate-200 text-slate-700 flex items-center justify-center text-xs font-bold">
+                  2
+                </span>
+                <span>差分比較 ＆ 選択適用</span>
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                onClick={() => setActiveStep(1)}
+                className={`flex-1 py-3 px-2 sm:px-4 text-center border-b-2 transition-colors min-h-[44px] flex items-center justify-center gap-1.5 ${
+                  activeStep === 1
+                    ? 'border-indigo-600 text-indigo-700 bg-white font-bold'
+                    : 'border-transparent text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <span className="w-5 h-5 rounded-full bg-slate-200 text-slate-700 flex items-center justify-center text-xs font-bold">
+                  1
+                </span>
+                <span>重複の検出・統合</span>
+                {duplicateGroups.length > 0 && (
+                  <span className="px-1.5 py-0.2 text-[10px] bg-amber-500 text-white rounded-full">
+                    {duplicateGroups.length}
+                  </span>
+                )}
+              </button>
+              <button
+                onClick={() => setActiveStep(2)}
+                className={`flex-1 py-3 px-2 sm:px-4 text-center border-b-2 transition-colors min-h-[44px] flex items-center justify-center gap-1.5 ${
+                  activeStep === 2
+                    ? 'border-indigo-600 text-indigo-700 bg-white font-bold'
+                    : 'border-transparent text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <span className="w-5 h-5 rounded-full bg-slate-200 text-slate-700 flex items-center justify-center text-xs font-bold">
+                  2
+                </span>
+                <span>写真シート＆Gemini分析</span>
+              </button>
+              <button
+                onClick={() => setActiveStep(3)}
+                disabled={rebuildDiffs.length === 0}
+                className={`flex-1 py-3 px-2 sm:px-4 text-center border-b-2 transition-colors min-h-[44px] flex items-center justify-center gap-1.5 ${
+                  activeStep === 3
+                    ? 'border-indigo-600 text-indigo-700 bg-white font-bold'
+                    : 'border-transparent text-slate-400 disabled:opacity-50'
+                }`}
+              >
+                <span className="w-5 h-5 rounded-full bg-slate-200 text-slate-700 flex items-center justify-center text-xs font-bold">
+                  3
+                </span>
+                <span>差分比較＆選択適用</span>
+              </button>
+            </>
+          )}
         </div>
 
         {/* コンテンツエリア */}
         <div ref={contentScrollRef} className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-6">
           {/* ==================================================== */}
-          {/* STEP 1: 重複解消 */}
+          {/* フルモード STEP 1: 重複解消 */}
           {/* ==================================================== */}
-          {activeStep === 1 && (
+          {isDuplicateStep && (
             <div className="space-y-6">
               <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 text-sm text-blue-900 space-y-1">
                 <div className="font-bold flex items-center gap-1.5">
@@ -710,89 +829,107 @@ export const WardrobeRebuildModal: React.FC<WardrobeRebuildModalProps> = ({
           )}
 
           {/* ==================================================== */}
-          {/* STEP 2: コンタクトシート生成＆Gemini分析 */}
+          {/* プロンプト生成＆JSON取り込みステップ (Quick: Step 1, Full: Step 2) */}
           {/* ==================================================== */}
-          {activeStep === 2 && (
+          {isPromptInputStep && (
             <div className="space-y-6">
-              <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-4 text-sm text-indigo-900 space-y-1">
-                <div className="font-bold flex items-center gap-1.5">
-                  <Info className="w-4 h-4 text-indigo-600 shrink-0" />
-                  写真コンタクトシート生成とGemini相談手順
-                </div>
-                <p className="text-xs text-indigo-800 leading-relaxed">
-                  ワードローブ全{closetData.items.length}着の写真をIDラベル付きの「コンタクトシート画像」（1枚最大12着）として自動合成します。
-                  シート画像をダウンロードし、プロンプトと一緒に Gemini（Google AI Pro）へ提出してください。
-                </p>
-              </div>
-
-              {/* コンタクトシート生成エリア */}
-              <div className="border border-slate-200 rounded-xl p-4 bg-white space-y-4">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                  <div>
-                    <h3 className="font-bold text-sm text-slate-900">
-                      1. 写真コンタクトシートの作成
-                    </h3>
-                    <p className="text-xs text-slate-500">
-                      全{closetData.items.length}着 / 1シート最大12着（計{Math.ceil(closetData.items.length / 12)}枚）
-                    </p>
+              {rebuildMode === 'quick' ? (
+                <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-sm text-amber-900 space-y-1">
+                  <div className="font-bold flex items-center gap-1.5 text-amber-950">
+                    <ShieldCheck className="w-4 h-4 text-amber-600 shrink-0" />
+                    クイック見直しの安心保護
                   </div>
-                  <button
-                    onClick={handleGenerateContactSheets}
-                    disabled={isGeneratingSheets}
-                    className="px-4 py-2 bg-indigo-600 text-white rounded-xl text-xs font-bold hover:bg-indigo-700 disabled:opacity-50 transition-colors shadow-sm flex items-center justify-center gap-1.5 min-h-[44px]"
-                  >
-                    {isGeneratingSheets ? (
-                      <>
-                        <RefreshCw className="w-4 h-4 animate-spin" />
-                        シート合成中...
-                      </>
-                    ) : (
-                      <>
-                        <Layers className="w-4 h-4" />
-                        コンタクトシートを生成する
-                      </>
-                    )}
-                  </button>
+                  <p className="text-xs text-amber-800 leading-relaxed">
+                    写真の再アップロードは不要です。登録済みの情報（名前・確定色・季節袖丈・メモ）をもとに、現在のルールで<strong>相性（出社/NG）</strong>と<strong>羽織り分類</strong>のみを再計算します。
+                    <br />
+                    <strong>服の名前・確定色・実寸・着用履歴・片付け状態・奥様NGは一切変更されません。</strong>
+                  </p>
                 </div>
+              ) : (
+                <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-4 text-sm text-indigo-900 space-y-1">
+                  <div className="font-bold flex items-center gap-1.5">
+                    <Info className="w-4 h-4 text-indigo-600 shrink-0" />
+                    写真コンタクトシート生成とGemini相談手順
+                  </div>
+                  <p className="text-xs text-indigo-800 leading-relaxed">
+                    ワードローブ全{closetData.items.length}着の写真をIDラベル付きの「コンタクトシート画像」（1枚最大12着）として自動合成します。
+                    シート画像をダウンロードし、プロンプトと一緒に Gemini（Google AI Pro）へ提出してください。
+                  </p>
+                </div>
+              )}
 
-                {contactSheets.length > 0 && (
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-2">
-                    {contactSheets.map((sheet) => (
-                      <div
-                        key={sheet.sheetIndex}
-                        className="border border-slate-200 rounded-lg p-2 bg-slate-50 flex flex-col items-center space-y-2"
-                      >
-                        <img
-                          src={sheet.dataUrl}
-                          alt={`Sheet ${sheet.sheetIndex}`}
-                          className="w-full aspect-[3/4] object-contain rounded bg-white border border-slate-200"
-                        />
-                        <div className="text-[11px] font-bold text-slate-700">
-                          シート {sheet.sheetIndex} / {sheet.totalSheets}
-                        </div>
-                        <button
-                          onClick={() =>
-                            downloadBlobAsFile(
-                              sheet.blob,
-                              `smart-closet-contact-sheet-${sheet.sheetIndex}.jpg`
-                            )
-                          }
-                          className="w-full py-1.5 px-2 bg-white border border-slate-300 text-slate-700 rounded text-xs font-medium hover:bg-slate-100 flex items-center justify-center gap-1 min-h-[36px]"
+              {/* フルモードのみ: コンタクトシート生成エリア */}
+              {rebuildMode === 'full' && (
+                <div className="border border-slate-200 rounded-xl p-4 bg-white space-y-4">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div>
+                      <h3 className="font-bold text-sm text-slate-900">
+                        1. 写真コンタクトシートの作成
+                      </h3>
+                      <p className="text-xs text-slate-500">
+                        全{closetData.items.length}着 / 1シート最大12着（計{Math.ceil(closetData.items.length / 12)}枚）
+                      </p>
+                    </div>
+                    <button
+                      onClick={handleGenerateContactSheets}
+                      disabled={isGeneratingSheets}
+                      className="px-4 py-2 bg-indigo-600 text-white rounded-xl text-xs font-bold hover:bg-indigo-700 disabled:opacity-50 transition-colors shadow-sm flex items-center justify-center gap-1.5 min-h-[44px]"
+                    >
+                      {isGeneratingSheets ? (
+                        <>
+                          <RefreshCw className="w-4 h-4 animate-spin" />
+                          シート合成中...
+                        </>
+                      ) : (
+                        <>
+                          <Layers className="w-4 h-4" />
+                          コンタクトシートを生成する
+                        </>
+                      )}
+                    </button>
+                  </div>
+
+                  {contactSheets.length > 0 && (
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-2">
+                      {contactSheets.map((sheet) => (
+                        <div
+                          key={sheet.sheetIndex}
+                          className="border border-slate-200 rounded-lg p-2 bg-slate-50 flex flex-col items-center space-y-2"
                         >
-                          <Download className="w-3.5 h-3.5" />
-                          保存
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
+                          <img
+                            src={sheet.dataUrl}
+                            alt={`Sheet ${sheet.sheetIndex}`}
+                            className="w-full aspect-[3/4] object-contain rounded bg-white border border-slate-200"
+                          />
+                          <div className="text-[11px] font-bold text-slate-700">
+                            シート {sheet.sheetIndex} / {sheet.totalSheets}
+                          </div>
+                          <button
+                            onClick={() =>
+                              downloadBlobAsFile(
+                                sheet.blob,
+                                `smart-closet-contact-sheet-${sheet.sheetIndex}.jpg`
+                              )
+                            }
+                            className="w-full py-1.5 px-2 bg-white border border-slate-300 text-slate-700 rounded text-xs font-medium hover:bg-slate-100 flex items-center justify-center gap-1 min-h-[36px]"
+                          >
+                            <Download className="w-3.5 h-3.5" />
+                            保存
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* Geminiプロンプトコピーエリア */}
               <div className="border border-slate-200 rounded-xl p-4 bg-white space-y-3">
                 <div className="flex items-center justify-between">
                   <h3 className="font-bold text-sm text-slate-900">
-                    2. Gemini用プロンプト（確定13色パレット・判定アンカー準拠）
+                    {rebuildMode === 'quick'
+                      ? '1. Gemini用プロンプト（相性・羽織り再判定用）'
+                      : '2. Gemini用プロンプト（確定13色パレット・判定アンカー準拠）'}
                   </h3>
                   <button
                     onClick={handleCopyPrompt}
@@ -826,7 +963,7 @@ export const WardrobeRebuildModal: React.FC<WardrobeRebuildModalProps> = ({
               <div className="border border-slate-200 rounded-xl p-4 bg-white space-y-4">
                 <div>
                   <h3 className="font-bold text-sm text-slate-900">
-                    3. Geminiの回答JSONを取り込み
+                    {rebuildMode === 'quick' ? '2. Geminiの回答JSONを取り込み' : '3. Geminiの回答JSONを取り込み'}
                   </h3>
                   <p className="text-xs text-slate-500 mt-1">
                     Geminiから返信された JSON（```json ... ``` を含む全文でも可）をファイルまたは貼り付けで取り込んでください。全着分の長文JSONはファイル選択が確実です。
@@ -879,7 +1016,11 @@ export const WardrobeRebuildModal: React.FC<WardrobeRebuildModalProps> = ({
                   <textarea
                     value={rebuildJsonInput}
                     onChange={(e) => setRebuildJsonInput(e.target.value)}
-                    placeholder={`{\n  "rebuildItems": [\n    { "id": "S1", "name": "...", "color": "濃紺", ... }\n  ]\n}`}
+                    placeholder={
+                      rebuildMode === 'quick'
+                        ? `{\n  "rebuildItems": [\n    {\n      "id": "S1",\n      "officeRecommendIds": ["P1", "P2"],\n      "ngIds": ["P3"],\n      "ngReason": "...",\n      "isOuterwear": false\n    }\n  ]\n}`
+                        : `{\n  "rebuildItems": [\n    { "id": "S1", "name": "...", "color": "濃紺", ... }\n  ]\n}`
+                    }
                     rows={6}
                     className="w-full text-xs font-mono p-3 rounded-lg border border-slate-300 text-slate-800 outline-none focus:ring-2 focus:ring-indigo-500"
                   />
@@ -907,9 +1048,9 @@ export const WardrobeRebuildModal: React.FC<WardrobeRebuildModalProps> = ({
           )}
 
           {/* ==================================================== */}
-          {/* STEP 3: 差分比較＆選択適用 */}
+          {/* 差分比較＆選択適用ステップ (Quick: Step 2, Full: Step 3) */}
           {/* ==================================================== */}
-          {activeStep === 3 && (
+          {isDiffStep && (
             <div className="space-y-6">
               {rebuildSuccessMessage ? (
                 /* 適用完了画面（コンパクトな完了カード） */
@@ -919,7 +1060,7 @@ export const WardrobeRebuildModal: React.FC<WardrobeRebuildModalProps> = ({
                   </div>
                   <div className="space-y-1.5">
                     <h3 className="text-base font-bold text-emerald-950">
-                      全件リビルドの適用が完了しました
+                      {rebuildMode === 'quick' ? 'クイック見直しの適用が完了しました' : '全件リビルドの適用が完了しました'}
                     </h3>
                     <p className="text-xs sm:text-sm text-emerald-800 max-w-lg mx-auto leading-relaxed">
                       {rebuildSuccessMessage}
@@ -927,10 +1068,10 @@ export const WardrobeRebuildModal: React.FC<WardrobeRebuildModalProps> = ({
                   </div>
                   <div className="pt-2 flex flex-col sm:flex-row gap-2.5 justify-center">
                     <button
-                      onClick={() => setActiveStep(2)}
+                      onClick={() => setActiveStep(rebuildMode === 'quick' ? 1 : 2)}
                       className="px-4 py-2.5 bg-white border border-slate-300 text-slate-700 rounded-xl text-sm font-bold hover:bg-slate-50 transition-colors min-h-[44px]"
                     >
-                      Step 2 に戻る
+                      {rebuildMode === 'quick' ? 'Step 1 に戻る' : 'Step 2 に戻る'}
                     </button>
                     <button
                       onClick={onClose}
@@ -946,11 +1087,21 @@ export const WardrobeRebuildModal: React.FC<WardrobeRebuildModalProps> = ({
                   <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 text-sm text-slate-800 space-y-1">
                     <div className="font-bold flex items-center gap-1.5">
                       <ShieldCheck className="w-4 h-4 text-indigo-600 shrink-0" />
-                      再分析結果の差分比較と選択適用
+                      {rebuildMode === 'quick'
+                        ? 'クイック見直し結果の差分比較と選択適用'
+                        : '再分析結果の差分比較と選択適用'}
                     </div>
                     <p className="text-xs text-slate-600 leading-relaxed">
-                      全上書きは行わず、変更点を確認して個別に適用できます。
-                      <strong>確定済みの色</strong>や<strong>実寸データ</strong>は意図しない上書きを防ぐため、デフォルトで保護（チェックOFF）されています。
+                      {rebuildMode === 'quick' ? (
+                        <>
+                          変更点を確認して個別に適用できます。クイック見直しでは<strong>相性（出社/NG）</strong>と<strong>羽織り分類</strong>のみが更新対象です。確定色・実寸・着用履歴・奥様NG・片付け状態は保護されています。
+                        </>
+                      ) : (
+                        <>
+                          全上書きは行わず、変更点を確認して個別に適用できます。
+                          <strong>確定済みの色</strong>や<strong>実寸データ</strong>は意図しない上書きを防ぐため、デフォルトで保護（チェックOFF）されています。
+                        </>
+                      )}
                     </p>
                   </div>
 
@@ -1169,10 +1320,10 @@ export const WardrobeRebuildModal: React.FC<WardrobeRebuildModalProps> = ({
                   {/* 確定適用ボタン */}
                   <div className="pt-4 border-t border-slate-200 flex flex-col sm:flex-row gap-2 justify-end">
                     <button
-                      onClick={() => setActiveStep(2)}
+                      onClick={() => setActiveStep(rebuildMode === 'quick' ? 1 : 2)}
                       className="px-4 py-2.5 bg-white border border-slate-300 text-slate-700 rounded-xl text-sm font-bold hover:bg-slate-50 transition-colors min-h-[44px]"
                     >
-                      Step 2 に戻る
+                      {rebuildMode === 'quick' ? 'Step 1 に戻る' : 'Step 2 に戻る'}
                     </button>
                     <button
                       onClick={handleApplyRebuild}

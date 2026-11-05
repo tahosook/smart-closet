@@ -10,10 +10,13 @@ import {
   AlertCircle,
   FolderSync,
   Layers,
+  Zap,
+  ShieldCheck,
 } from 'lucide-react';
 import {
   ShirtCategoryFilter,
   SHIRT_CATEGORY_FILTER_OPTIONS,
+  RebuildMode,
 } from '../types/closet';
 import { useClosetStore } from '../hooks/useClosetStore';
 import { ItemImage } from './ItemImage';
@@ -39,6 +42,7 @@ export const ManageView: React.FC = () => {
   const [organizeFilter, setOrganizeFilter] = useState<ShirtCategoryFilter>('all');
   const [isBackupOpen, setIsBackupOpen] = useState(false);
   const [isRebuildOpen, setIsRebuildOpen] = useState(false);
+  const [rebuildModalMode, setRebuildModalMode] = useState<RebuildMode>('quick');
   const [copiedJsonStatus, setCopiedJsonStatus] = useState<CopyFeedbackStatus>('idle');
 
   const filterItemByOuterwear = (item: (typeof shirts)[0]) => {
@@ -298,86 +302,159 @@ export const ManageView: React.FC = () => {
         <TravelPlannerView />
       </section>
 
-      {/* セクション 4: バックアップ・復旧 */}
-      <section className="pt-6 border-t border-slate-800 space-y-3">
-        <button
-          type="button"
-          onClick={() => setIsBackupOpen(!isBackupOpen)}
-          className="w-full min-h-[44px] py-2 px-3 rounded-xl bg-slate-900/60 hover:bg-slate-800 text-slate-400 hover:text-slate-300 flex items-center justify-between text-xs transition-colors border border-slate-800/80"
-        >
-          <span className="font-semibold text-slate-300 flex items-center gap-1.5">
-            <span>💾 データのバックアップ・全件リビルド（ファイル保存・写真から再構築）</span>
-          </span>
-          {isBackupOpen ? (
-            <ChevronUp className="w-4 h-4 text-slate-400" />
-          ) : (
-            <ChevronDown className="w-4 h-4 text-slate-400" />
-          )}
-        </button>
+      {/* セクション 4: 全体見直し ＆ バックアップ */}
+      <section className="pt-6 border-t border-slate-800 space-y-4">
+        <div className="px-1">
+          <h2 className="text-base font-bold text-white flex items-center gap-2">
+            <FolderSync className="w-5 h-5 text-indigo-400" />
+            <span>🔄 ワードローブ全体見直し ＆ 💾 バックアップ</span>
+          </h2>
+          <p className="text-xs text-slate-400 mt-1 leading-relaxed">
+            登録済みの服の相性・羽織り再判定や写真からの全件再構築、最新データの保存を行えます。
+          </p>
+        </div>
 
-        {isBackupOpen && (
-          <div className="p-3 bg-slate-900/80 rounded-xl border border-slate-800 space-y-3 animate-fade-in">
-            <p className="text-[11px] text-slate-400 leading-relaxed">
-              現在のワードローブデータ（奥様NGマージ済み）をJSONファイルとして保存したり、クリップボードにコピーできます。
-              保存写真を正本とした全件リビルドや重複解消も実行できます。
-            </p>
-
-            <div className="flex flex-col sm:flex-row gap-2">
-              <button
-                type="button"
-                onClick={handleDownloadJson}
-                className="flex-1 min-h-[44px] py-2 px-3 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 flex items-center justify-center gap-1.5 transition-colors border border-slate-700"
-                title="マージ済み最新JSONをダウンロード（src/data/closet.json差し替え用）"
-              >
-                <Download className="w-4 h-4 text-blue-400" />
-                <span>JSON保存</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={handleCopyMergedJson}
-                className={`flex-1 min-h-[44px] py-2 px-3 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors border ${
-                  copiedJsonStatus === 'error'
-                    ? 'bg-rose-950/60 border-rose-800/80 text-rose-300'
-                    : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700'
-                }`}
-                title="マージ済みJSONをクリップボードにコピー"
-              >
-                {copiedJsonStatus === 'success' ? (
-                  <>
-                    <Check className="w-4 h-4 text-emerald-400" />
-                    <span>コピー済</span>
-                  </>
-                ) : copiedJsonStatus === 'error' ? (
-                  <>
-                    <AlertCircle className="w-4 h-4 text-rose-400" />
-                    <span>コピー失敗</span>
-                  </>
-                ) : (
-                  <>
-                    <Copy className="w-4 h-4" />
-                    <span>JSONコピー</span>
-                  </>
-                )}
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setIsRebuildOpen(true)}
-                className="min-h-[44px] py-2 px-3 rounded-xl text-xs font-semibold bg-indigo-900/40 hover:bg-indigo-900/70 text-indigo-200 border border-indigo-700/60 flex items-center justify-center gap-1.5 transition-colors"
-                title="写真からの全件リビルド＆重複解消"
-              >
-                <Layers className="w-3.5 h-3.5 text-indigo-400" />
-                <span>全件リビルド・重複解消</span>
-              </button>
-            </div>
+        {/* 安心保護ポリシー明示バナー */}
+        <div className="p-3 bg-slate-900/90 border border-slate-800 rounded-2xl flex items-start gap-2.5">
+          <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+          <div className="text-xs text-slate-300 leading-relaxed">
+            <span className="font-bold text-white">安心の保護ポリシー：</span>
+            どちらの見直しでも<strong>奥様NG・着用履歴・片付け状態</strong>は一切上書きされません。また確定済みの色や実寸データも安全に保護されます。
           </div>
-        )}
+        </div>
+
+        {/* 2カード構成の全体見直し入口 */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          {/* カード 1: クイック見直し */}
+          <div className="p-4 bg-slate-900/90 border border-slate-800 rounded-2xl space-y-3 flex flex-col justify-between shadow-md">
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-bold text-amber-300 flex items-center gap-1.5">
+                  <Zap className="w-4 h-4 text-amber-400" />
+                  <span>⚡ クイック見直し</span>
+                </span>
+                <span className="text-[10px] px-2 py-0.5 rounded bg-amber-950/80 text-amber-300 border border-amber-800/60 font-medium">
+                  写真不要・約1分
+                </span>
+              </div>
+              <p className="text-xs text-slate-400 leading-relaxed">
+                写真のアップロードは不要。登録済みの文字情報（名前・確定色・季節・メモ）から、最新ルールに基づき<strong>相性判定</strong>と<strong>羽織り分類</strong>のみを高速に再計算します。
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setRebuildModalMode('quick');
+                setIsRebuildOpen(true);
+              }}
+              className="w-full min-h-[44px] py-2.5 px-3 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all shadow-md bg-amber-600 hover:bg-amber-500 text-slate-950 active:scale-[0.98]"
+            >
+              <Zap className="w-4 h-4 text-slate-950" />
+              <span>⚡ クイック見直しを開始</span>
+            </button>
+          </div>
+
+          {/* カード 2: フル見直し ＆ 重複統合 */}
+          <div className="p-4 bg-slate-900/90 border border-slate-800 rounded-2xl space-y-3 flex flex-col justify-between shadow-md">
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-bold text-indigo-300 flex items-center gap-1.5">
+                  <Layers className="w-4 h-4 text-indigo-400" />
+                  <span>📸 フル見直し ＆ 重複統合</span>
+                </span>
+                <span className="text-[10px] px-2 py-0.5 rounded bg-indigo-950/80 text-indigo-300 border border-indigo-800/60 font-medium">
+                  写真を正本
+                </span>
+              </div>
+              <p className="text-xs text-slate-400 leading-relaxed">
+                保存写真を正本として、13色パレット確定色・実寸・名前・属性・相性を全面再導出します。同一写真の二重登録も自動検出して安全に1着へ統合できます。
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setRebuildModalMode('full');
+                setIsRebuildOpen(true);
+              }}
+              className="w-full min-h-[44px] py-2.5 px-3 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all shadow-md bg-indigo-600 hover:bg-indigo-500 text-white shadow-indigo-950 active:scale-[0.98]"
+            >
+              <Layers className="w-4 h-4" />
+              <span>📸 フル見直し・重複統合ウィザード</span>
+            </button>
+          </div>
+        </div>
+
+        {/* バックアップ・復旧（アコーディオン） */}
+        <div className="pt-2">
+          <button
+            type="button"
+            onClick={() => setIsBackupOpen(!isBackupOpen)}
+            className="w-full min-h-[44px] py-2.5 px-3 rounded-xl bg-slate-900/60 hover:bg-slate-800 text-slate-400 hover:text-slate-300 flex items-center justify-between text-xs transition-colors border border-slate-800/80"
+          >
+            <span className="font-semibold text-slate-300 flex items-center gap-1.5">
+              <span>💾 データバックアップ（JSON保存・クリップボードコピー）</span>
+            </span>
+            {isBackupOpen ? (
+              <ChevronUp className="w-4 h-4 text-slate-400" />
+            ) : (
+              <ChevronDown className="w-4 h-4 text-slate-400" />
+            )}
+          </button>
+
+          {isBackupOpen && (
+            <div className="mt-2 p-3 bg-slate-900/80 rounded-xl border border-slate-800 space-y-3 animate-fade-in">
+              <p className="text-[11px] text-slate-400 leading-relaxed">
+                現在のワードローブデータ（奥様NGマージ済み）をJSONファイルとして保存したり、クリップボードにコピーできます。
+              </p>
+
+              <div className="flex flex-col sm:flex-row gap-2">
+                <button
+                  type="button"
+                  onClick={handleDownloadJson}
+                  className="flex-1 min-h-[44px] py-2 px-3 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 flex items-center justify-center gap-1.5 transition-colors border border-slate-700"
+                  title="マージ済み最新JSONをダウンロード（src/data/closet.json差し替え用）"
+                >
+                  <Download className="w-4 h-4 text-blue-400" />
+                  <span>JSON保存</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleCopyMergedJson}
+                  className={`flex-1 min-h-[44px] py-2 px-3 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors border ${
+                    copiedJsonStatus === 'error'
+                      ? 'bg-rose-950/60 border-rose-800/80 text-rose-300'
+                      : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700'
+                  }`}
+                  title="マージ済みJSONをクリップボードにコピー"
+                >
+                  {copiedJsonStatus === 'success' ? (
+                    <>
+                      <Check className="w-4 h-4 text-emerald-400" />
+                      <span>コピー済</span>
+                    </>
+                  ) : copiedJsonStatus === 'error' ? (
+                    <>
+                      <AlertCircle className="w-4 h-4 text-rose-400" />
+                      <span>コピー失敗</span>
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="w-4 h-4" />
+                      <span>JSONコピー</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
       </section>
 
       <WardrobeRebuildModal
         isOpen={isRebuildOpen}
         onClose={() => setIsRebuildOpen(false)}
+        initialMode={rebuildModalMode}
       />
     </div>
   );

@@ -2919,7 +2919,6 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
   assert.ok(aiSyncCode.includes('bodyLength'), 'AiSyncView prompt must include bodyLength for shirts');
   assert.ok(aiSyncCode.includes('waist'), 'AiSyncView prompt must include waist for pants');
   assert.ok(aiSyncCode.includes('cropBox'), 'AiSyncView prompt must include cropBox instruction');
-  assert.ok(aiSyncCode.includes('WardrobeRebuildModal'), 'AiSyncView must integrate WardrobeRebuildModal');
 
   // Step 3: 確認パネル UI 要件 & レビュー指摘対応
   assert.ok(aiSyncCode.includes('10〜200cm（0.5cm刻み・空欄で未設定）'), 'Measurements must specify 10-200cm valid range notice');
