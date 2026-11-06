@@ -4775,8 +4775,10 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
     wifeNgPairs: mockWifeNgs,
   });
 
-  // (a) 実寸目安の再導出指示と出力スキーマ
+  // (a) 実寸目安の再導出指示と出力スキーマ（A4用紙基準）
   assert.ok(rebuildPrompt.includes('実寸目安（measurements）の再導出指示'), 'Rebuild prompt must include measurements instruction');
+  assert.ok(rebuildPrompt.includes('A4白用紙（210×297mm）'), 'Rebuild prompt must mention A4 paper standard for measurements');
+  assert.ok(rebuildPrompt.includes('写真にA4白用紙が写っていない場合'), 'Rebuild prompt must guide omitting measurements when A4 paper is absent');
   assert.ok(rebuildPrompt.includes('bodyLength'), 'Rebuild prompt must list shirt measurement fields');
   assert.ok(rebuildPrompt.includes('waist'), 'Rebuild prompt must list pants measurement fields');
   assert.ok(rebuildPrompt.includes('"measurements": {'), 'Rebuild prompt JSON schema must include measurements');

@@ -2676,10 +2676,10 @@ export function buildWardrobeRebuildPrompt(params: RebuildPromptInput): string {
 ${GARMENT_COLOR_ANCHOR_GUIDE}
 
 ### 実寸目安（measurements）の再導出指示
-- 写真のシルエット・比率や既存の実寸情報をもとに、各服の主要寸法（実寸目安）を cm 単位（10〜200cm、0.5cm刻み）で導出し、"measurements" に出力してください。
+- 写真内に置かれたA4白用紙（210×297mm）を物差しとして、各服の主要寸法（実寸目安）を cm 単位（10〜200cm、0.5cm刻み）で推定し、"measurements" に出力してください（既存の実寸情報がある服は整合性を考慮して再確認してください）。
   - シャツ（shirt）の場合: bodyLength（着丈）、chestWidth（身幅）、shoulderWidth（肩幅）、sleeveLength（袖丈）
   - パンツ（pants）の場合: waist（ウエスト内周目安）、inseam（股下）、totalLength（総丈）、hemWidth（裾幅）
-- 写真や情報から寸法が判別できない場合は省略または null としてください。
+- 写真にA4白用紙が写っていない場合や寸法が判別できない場合は、無理に推測せず実寸を省略（または null）としてください。
 
 ### スタイリング絶対原則（奥様ダメ出し回避ルール）
 1. 同系色・濃紺同士の禁止: 上下ともに濃紺・インディゴになる組み合わせ（例: 濃紺シャツ × 濃紺パンツ）は作業着・パジャマに見えるためNG。
@@ -2750,7 +2750,7 @@ ${pantsList}
 
 ※注意事項:
 - isOuterwear はシャツのうち、カーディガン・ジップアップ・ジップパーカー・ニットジャケット等の羽織り系なら true、1枚着なら false を指定してください（パンツは false または省略）。
-- measurements はシャツ4項目（bodyLength, chestWidth, shoulderWidth, sleeveLength）またはパンツ4項目（waist, inseam, totalLength, hemWidth）を cm 単位（10〜200cm、0.5cm刻み）で指定してください。
+- measurements はA4白用紙（210×297mm）をもとに、シャツ4項目（bodyLength, chestWidth, shoulderWidth, sleeveLength）またはパンツ4項目（waist, inseam, totalLength, hemWidth）を cm 単位（10〜200cm、0.5cm刻み）で指定してください。写真にA4白用紙が写っていない場合は省略または null としてください。
 - officeRecommendIds, remoteRecommendIds, ngIds に指定する相手IDは実在する相手カテゴリのIDのみ（シャツにはパンツのID、パンツにはシャツのID）。
 - 同一のIDが recommendIds と ngIds の双方に重複して存在しないようにしてください。`;
 }
