@@ -29,7 +29,9 @@ export const HistoryModal: React.FC<HistoryModalProps> = ({ isOpen, onClose }) =
           </div>
           <button
             onClick={onClose}
-            className="p-1.5 text-slate-400 hover:text-white rounded-full bg-slate-800"
+            className="min-h-[44px] min-w-[44px] -my-1.5 -mr-1.5 flex items-center justify-center text-slate-400 hover:text-white rounded-full bg-slate-800 transition-colors"
+            title="閉じる"
+            aria-label="閉じる"
           >
             <X className="w-4 h-4" />
           </button>
@@ -87,8 +89,9 @@ export const HistoryModal: React.FC<HistoryModalProps> = ({ isOpen, onClose }) =
 
                   <button
                     onClick={() => removeWearRecord(rec.id)}
-                    className="p-1.5 text-slate-400 hover:text-rose-400 transition-colors"
+                    className="min-h-[44px] min-w-[44px] -my-2 -mr-1.5 flex items-center justify-center flex-shrink-0 text-slate-400 hover:text-rose-400 transition-colors"
                     title="この履歴を削除"
+                    aria-label="この履歴を削除"
                   >
                     <Trash2 className="w-3.5 h-3.5" />
                   </button>
@@ -107,7 +110,7 @@ export const HistoryModal: React.FC<HistoryModalProps> = ({ isOpen, onClose }) =
                   clearAllWearHistory();
                 }
               }}
-              className="text-xs text-rose-400 hover:text-rose-300 font-medium"
+              className="min-h-[44px] min-w-[44px] px-3 py-2 -my-1.5 rounded-xl flex items-center justify-center text-xs text-rose-400 hover:text-rose-300 font-medium transition-colors"
             >
               全履歴をクリア
             </button>

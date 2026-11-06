@@ -180,7 +180,7 @@ export const WeatherWidget: React.FC<WeatherWidgetProps> = ({
       <div className="flex items-center justify-between text-xs text-slate-400 mb-1">
         <button
           onClick={handleToggleLocation}
-          className="flex items-center gap-1 hover:text-white transition-colors"
+          className="min-h-[44px] min-w-[44px] -my-2 -ml-1.5 px-1.5 rounded-lg flex items-center gap-1 hover:text-white transition-colors"
         >
           <MapPin className="w-3.5 h-3.5 text-blue-400" />
           <span className="font-medium text-slate-200">{weather?.city || '千葉県 我孫子市'}</span>
@@ -191,8 +191,9 @@ export const WeatherWidget: React.FC<WeatherWidgetProps> = ({
 
         <button
           onClick={handleRefreshWeather}
-          className="p-1.5 hover:text-white rounded-lg hover:bg-slate-700/50 transition-colors"
+          className="min-h-[44px] min-w-[44px] -my-2 -mr-1.5 flex items-center justify-center hover:text-white rounded-lg hover:bg-slate-700/50 transition-colors"
           title="天気を再取得"
+          aria-label="天気を再取得"
         >
           <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin text-blue-400' : ''}`} />
         </button>
@@ -214,7 +215,7 @@ export const WeatherWidget: React.FC<WeatherWidgetProps> = ({
 
         <button
           onClick={handleCycleCategory}
-          className="px-2.5 py-1 rounded-full text-xs font-semibold bg-blue-950/70 hover:bg-blue-900/80 text-blue-300 border border-blue-800/60 shadow-sm transition-all active:scale-95 flex items-center gap-1"
+          className="min-h-[44px] min-w-[44px] -my-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-blue-950/70 hover:bg-blue-900/80 text-blue-300 border border-blue-800/60 shadow-sm transition-all active:scale-95 flex items-center justify-center gap-1"
           title="タップで袖丈判定を手動切替"
         >
           <span>{getSleeveText(currentCategory)}</span>

@@ -189,7 +189,7 @@ export const TravelPlannerView: React.FC = () => {
               <button
                 key={n}
                 onClick={() => setNights(n)}
-                className={`py-2 px-1 rounded-xl text-xs font-bold border transition-all ${
+                className={`min-h-[44px] py-2 px-1 rounded-xl text-xs font-bold border transition-all flex items-center justify-center ${
                   nights === n
                     ? 'bg-blue-600 text-white border-blue-500 shadow-md shadow-blue-900/40'
                     : 'bg-slate-900/60 text-slate-400 border-slate-700 hover:text-white'
@@ -210,7 +210,7 @@ export const TravelPlannerView: React.FC = () => {
           <div className="grid grid-cols-2 gap-2">
             <button
               onClick={() => setPurpose('business')}
-              className={`py-2.5 px-3 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 border transition-all ${
+              className={`min-h-[44px] py-2.5 px-3 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 border transition-all ${
                 purpose === 'business'
                   ? 'bg-indigo-600 text-white border-indigo-500 shadow-md shadow-indigo-900/40'
                   : 'bg-slate-900/60 text-slate-400 border-slate-700 hover:text-white'
@@ -221,7 +221,7 @@ export const TravelPlannerView: React.FC = () => {
             </button>
             <button
               onClick={() => setPurpose('leisure')}
-              className={`py-2.5 px-3 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 border transition-all ${
+              className={`min-h-[44px] py-2.5 px-3 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 border transition-all ${
                 purpose === 'leisure'
                   ? 'bg-indigo-600 text-white border-indigo-500 shadow-md shadow-indigo-900/40'
                   : 'bg-slate-900/60 text-slate-400 border-slate-700 hover:text-white'
@@ -236,7 +236,7 @@ export const TravelPlannerView: React.FC = () => {
         {/* Reshuffle button */}
         <button
           onClick={() => setSeed((prev) => prev + 1)}
-          className="w-full py-2 px-3 rounded-xl bg-slate-700/60 hover:bg-slate-700 text-xs font-semibold text-slate-200 flex items-center justify-center gap-1.5 transition-colors border border-slate-600/60"
+          className="w-full min-h-[44px] py-2 px-3 rounded-xl bg-slate-700/60 hover:bg-slate-700 text-xs font-semibold text-slate-200 flex items-center justify-center gap-1.5 transition-colors border border-slate-600/60"
         >
           <RotateCw className="w-3.5 h-3.5" />
           <span>🔄 別の組み合わせパターンを再提案</span>
