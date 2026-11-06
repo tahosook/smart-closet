@@ -64,6 +64,9 @@ const {
   executeDuplicateMerge,
   buildWardrobeRebuildPrompt,
   buildQuickRebuildPrompt,
+  buildBatchRebuildFieldSelections,
+  formatGarmentMeasurements,
+  areMeasurementsEqual,
   parseRebuildInputJson,
   computeRebuildDiffs,
   validateAndBuildRebuildDiffs,
@@ -4761,6 +4764,173 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
   assert.ok(s1FullDiff);
   assert.equal(s1FullDiff.isColorProtected, true);
   assert.equal(s1FullDiff.after.name, '新濃インディゴ無地長袖シャツ');
+
+  // 6. buildWardrobeRebuildPrompt の実寸再導出指示・奥様NGペア・既存実寸表示の検証
+  const mockWifeNgs = [
+    { shirtId: 'S1', pantsId: 'P1', reason: '上下同系色の濃紺になり作業着見えするため', createdAt: '2026-11-01' },
+  ];
+  const rebuildPrompt = buildWardrobeRebuildPrompt({
+    items: currentItems,
+    contactSheetsCount: 1,
+    wifeNgPairs: mockWifeNgs,
+  });
+
+  // (a) 実寸目安の再導出指示と出力スキーマ
+  assert.ok(rebuildPrompt.includes('実寸目安（measurements）の再導出指示'), 'Rebuild prompt must include measurements instruction');
+  assert.ok(rebuildPrompt.includes('bodyLength'), 'Rebuild prompt must list shirt measurement fields');
+  assert.ok(rebuildPrompt.includes('waist'), 'Rebuild prompt must list pants measurement fields');
+  assert.ok(rebuildPrompt.includes('"measurements": {'), 'Rebuild prompt JSON schema must include measurements');
+
+  // (b) 奥様NGペアの注意喚起
+  assert.ok(rebuildPrompt.includes('【注意喚起】登録済みの奥様NGペア'), 'Rebuild prompt must include wife NG section');
+  assert.ok(rebuildPrompt.includes('S1 × P1: 上下同系色の濃紺になり作業着見えするため'), 'Rebuild prompt must list wife NG pairs');
+  assert.ok(rebuildPrompt.includes('絶対におすすめに含めず、NGとして扱ってください'), 'Rebuild prompt must instruct AI to exclude wife NGs');
+
+  // (c) 対象アイテム一覧における既存実寸のフォーマット表示
+  assert.ok(rebuildPrompt.includes('実寸目安: 着丈72cm / 身幅54cm / 肩幅46cm / 袖丈61cm'), 'Rebuild prompt must display formatted measurements for S1');
+
+  // 7. formatGarmentMeasurements & areMeasurementsEqual の検証
+  assert.equal(
+    formatGarmentMeasurements({ bodyLength: 72, chestWidth: 54 }, 'shirt'),
+    '着丈72cm / 身幅54cm'
+  );
+  assert.equal(
+    formatGarmentMeasurements({ waist: 82, inseam: 72 }, 'pants'),
+    'ウエスト82cm / 股下72cm'
+  );
+  assert.equal(formatGarmentMeasurements(undefined), '未設定');
+  assert.equal(formatGarmentMeasurements({}), '未設定');
+
+  assert.equal(
+    areMeasurementsEqual(
+      { bodyLength: 72, chestWidth: 54 },
+      { chestWidth: 54, bodyLength: 72 }
+    ),
+    true,
+    'areMeasurementsEqual must return true regardless of key order'
+  );
+  assert.equal(
+    areMeasurementsEqual(
+      { bodyLength: 72, chestWidth: 54 },
+      { bodyLength: 74, chestWidth: 54 }
+    ),
+    false
+  );
+  assert.equal(areMeasurementsEqual(undefined, undefined), true);
+  assert.equal(areMeasurementsEqual({ bodyLength: 72 }, undefined), false);
+
+  // 8. 確定実寸の保護と選択適用（案B: 初期選択・バッチ全選択でOFF維持、個別選択でのみ適用可）の検証
+  const rebuildCandidateWithMeasurements = [
+    {
+      id: 'S1',
+      category: 'shirt',
+      name: '新シャツ名',
+      color: '濃紺',
+      seasonSleeve: '長袖・通年',
+      dressScore: 3.5,
+      comfortScore: 4.0,
+      measurements: { bodyLength: 75, chestWidth: 56, shoulderWidth: 48, sleeveLength: 63 }, // S1の既存(72,54,46,61)とは異なる新実寸
+      officeRecommendIds: ['P1'],
+      remoteRecommendIds: [],
+      ngIds: [],
+      ngReason: '',
+      notes: '',
+    },
+    {
+      id: 'P1',
+      category: 'pants',
+      name: '新パンツ名',
+      color: '黒',
+      seasonSleeve: '通年',
+      dressScore: 3.5,
+      comfortScore: 4.0,
+      measurements: { waist: 82, inseam: 72, totalLength: 98, hemWidth: 18 }, // P1は既存未設定
+      officeRecommendIds: ['S1'],
+      remoteRecommendIds: [],
+      ngIds: [],
+      ngReason: '',
+      notes: '',
+    },
+  ];
+
+  const diffsWithMeasurements = computeRebuildDiffs({
+    currentItems,
+    rebuildItems: rebuildCandidateWithMeasurements,
+  });
+
+  const s1MeasDiff = diffsWithMeasurements.find((d) => d.id === 'S1');
+  const p1MeasDiff = diffsWithMeasurements.find((d) => d.id === 'P1');
+
+  // (a) 差分検出と保護フラグ・初期選択の検証
+  assert.ok(s1MeasDiff.changedFields.includes('measurements'), 'S1 measurements change must be detected');
+  assert.equal(s1MeasDiff.isMeasurementsProtected, true, 'S1 must be marked as measurements protected (has existing measurements)');
+  assert.equal(s1MeasDiff.defaultSelection.measurements, false, 'S1 default selection for measurements must be FALSE (protected)');
+
+  assert.ok(p1MeasDiff.changedFields.includes('measurements'), 'P1 measurements change must be detected');
+  assert.equal(p1MeasDiff.isMeasurementsProtected, false, 'P1 must NOT be marked as measurements protected (no existing measurements)');
+  assert.equal(p1MeasDiff.defaultSelection.measurements, true, 'P1 default selection for measurements must be TRUE (unconfirmed adoption)');
+
+  // (b) buildBatchRebuildFieldSelections（バッチ選択）の保護検証
+  // 全解除 (select: false)
+  const allDeselected = buildBatchRebuildFieldSelections(diffsWithMeasurements, false);
+  assert.equal(allDeselected.S1.measurements, false);
+  assert.equal(allDeselected.P1.measurements, false);
+
+  // 安全デフォルト (select: true, filterProtected: true)
+  const safeDefault = buildBatchRebuildFieldSelections(diffsWithMeasurements, true, true);
+  assert.equal(safeDefault.S1.measurements, false, 'Safe default must keep S1 measurements false');
+  assert.equal(safeDefault.P1.measurements, true, 'Safe default must select unconfirmed P1 measurements');
+
+  // 全項目を選択 (select: true, filterProtected: false)
+  const allSelected = buildBatchRebuildFieldSelections(diffsWithMeasurements, true, false);
+  assert.equal(
+    allSelected.S1.measurements,
+    false,
+    'Even in "Select All", protected measurements (S1) must NEVER be turned on!'
+  );
+  assert.equal(allSelected.P1.measurements, true, '"Select All" must turn on unconfirmed measurements (P1)');
+
+  // (c) バッチ全選択（allSelected）を適用した場合の検証:
+  // S1 の実寸は上書きされず既存値が保持され、P1 には新しい実寸が適用される
+  const batchApplyRes = applyRebuildDiffs({
+    closetData: { updatedAt: 1000, items: currentItems },
+    diffs: diffsWithMeasurements,
+    fieldSelections: allSelected,
+  });
+  assert.equal(batchApplyRes.valid, true);
+  const batchAppliedS1 = batchApplyRes.data.items.find((it) => it.id === 'S1');
+  const batchAppliedP1 = batchApplyRes.data.items.find((it) => it.id === 'P1');
+  assert.deepEqual(
+    batchAppliedS1.measurements,
+    currentItems[0].measurements,
+    'S1 measurements must remain strictly preserved after batch Select All apply'
+  );
+  assert.deepEqual(
+    batchAppliedP1.measurements,
+    { waist: 82, inseam: 72, totalLength: 98, hemWidth: 18 },
+    'P1 unconfirmed measurements must be successfully applied'
+  );
+
+  // (d) 個別選択（ユーザーが意図して S1 の実寸を選んだ場合）の適用検証（案B）
+  const individualSelections = {
+    ...safeDefault,
+    S1: {
+      ...safeDefault.S1,
+      measurements: true, // ユーザーが個別にチェックON
+    },
+  };
+  const individualApplyRes = applyRebuildDiffs({
+    closetData: { updatedAt: 1000, items: currentItems },
+    diffs: diffsWithMeasurements,
+    fieldSelections: individualSelections,
+  });
+  assert.equal(individualApplyRes.valid, true);
+  const individualAppliedS1 = individualApplyRes.data.items.find((it) => it.id === 'S1');
+  assert.deepEqual(
+    individualAppliedS1.measurements,
+    { bodyLength: 75, chestWidth: 56, shoulderWidth: 48, sleeveLength: 63 },
+    'When user individually chooses to apply measurements, S1 must be updated (Plan B)'
+  );
 
   console.log('  ✅ Wardrobe rebuild pure domain logic (protected lock & selective apply) verified');
 }

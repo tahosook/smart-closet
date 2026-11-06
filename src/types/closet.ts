@@ -383,6 +383,7 @@ export type {
   RetryUploadResult,
   ShoppingConsultationPromptInput,
   QuickRebuildPromptInput,
+  RebuildPromptInput,
 } from '../utils/closetDomain';
 export {
   FAILED_DRIVE_UPLOADS_STORAGE_KEY,
@@ -392,6 +393,10 @@ export {
   processDriveRetryUploads,
   buildShoppingConsultationPrompt,
   buildQuickRebuildPrompt,
+  buildWardrobeRebuildPrompt,
+  buildBatchRebuildFieldSelections,
+  formatGarmentMeasurements,
+  areMeasurementsEqual,
   setShirtOuterwear,
 } from '../utils/closetDomain';
 

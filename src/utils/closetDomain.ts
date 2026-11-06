@@ -290,6 +290,62 @@ export function validateGarmentMeasurements(
 }
 
 /**
+ * 2つの寸法オブジェクトが同値かどうかをキー順序に依存せず判定する純粋関数
+ */
+export function areMeasurementsEqual(
+  a?: GarmentMeasurements,
+  b?: GarmentMeasurements
+): boolean {
+  const hasA = Boolean(a && Object.keys(a).length > 0);
+  const hasB = Boolean(b && Object.keys(b).length > 0);
+  if (!hasA && !hasB) return true;
+  if (!hasA || !hasB) return false;
+
+  const keys: (keyof GarmentMeasurements)[] = [
+    'bodyLength',
+    'chestWidth',
+    'shoulderWidth',
+    'sleeveLength',
+    'waist',
+    'inseam',
+    'totalLength',
+    'hemWidth',
+  ];
+
+  return keys.every((k) => a?.[k] === b?.[k]);
+}
+
+/**
+ * 実寸目安オブジェクトを表示用の文字列にフォーマットする純粋関数
+ */
+export function formatGarmentMeasurements(
+  measurements?: GarmentMeasurements,
+  category?: Category
+): string {
+  if (!measurements || Object.keys(measurements).length === 0) {
+    return '未設定';
+  }
+  const m = measurements;
+  const parts: string[] = [];
+
+  if (!category || category === 'shirt') {
+    if (m.bodyLength !== undefined) parts.push(`着丈${m.bodyLength}cm`);
+    if (m.chestWidth !== undefined) parts.push(`身幅${m.chestWidth}cm`);
+    if (m.shoulderWidth !== undefined) parts.push(`肩幅${m.shoulderWidth}cm`);
+    if (m.sleeveLength !== undefined) parts.push(`袖丈${m.sleeveLength}cm`);
+  }
+
+  if (!category || category === 'pants') {
+    if (m.waist !== undefined) parts.push(`ウエスト${m.waist}cm`);
+    if (m.inseam !== undefined) parts.push(`股下${m.inseam}cm`);
+    if (m.totalLength !== undefined) parts.push(`総丈${m.totalLength}cm`);
+    if (m.hemWidth !== undefined) parts.push(`裾幅${m.hemWidth}cm`);
+  }
+
+  return parts.length > 0 ? parts.join(' / ') : '未設定';
+}
+
+/**
  * 服領域の正規化座標 (0〜1000) を検証・クランプする純粋関数
  * 不正値や極小領域の場合は undefined を返す。
  */
@@ -2572,36 +2628,58 @@ ${pantsList}
 - 同一のIDが recommendIds と ngIds の双方に重複して存在しないようにしてください。`;
 }
 
+export interface RebuildPromptInput {
+  items: ClosetItem[];
+  contactSheetsCount: number;
+  wifeNgPairs?: WifeNgPair[];
+}
+
 /**
  * Geminiに提出する全件リビルド用の分析プロンプトを生成する純粋関数
  */
-export function buildWardrobeRebuildPrompt(params: {
-  items: ClosetItem[];
-  contactSheetsCount: number;
-}): string {
-  const { items, contactSheetsCount } = params;
+export function buildWardrobeRebuildPrompt(params: RebuildPromptInput): string {
+  const { items, contactSheetsCount, wifeNgPairs = [] } = params;
 
   const shirts = items.filter((it) => it.category === 'shirt');
   const pants = items.filter((it) => it.category === 'pants');
 
   const shirtsList = shirts
-    .map(
-      (s) =>
-        `- [${s.id}] ${s.name} (現在区分: ${s.isOuterwear ? '羽織り' : '1枚もの'}, 現在色: ${s.color || '未設定'}, 季節袖丈: ${s.seasonSleeve || '通年'}, メモ: ${s.notes || 'なし'})`
-    )
+    .map((s) => {
+      const mStr =
+        s.measurements && Object.keys(s.measurements).length > 0
+          ? `, 実寸目安: ${formatGarmentMeasurements(s.measurements, 'shirt')}`
+          : '';
+      return `- [${s.id}] ${s.name} (現在区分: ${s.isOuterwear ? '羽織り' : '1枚もの'}, 現在色: ${s.color || '未設定'}, 季節袖丈: ${s.seasonSleeve || '通年'}${mStr}, メモ: ${s.notes || 'なし'}${s.archived ? ', ※現在片付け中' : ''})`;
+    })
     .join('\n');
 
   const pantsList = pants
-    .map(
-      (p) =>
-        `- [${p.id}] ${p.name} (現在色: ${p.color || '未設定'}, 季節袖丈: ${p.seasonSleeve || '通年'}, メモ: ${p.notes || 'なし'})`
-    )
+    .map((p) => {
+      const mStr =
+        p.measurements && Object.keys(p.measurements).length > 0
+          ? `, 実寸目安: ${formatGarmentMeasurements(p.measurements, 'pants')}`
+          : '';
+      return `- [${p.id}] ${p.name} (現在色: ${p.color || '未設定'}, 季節袖丈: ${p.seasonSleeve || '通年'}${mStr}, メモ: ${p.notes || 'なし'}${p.archived ? ', ※現在片付け中' : ''})`;
+    })
     .join('\n');
 
+  const wifeNgSection =
+    wifeNgPairs.length > 0
+      ? `### 【注意喚起】登録済みの奥様NGペア（全${wifeNgPairs.length}件）\n※妻から実際にダメ出しされた組み合わせです。絶対におすすめに含めず、NGとして扱ってください。\n` +
+        wifeNgPairs.map((ng) => `- ${ng.shirtId} × ${ng.pantsId}: ${ng.reason || '奥様NG指定'}`).join('\n') +
+        '\n\n'
+      : '';
+
   return `あなたは40代男性（ハイブリッド勤務：出社＋リモート）専任の骨格・カラープロスタイリストです。
-添付された ${contactSheetsCount} 枚のコンタクトシート（全${items.length}着の写真一覧、各服にIDバッジ明記）および以下の現行ワードローブ一覧を正本として、全着の属性（名前、色、季節・袖丈、ドレス度・快適度、メモ、相性・NG）を再分析し、最新のJSONデータとして丸ごと再構築（全件リビルド）してください。
+添付された ${contactSheetsCount} 枚のコンタクトシート（全${items.length}着の写真一覧、各服にIDバッジ明記）および以下の現行ワードローブ一覧を正本として、全着の属性（名前、色、実寸目安、季節・袖丈、ドレス度・快適度、メモ、羽織り分類、相性・NG）を再分析し、最新のJSONデータとして丸ごと再構築（全件リビルド）してください。
 
 ${GARMENT_COLOR_ANCHOR_GUIDE}
+
+### 実寸目安（measurements）の再導出指示
+- 写真のシルエット・比率や既存の実寸情報をもとに、各服の主要寸法（実寸目安）を cm 単位（10〜200cm、0.5cm刻み）で導出し、"measurements" に出力してください。
+  - シャツ（shirt）の場合: bodyLength（着丈）、chestWidth（身幅）、shoulderWidth（肩幅）、sleeveLength（袖丈）
+  - パンツ（pants）の場合: waist（ウエスト内周目安）、inseam（股下）、totalLength（総丈）、hemWidth（裾幅）
+- 写真や情報から寸法が判別できない場合は省略または null としてください。
 
 ### スタイリング絶対原則（奥様ダメ出し回避ルール）
 1. 同系色・濃紺同士の禁止: 上下ともに濃紺・インディゴになる組み合わせ（例: 濃紺シャツ × 濃紺パンツ）は作業着・パジャマに見えるためNG。
@@ -2612,7 +2690,7 @@ ${GARMENT_COLOR_ANCHOR_GUIDE}
    - 出社時: パンツのドレス度3.5以上を優先。スウェット・ジョガー系（ドレス度3.0未満）は出社候補から除外。
    - リモート時: 快適度4.0以上を優先。
 
-### 対象アイテム一覧
+${wifeNgSection}### 対象アイテム一覧
 【シャツ・トップス（全${shirts.length}着）】
 ${shirtsList}
 
@@ -2621,6 +2699,7 @@ ${pantsList}
 
 ### 出力フォーマット指示
 必ず以下のJSON形式のみを出力してください。Markdownの説明文や前置きは不要です。
+全アイテム（全${items.length}着）のIDを網羅してください。
 \`\`\`json
 {
   "rebuildItems": [
@@ -2633,10 +2712,36 @@ ${pantsList}
       "seasonSleeve": "長袖・通年 または 春夏・半袖 または 秋冬 など",
       "dressScore": 3.5,
       "comfortScore": 4.0,
+      "measurements": {
+        "bodyLength": 72.0,
+        "chestWidth": 54.0,
+        "shoulderWidth": 46.0,
+        "sleeveLength": 60.0
+      },
       "notes": "着用シーンや素材・シルエットの特徴",
       "officeRecommendIds": ["P3", "P8"],
       "remoteRecommendIds": ["P1", "P2"],
       "ngIds": ["P5"],
+      "ngReason": "NGの理由（同系色衝突、柄×柄など）"
+    },
+    {
+      "id": "P1",
+      "category": "pants",
+      "name": "アイテム名（色・柄・特徴を端的に表現）",
+      "color": "確定13色パレットから厳選した1色",
+      "seasonSleeve": "通年 または 春夏 または 秋冬 など",
+      "dressScore": 3.5,
+      "comfortScore": 4.0,
+      "measurements": {
+        "waist": 82.0,
+        "inseam": 72.0,
+        "totalLength": 98.0,
+        "hemWidth": 18.0
+      },
+      "notes": "着用シーンや素材・シルエットの特徴",
+      "officeRecommendIds": ["S2"],
+      "remoteRecommendIds": ["S1"],
+      "ngIds": ["S1"],
       "ngReason": "NGの理由（同系色衝突、柄×柄など）"
     }
   ]
@@ -2645,6 +2750,7 @@ ${pantsList}
 
 ※注意事項:
 - isOuterwear はシャツのうち、カーディガン・ジップアップ・ジップパーカー・ニットジャケット等の羽織り系なら true、1枚着なら false を指定してください（パンツは false または省略）。
+- measurements はシャツ4項目（bodyLength, chestWidth, shoulderWidth, sleeveLength）またはパンツ4項目（waist, inseam, totalLength, hemWidth）を cm 単位（10〜200cm、0.5cm刻み）で指定してください。
 - officeRecommendIds, remoteRecommendIds, ngIds に指定する相手IDは実在する相手カテゴリのIDのみ（シャツにはパンツのID、パンツにはシャツのID）。
 - 同一のIDが recommendIds と ngIds の双方に重複して存在しないようにしてください。`;
 }
@@ -3003,7 +3109,7 @@ export function computeRebuildDiffs(params: {
       }
 
       // 5. measurements
-      if (rebuild.measurements && JSON.stringify(current.measurements) !== JSON.stringify(rebuild.measurements)) {
+      if (rebuild.measurements && !areMeasurementsEqual(current.measurements, rebuild.measurements)) {
         changedFields.push('measurements');
       }
 
@@ -3075,6 +3181,47 @@ export function computeRebuildDiffs(params: {
 }
 
 /**
+ * リビルド差分に対する一括選択（安全デフォルト／全項目を選択／全解除）の状態を生成する純粋関数
+ * 確定済みの実寸（isMeasurementsProtected）は、初期選択でも「全項目を選択」（filterProtected = false）でも
+ * 決してオンにせず、ユーザーが個別にチェックした場合にのみ適用される設計（案B）を担保する。
+ */
+export function buildBatchRebuildFieldSelections(
+  diffs: RebuildItemDiff[],
+  select: boolean,
+  filterProtected = false
+): Record<string, RebuildFieldSelection> {
+  const next: Record<string, RebuildFieldSelection> = {};
+  for (const d of diffs) {
+    if (!select) {
+      next[d.id] = {
+        name: false,
+        color: false,
+        seasonSleeve: false,
+        scores: false,
+        measurements: false,
+        notes: false,
+        compatibility: false,
+        isOuterwear: false,
+      };
+    } else if (filterProtected) {
+      next[d.id] = { ...d.defaultSelection };
+    } else {
+      next[d.id] = {
+        name: d.changedFields.includes('name'),
+        color: d.changedFields.includes('color'),
+        seasonSleeve: d.changedFields.includes('seasonSleeve'),
+        scores: d.changedFields.includes('scores'),
+        measurements: d.changedFields.includes('measurements') && !d.isMeasurementsProtected,
+        notes: d.changedFields.includes('notes'),
+        compatibility: d.changedFields.includes('compatibility'),
+        isOuterwear: d.changedFields.includes('isOuterwear'),
+      };
+    }
+  }
+  return next;
+}
+
+/**
  * ユーザーが選択したフィールド差分を ClosetData に適用する純粋関数
  */
 export function applyRebuildDiffs(params: {
@@ -3129,7 +3276,11 @@ export function applyRebuildDiffs(params: {
       }
     }
 
-    if (selection.measurements && diff.after.measurements) {
+    if (
+      selection.measurements &&
+      diff.after.measurements &&
+      !areMeasurementsEqual(it.measurements, diff.after.measurements)
+    ) {
       newItem.measurements = diff.after.measurements;
       modified = true;
     }
