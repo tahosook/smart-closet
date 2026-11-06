@@ -68,7 +68,7 @@ export const WardrobeRebuildModal: React.FC<WardrobeRebuildModalProps> = ({
   const [activeStep, setActiveStep] = useState<1 | 2 | 3>(1);
 
   // ----------------------------------------------------
-  // Step 1: 重複解消ステート
+  // Step 1: 重複検出・統合ステート
   // ----------------------------------------------------
   const [duplicateGroups, setDuplicateGroups] = useState<DuplicateGroupCandidate[]>([]);
   const [isDetectingDuplicates, setIsDetectingDuplicates] = useState(false);
@@ -116,7 +116,7 @@ export const WardrobeRebuildModal: React.FC<WardrobeRebuildModalProps> = ({
     setActiveStep(1);
   }, [isOpen, initialMode]);
 
-  // フルリビルド時の重複検出（フルモード選択時のみ写真ハッシュ照合を実行）
+  // フル見直し時の重複検出（フルモード選択時のみ写真ハッシュ照合を実行）
   useEffect(() => {
     if (!isOpen || rebuildMode !== 'full') {
       return;
@@ -183,7 +183,7 @@ export const WardrobeRebuildModal: React.FC<WardrobeRebuildModalProps> = ({
     setSelectedFileName(null);
   };
 
-  // 重複解消プレビューの計算
+  // 重複検出・統合プレビューの計算
   const mergePreview = useMemo(() => {
     const selectionsList = Object.values(mergeSelections);
     return previewDuplicateMerge({
@@ -194,7 +194,7 @@ export const WardrobeRebuildModal: React.FC<WardrobeRebuildModalProps> = ({
     });
   }, [closetData, wearHistory, wifeNgPairs, mergeSelections]);
 
-  // 重複解消の survivor 切り替え
+  // 重複統合の survivor 切り替え
   const handleSurvivorChange = (groupId: string, newSurvivorId: string) => {
     const group = duplicateGroups.find((g) => g.groupId === groupId);
     if (!group) return;
@@ -209,7 +209,7 @@ export const WardrobeRebuildModal: React.FC<WardrobeRebuildModalProps> = ({
     }));
   };
 
-  // 重複解消グループの対象チェック切り替え
+  // 重複統合グループの対象チェック切り替え
   const handleToggleGroupIncluded = (groupId: string) => {
     setMergeSelections((prev) => ({
       ...prev,
@@ -220,7 +220,7 @@ export const WardrobeRebuildModal: React.FC<WardrobeRebuildModalProps> = ({
     }));
   };
 
-  // 重複解消の実行
+  // 重複統合の実行
   const handleExecuteMerge = async () => {
     const selectionsList = Object.values(mergeSelections).filter((s) => s.included);
     if (selectionsList.length === 0) return;
@@ -407,7 +407,7 @@ export const WardrobeRebuildModal: React.FC<WardrobeRebuildModalProps> = ({
         alert(`適応に失敗しました: ${res.error || '不明なエラー'}`);
       }
     } catch (err) {
-      alert(`リビルド適用エラー: ${(err as Error).message}`);
+      alert(`見直し適用エラー: ${(err as Error).message}`);
     } finally {
       setIsApplyingRebuild(false);
     }
@@ -450,7 +450,7 @@ export const WardrobeRebuildModal: React.FC<WardrobeRebuildModalProps> = ({
             <p className="text-xs text-slate-300 mt-0.5">
               {rebuildMode === 'quick'
                 ? '写真を使わず、登録済みの文字情報と最新ルールから相性・羽織りを高速に再判定します'
-                : '保存写真を正本として、13色パレット・属性・相性を丸ごと再構築します'}
+                : '保存写真を正本として、13色パレット・属性・相性を丸ごと見直します'}
             </p>
           </div>
           <button
@@ -576,7 +576,7 @@ export const WardrobeRebuildModal: React.FC<WardrobeRebuildModalProps> = ({
         {/* コンテンツエリア */}
         <div ref={contentScrollRef} className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-6">
           {/* ==================================================== */}
-          {/* フルモード STEP 1: 重複解消 */}
+          {/* フルモード STEP 1: 重複検出・統合 */}
           {/* ==================================================== */}
           {isDuplicateStep && (
             <div className="space-y-6">
@@ -719,7 +719,7 @@ export const WardrobeRebuildModal: React.FC<WardrobeRebuildModalProps> = ({
                                       {item?.name || '名称未設定'}
                                     </div>
                                     <div className="text-[11px] text-slate-400 mt-0.5">
-                                      色: {item?.color || '未設定'} / 季節: {item?.seasonSleeve || '通年'}
+                                      色: {item?.color || '未確定'} / 季節: {item?.seasonSleeve || '通年'}
                                     </div>
                                   </div>
                                 </label>
@@ -815,7 +815,7 @@ export const WardrobeRebuildModal: React.FC<WardrobeRebuildModalProps> = ({
                     クイック見直しの安心保護
                   </div>
                   <p className="text-xs text-amber-800 leading-relaxed">
-                    写真の再アップロードは不要です。登録済みの情報（名前・確定色・季節袖丈・メモ）をもとに、現在のルールで<strong>相性（出社/NG）</strong>と<strong>羽織り分類</strong>のみを再計算します。
+                    写真の再アップロードは不要です。登録済みの情報（名前・確定色・季節袖丈・メモ）をもとに、現在のルールで<strong>相性（出社/NG）</strong>と<strong>羽織り分類</strong>のみを再判定します。
                     <br />
                     <strong>服の名前・確定色・実寸・着用履歴・片付け状態・奥様NGは一切変更されません。</strong>
                   </p>
@@ -1176,7 +1176,7 @@ export const WardrobeRebuildModal: React.FC<WardrobeRebuildModalProps> = ({
                                   )}
                                 </div>
                                 <div className="text-slate-500 line-through">
-                                  {diff.before.color || '未設定'}
+                                  {diff.before.color || '未確定'}
                                 </div>
                                 <div className="text-emerald-700 font-medium">{diff.after.color}</div>
                               </div>

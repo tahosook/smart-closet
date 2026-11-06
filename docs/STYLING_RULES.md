@@ -1,6 +1,6 @@
 # コーディネート判定ルール＆ワードローブ分析 (docs/STYLING_RULES.md)
 
-新しい服を追加し、Gemini（Google AI Pro）で相性マトリクス（`src/data/closet.json`）を再計算する際は、以下のルールを絶対基準とする。
+新しい服を追加し、Gemini（Google AI Pro）で相性マトリクス（`src/data/closet.json`）を見直し（再判定）する際は、以下のルールを絶対基準とする。
 
 ---
 
@@ -47,7 +47,7 @@
 
 ## 3. 双方向整合性ルール（JSONマスターデータ更新時の必須規約）
 
-`src/data/closet.json` を更新、または Gemini プロンプトで再計算させる際は以下のデータ整合性を厳格に保持すること：
+`src/data/closet.json` を更新、または Gemini プロンプトで見直し（再判定）させる際は以下のデータ整合性を厳格に保持すること：
 
 1. **双方向の参照整合性:**
    - シャツ `S_x` の `officeRecommendIds` に `P_y` を含めた場合、パンツ `P_y` の `officeRecommendIds` にも `S_x` を含める（または secondary 推薦として機能させる）。

@@ -1012,7 +1012,7 @@ export const GasSyncModal: React.FC<GasSyncModalProps> = ({ isOpen, onClose }) =
                     </div>
                   </div>
                   <p className="text-[11px] text-slate-400 pl-5">
-                    コピーしたコードをエディタに貼り付けて保存し、関数ドロップダウンで <code className="bg-slate-800 px-1 py-0.5 rounded text-amber-300">setupSpreadsheet</code> を選択して「実行」を押します（履歴・NG・断捨離分析シートが自動作成されます）。
+                    コピーしたコードをエディタに貼り付けて保存し、関数ドロップダウンで <code className="bg-slate-800 px-1 py-0.5 rounded text-amber-300">setupSpreadsheet</code> を選択して「実行」を押します（着用履歴・奥様NG・断捨離分析シートが自動作成されます）。
                   </p>
                 </div>
 
@@ -1034,7 +1034,7 @@ export const GasSyncModal: React.FC<GasSyncModalProps> = ({ isOpen, onClose }) =
                   <ul className="text-[10px] text-slate-300 list-disc list-inside space-y-0.5">
                     <li>Pixel 9a で朝決定した着用履歴が Mac mini 側にも自動反映</li>
                     <li>スプレッドシートの「analytics」シートで「60日以上未着用の服（断捨離候補）」が自動集計</li>
-                    <li>スプレッドシート上で直接妻NGの行を追加・削除してもアプリに反映</li>
+                    <li>スプレッドシート上で直接奥様NGの行を追加・削除してもアプリに反映</li>
                   </ul>
                 </div>
               </div>

@@ -285,7 +285,7 @@ export function setSyncedFolderId(folderId: string): void {
 /**
  * 同期元フォルダ ID の記録をクリア (指摘1)
  */
-export function clearSyncedFolderId(): void {
+function clearSyncedFolderId(): void {
   try {
     if (typeof window !== 'undefined' && window.localStorage) {
       localStorage.removeItem(STORAGE_KEY_SYNC_FOLDER_ID);

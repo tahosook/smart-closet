@@ -20,7 +20,6 @@ import {
   Ruler,
   UploadCloud,
   ShoppingBag,
-  Layers,
 } from 'lucide-react';
 import { useClosetStore } from '../hooks/useClosetStore';
 import {
@@ -558,14 +557,14 @@ export const AiSyncView: React.FC = () => {
     const shirtsSummary = activeShirts
       .map(
         (s) =>
-          `- [${s.id}] ${s.name}（区分: ${s.isOuterwear ? '羽織り' : '1枚もの'}、色: ${s.color ?? '未設定'}、${s.seasonSleeve}、ドレス度${s.dressScore}、快適度${s.comfortScore}）: ${s.notes}`
+          `- [${s.id}] ${s.name}（区分: ${s.isOuterwear ? '羽織り' : '1枚もの'}、色: ${s.color ?? '未確定'}、${s.seasonSleeve}、ドレス度${s.dressScore}、快適度${s.comfortScore}）: ${s.notes}`
       )
       .join('\n');
 
     const pantsSummary = activePants
       .map(
         (p) =>
-          `- [${p.id}] ${p.name}（色: ${p.color ?? '未設定'}、${p.seasonSleeve}、ドレス度${p.dressScore}、快適度${p.comfortScore}）: ${p.notes}`
+          `- [${p.id}] ${p.name}（色: ${p.color ?? '未確定'}、${p.seasonSleeve}、ドレス度${p.dressScore}、快適度${p.comfortScore}）: ${p.notes}`
       )
       .join('\n');
 
@@ -1126,7 +1125,7 @@ ${wifeNgSummary}
         const unconfirmedCount = appliedResults.filter((r) => r.unconfirmedColorHint || r.warning).length;
         const colorNoteMsg =
           unconfirmedCount > 0
-            ? `（うち${unconfirmedCount}着は色未確定として登録し、メモに目安を追記しました。後から一括色相談で確定できます）`
+            ? `（うち${unconfirmedCount}着は色未確定として登録し、メモに目安を追記しました。後から写真からのフル見直しで確定できます）`
             : '';
 
         const uploadWarningMsg =
@@ -1538,7 +1537,7 @@ ${wifeNgSummary}
             </div>
           )}
 
-          {/* Wife NG notice */}
+          {/* 奥様NGの注意喚起 */}
           {wifeNgPairs.length > 0 && (
             <div className="p-2.5 bg-rose-950/40 border border-rose-800/40 rounded-xl flex items-center gap-2 text-[11px] text-rose-300">
               <ShieldCheck className="w-4 h-4 flex-shrink-0 text-rose-400" />
@@ -1719,7 +1718,7 @@ ${wifeNgSummary}
                     <span>色パレット（13色から1つ選択）</span>
                   </label>
                   <span className="text-[10px] text-blue-400 font-mono">
-                    選択中: {draftEditItem.color || '未設定'}
+                    選択中: {draftEditItem.color || '未確定'}
                   </span>
                 </div>
 
@@ -2584,7 +2583,7 @@ ${wifeNgSummary}
         </div>
 
         <p className="text-xs text-slate-400 px-1 leading-relaxed">
-          現在のワードローブの相性・着用実績・奥様NG傾向をもとに、Geminiに買い足し候補や色の判定を依頼するプロンプトを生成します。
+          現在のワードローブの相性・着用実績・奥様NG傾向をもとに、Geminiに買い足し候補の提案を依頼するプロンプトを生成します。
         </p>
 
         <div className="space-y-4">
@@ -2596,7 +2595,7 @@ ${wifeNgSummary}
                 <span>🛍️ ワードローブ買い足し相談</span>
               </span>
               <span className="text-[10px] text-slate-400 font-mono">
-                現役{activeItems.length}着（シャツ{shirts.length}・パンツ{pants.length}）
+                現在{activeItems.length}着（シャツ{shirts.length}・パンツ{pants.length}）
               </span>
             </div>
 
@@ -2655,23 +2654,6 @@ ${wifeNgSummary}
                 </>
               )}
             </button>
-          </div>
-
-          {/* 2. ワードローブの全体見直し（案内） */}
-          <div className="p-4 bg-slate-900/60 border border-slate-800 rounded-2xl space-y-2">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-slate-300 flex items-center gap-2">
-                <Layers className="w-4 h-4 text-indigo-400" />
-                <span>🔄 ワードローブの全体見直し（クイック・フル）</span>
-              </span>
-              <span className="text-[10px] px-2 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700">
-                管理タブへ集約
-              </span>
-            </div>
-
-            <p className="text-[11px] text-slate-400 leading-relaxed">
-              相性・羽織りの再判定（⚡ クイック見直し）や、写真を正本としたフル見直し・重複統合（📸 フル見直し）は<strong>「管理」タブ</strong>へ集約されました。保守・見直しを行う際は管理タブの「🔄 全体見直し」をご利用ください。
-            </p>
           </div>
         </div>
       </section>

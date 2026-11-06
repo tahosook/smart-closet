@@ -437,7 +437,7 @@ export interface RebuildContactSheetResult {
 }
 
 /**
- * 全件リビルド用のコンタクトシート（1枚あたり最大12着、3列×4行、IDラベル付き）を Canvas で合成生成する
+ * フル見直し用のコンタクトシート（1枚あたり最大12着、3列×4行、IDラベル付き）を Canvas で合成生成する
  */
 export async function generateRebuildContactSheets(
   items: ClosetItem[],

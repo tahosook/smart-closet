@@ -4217,7 +4217,7 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
   assert.ok(promptWithHistory.includes('おすすめから除外する注意喚起として扱ってください'));
 
   // (e) 片付けた服が0着の場合
-  assert.ok(promptWithHistory.includes('【参考・別枠】現在片付けている服（保管中・全0着）'));
+  assert.ok(promptWithHistory.includes('【参考・別枠】現在片付けている服（全0着）'));
   assert.ok(promptWithHistory.includes('なし'));
 
   // 2. 片付けた服（archived: true）の分離と「出す」提案指示の検証
@@ -4238,8 +4238,8 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
     userMemo: '',
   });
 
-  // (a) P12 と S8 が主データ（現役一覧）に含まれないこと
-  const activeShirtSection = promptWithArchived.split('【シャツ・トップス')[1].split('【パンツ・ボトムス')[0];
+  // (a) P12 と S8 が主データ（片付けていない服一覧）に含まれないこと
+  const activeShirtSection = promptWithArchived.split('【シャツ（1枚もの・羽織り）')[1].split('【パンツ・ボトムス')[0];
   const activePantsSection = promptWithArchived.split('【パンツ・ボトムス')[1].split('【注意喚起】')[0];
   assert.equal(activeShirtSection.includes('[S8]'), false, 'Archived S8 must not be in active shirt section');
   assert.equal(activePantsSection.includes('[P12]'), false, 'Archived P12 must not be in active pants section');
@@ -4255,13 +4255,13 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
   const archivedSection = promptWithArchived.split('【参考・別枠】現在片付けている服')[1].split('### スタイリング絶対原則')[0];
   assert.ok(archivedSection.includes('[P12] オリーブグリーンチノパン'));
   assert.ok(archivedSection.includes('[S8] 生成りワーク長袖シャツ'));
-  assert.ok(archivedSection.includes('保管中・全2着'));
+  assert.ok(archivedSection.includes('全2着'));
 
   // (c) 片付けた服に関する指示（「買うより、片付けた服を出す方がよい」）が含まれること
   assert.ok(promptWithArchived.includes('「新しく買うより、片付けている [ID] 〇〇 を出す方がよい」と提案してください'));
   assert.ok(promptWithArchived.includes('片付けている服とほぼ同一のアイテムを重複して買い足し提案することは避けてください'));
 
-  // (d) 片付けた服に紐づく奥様NG（S1 × P12）が現役奥様NG一覧に混入しないこと
+  // (d) 片付けた服に紐づく奥様NG（S1 × P12）が主データの奥様NG一覧に混入しないこと
   const wifeNgSection = promptWithArchived.split('【注意喚起】登録済みの奥様NGペア')[1].split('【参考・別枠】')[0];
   assert.ok(wifeNgSection.includes('S2 × P8'), 'Active wife NG pair must be included');
   assert.equal(wifeNgSection.includes('S1 × P12'), false, 'Wife NG involving archived P12 must not be in active wife NG list');
