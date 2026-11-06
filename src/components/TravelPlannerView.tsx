@@ -154,7 +154,7 @@ export const TravelPlannerView: React.FC = () => {
           </p>
         </div>
         <div className="bg-slate-800/80 border border-slate-700/70 rounded-2xl p-6 text-center text-slate-400 space-y-2">
-          <p className="text-sm font-bold text-slate-300">選べるシャツまたはパンツがありません（すべて片付けられています）</p>
+          <p className="text-sm font-bold text-slate-300">選べるシャツまたはパンツがありません</p>
           <p className="text-xs text-slate-400">
             すべての服が「片付けた服」に入っているか、登録されていません。上の「ワードローブ整理」セクションから服を「出す」操作を行うと再開できます。
           </p>
