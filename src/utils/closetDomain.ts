@@ -31,7 +31,7 @@ import type {
 
 /**
  * 標準色パレット（全13色、青の濃淡3段：濃紺（ネイビー含む）／ブルー／淡青、淡色：白／生成り／ベージュ／グレージュ等）
- * 奥さんのNG判定3類型（濃紺×濃紺、淡青×ブルー/淡青、生成り・ベージュ×淡色）を再現する語彙
+ * 奥様NG判定3類型（濃紺×濃紺、淡青×ブルー/淡青、生成り・ベージュ×淡色）を再現する語彙
  */
 export const GARMENT_COLOR_PALETTE = [
   '白',
@@ -50,7 +50,7 @@ export const GARMENT_COLOR_PALETTE = [
 ] as const;
 
 /**
- * 登録相談プロンプトおよび全件リビルドプロンプト共通の色判定アンカー
+ * 登録相談プロンプトおよび全体見直しプロンプト共通の色判定アンカー
  * A4用紙を基準とした隣接色の境界基準を定義
  */
 export const GARMENT_COLOR_ANCHOR_GUIDE = `【13色パレットの判定アンカーと基準】
@@ -1117,7 +1117,7 @@ export function mergeSingleItemIntoClosetData(
 }
 
 /**
- * 全シャツ・全パンツの相性を走査し、ボトルネックや孤立アイテムを動的に集計する
+ * 全シャツ・全パンツの相性を走査し、ボトルネックアイテムを動的に集計する
  */
 export function analyzeWardrobeStats(
   shirts: ClosetItem[],
@@ -1911,7 +1911,7 @@ export interface ShoppingConsultationPromptInput {
 
 /**
  * Gemini 買い足し相談用の対話プロンプトを生成する純粋関数
- * - 現役アイテム（!archived）を主データとして属性・相性・着用回数を埋め込む
+ * - 着用中アイテム（!archived）を主データとして属性・相性・着用回数を埋め込む
  * - 片付けた服（archived）は相談のベースには含めず別枠で記載し、「出す」提案や重複購入防止に活用できるようにする
  * - 奥様NG・相性NGは着用禁止ではなく「ダメ出し回避のための注意喚起（おすすめ除外対象）」として正確に伝える
  * - 新しい集計・計算ロジックは作らず、既存のアイテム属性と wearHistory の単純カウントのみを出力する
@@ -1936,7 +1936,7 @@ export function buildShoppingConsultationPrompt(
     }
   }
 
-  // 2. 現役アイテムと片付けた服を分離
+  // 2. 着用中アイテムと片付けた服を分離
   const activeShirts = items.filter((item) => item.category === 'shirt' && !item.archived);
   const activePants = items.filter((item) => item.category === 'pants' && !item.archived);
   const archivedItems = items.filter((item) => Boolean(item.archived));
@@ -1982,7 +1982,7 @@ export function buildShoppingConsultationPrompt(
     const ngStr = filteredNg.length > 0 ? `${filteredNg.join(', ')}（${item.ngReason || '相性NG'}）` : 'なし';
     const categoryTypeStr = item.category === 'shirt' ? `、区分: ${item.isOuterwear ? '羽織り' : '1枚もの'}` : '';
 
-    return `- [${item.id}] ${item.name}（色: ${item.color ?? '未設定'}${categoryTypeStr}、${item.seasonSleeve}、ドレス度${item.dressScore}、快適度${item.comfortScore}、着用回数: ${wearCount}回${measurementsStr}）
+    return `- [${item.id}] ${item.name}（色: ${item.color ?? '未確定'}${categoryTypeStr}、${item.seasonSleeve}、ドレス度${item.dressScore}、快適度${item.comfortScore}、着用回数: ${wearCount}回${measurementsStr}）
   - 出社推奨: ${officeStr}
   - リモート推奨: ${remoteStr}
   - NG相手: ${ngStr}
@@ -1992,14 +1992,14 @@ export function buildShoppingConsultationPrompt(
   const activeShirtsList =
     activeShirts.length > 0
       ? activeShirts.map(formatActiveItem).join('\n')
-      : '（現在登録されている現役シャツはありません）';
+      : '（現在登録されているシャツはありません）';
 
   const activePantsList =
     activePants.length > 0
       ? activePants.map(formatActiveItem).join('\n')
-      : '（現在登録されている現役パンツはありません）';
+      : '（現在登録されているパンツはありません）';
 
-  // 3. 現役アイテム間の登録済み奥様NGペア
+  // 3. 片付けていない服同士の登録済み奥様NGペア
   const activeWifeNgPairs = wifeNgPairs.filter(
     (ng) => activeShirtIdSet.has(ng.shirtId) && activePantsIdSet.has(ng.pantsId)
   );
@@ -2018,7 +2018,7 @@ export function buildShoppingConsultationPrompt(
           .map((item) => {
             const wearCount = wearCountMap.get(item.id) || 0;
             const catName = item.category === 'shirt' ? (item.isOuterwear ? 'シャツ・羽織り' : 'シャツ・1枚もの') : 'パンツ';
-            return `- [${item.id}] ${item.name}（${catName}、色: ${item.color ?? '未設定'}、${item.seasonSleeve}、ドレス度${item.dressScore}、快適度${item.comfortScore}、過去着用回数: ${wearCount}回）: ${item.notes || 'メモなし'}`;
+            return `- [${item.id}] ${item.name}（${catName}、色: ${item.color ?? '未確定'}、${item.seasonSleeve}、ドレス度${item.dressScore}、快適度${item.comfortScore}、過去着用回数: ${wearCount}回）: ${item.notes || 'メモなし'}`;
           })
           .join('\n')
       : 'なし';
@@ -2034,28 +2034,28 @@ export function buildShoppingConsultationPrompt(
 
 ### 相談者のプロフィール＆利用環境
 - 40代後半男性、ハイブリッド勤務（週2〜3日出社、残りはリモートワーク）。
-- 目標: 「妻からのファッションダメ出し（NG）」を100%回避し、毎朝ストレスなく清潔感ある着こなしができること。
+- 目標: 「奥様からのファッションダメ出し（奥様NG）」を100%回避し、毎朝ストレスなく清潔感ある着こなしができること。
 - 出社時は清潔感・きれいめ（ドレス度3.0以上、特にスラックス）を重視。
 - リモートワーク時は快適さ・リラックス感を重視。
 
 ### 相談したい条件・悩み（ユーザーメモ）
 ${userMemoSection}
 
-### 【主データ】現在着用している現役ワードローブ一覧
+### 【主データ】現在着用しているワードローブ一覧
 ※相性の相手ID、着用実績（着用回数）、NG相手が記載されています。
 
-【シャツ・トップス（全${activeShirts.length}着：1枚もの${activeSingleShirts.length}着 / 羽織り${activeOuterwearShirts.length}着）】
+【シャツ（1枚もの・羽織り）（全${activeShirts.length}着：1枚もの${activeSingleShirts.length}着 / 羽織り${activeOuterwearShirts.length}着）】
 ${activeShirtsList}
 
 【パンツ・ボトムス（全${activePants.length}着）】
 ${activePantsList}
 
 ### 【注意喚起】登録済みの奥様NGペア（全${activeWifeNgPairs.length}件）
-※過去に妻から実際にダメ出しされた組み合わせです。おすすめから除外する注意喚起として扱ってください。
+※過去に奥様から実際にダメ出しされた組み合わせです。おすすめから除外する注意喚起として扱ってください。
 ${wifeNgList}
 
-### 【参考・別枠】現在片付けている服（保管中・全${archivedItems.length}着）
-※片付けた服は現在の現役ローテーション（主データ）には含めていません。
+### 【参考・別枠】現在片付けている服（全${archivedItems.length}着）
+※片付けた服は現在の着用ローテーション（主データ）には含めていません。
 ${archivedList}
 
 ### スタイリング絶対原則（奥様ダメ出し回避ルール）
@@ -2067,7 +2067,7 @@ ${archivedList}
    - 出社時: パンツのドレス度3.5以上を優先。スウェット・ジョガー系（ドレス度3.0未満）は出社候補から除外。
    - リモート時: 快適度4.0以上を優先。
 6. **NG判定の位置づけ**:
-   - Wife NG や相性NGは、服の着用自体の絶対禁止ではなく「奥様からのダメ出しを回避するための注意喚起（おすすめ候補からの除外対象）」です。買い足し提案では、手持ち服とNG衝突を起こしにくく、着回し相手の少ない服や着用回数の少ない服を救済できるアイテムを優先してください。
+   - 奥様NGや絶対NG（ルールNG）は、服の着用自体の絶対禁止ではなく「奥様からのダメ出しを回避するための注意喚起（おすすめ候補からの除外対象）」です。買い足し提案では、手持ち服とNG衝突を起こしにくく、着回し相手の少ない服や着用回数の少ない服を救済できるアイテムを優先してください。
 
 ### AIへの回答・相談指示
 1. **買い足し候補の提案**:
@@ -2539,7 +2539,7 @@ export function executeDuplicateMerge(params: {
 }
 
 // ----------------------------------------------------
-// 全件リビルド・差分比較・選択適用ロジック
+// 全体見直し・差分比較・選択適用ロジック
 // ----------------------------------------------------
 
 export interface QuickRebuildPromptInput {
@@ -2548,7 +2548,7 @@ export interface QuickRebuildPromptInput {
 }
 
 /**
- * 写真を使わず、文字情報とスタイリングルールから相性と羽織り分類のみを再判定するクイックリビルド用プロンプトを生成する純粋関数
+ * 写真を使わず、文字情報とスタイリングルールから相性と羽織り分類のみを再判定するクイック見直し用プロンプトを生成する純粋関数
  */
 export function buildQuickRebuildPrompt(params: QuickRebuildPromptInput): string {
   const { items, wifeNgPairs = [] } = params;
@@ -2559,20 +2559,20 @@ export function buildQuickRebuildPrompt(params: QuickRebuildPromptInput): string
   const shirtsList = shirts
     .map(
       (s) =>
-        `- [${s.id}] ${s.name} (色: ${s.color || '未設定'}, 現在区分: ${s.isOuterwear ? '羽織り' : '1枚もの'}, 季節袖丈: ${s.seasonSleeve || '通年'}, ドレス度${s.dressScore}, 快適度${s.comfortScore}${s.notes ? `, メモ: ${s.notes}` : ''}${s.archived ? ', ※現在片付け中' : ''})`
+        `- [${s.id}] ${s.name} (色: ${s.color || '未確定'}, 現在区分: ${s.isOuterwear ? '羽織り' : '1枚もの'}, 季節袖丈: ${s.seasonSleeve || '通年'}, ドレス度${s.dressScore}, 快適度${s.comfortScore}${s.notes ? `, メモ: ${s.notes}` : ''}${s.archived ? ', ※現在片付け中' : ''})`
     )
     .join('\n');
 
   const pantsList = pants
     .map(
       (p) =>
-        `- [${p.id}] ${p.name} (色: ${p.color || '未設定'}, 季節袖丈: ${p.seasonSleeve || '通年'}, ドレス度${p.dressScore}, 快適度${p.comfortScore}${p.notes ? `, メモ: ${p.notes}` : ''}${p.archived ? ', ※現在片付け中' : ''})`
+        `- [${p.id}] ${p.name} (色: ${p.color || '未確定'}, 季節袖丈: ${p.seasonSleeve || '通年'}, ドレス度${p.dressScore}, 快適度${p.comfortScore}${p.notes ? `, メモ: ${p.notes}` : ''}${p.archived ? ', ※現在片付け中' : ''})`
     )
     .join('\n');
 
   const wifeNgSection =
     wifeNgPairs.length > 0
-      ? `### 【注意喚起】登録済みの奥様NGペア（全${wifeNgPairs.length}件）\n※妻から実際にダメ出しされた組み合わせです。絶対におすすめに含めず、NGとして扱ってください。\n` +
+      ? `### 【注意喚起】登録済みの奥様NGペア（全${wifeNgPairs.length}件）\n※奥様から実際にダメ出しされた組み合わせです。絶対におすすめに含めず、NGとして扱ってください。\n` +
         wifeNgPairs.map((ng) => `- ${ng.shirtId} × ${ng.pantsId}: ${ng.reason || '奥様NG指定'}`).join('\n') +
         '\n\n'
       : '';
@@ -2591,7 +2591,7 @@ export function buildQuickRebuildPrompt(params: QuickRebuildPromptInput): string
    - リモート時: 快適度4.0以上を優先。
 
 ${wifeNgSection}### 対象アイテム一覧
-【シャツ・トップス（全${shirts.length}着）】
+【シャツ（1枚もの・羽織り）（全${shirts.length}着）】
 ${shirtsList}
 
 【パンツ・ボトムス（全${pants.length}着）】
@@ -2635,7 +2635,7 @@ export interface RebuildPromptInput {
 }
 
 /**
- * Geminiに提出する全件リビルド用の分析プロンプトを生成する純粋関数
+ * Geminiに提出するフル見直し用の分析プロンプトを生成する純粋関数
  */
 export function buildWardrobeRebuildPrompt(params: RebuildPromptInput): string {
   const { items, contactSheetsCount, wifeNgPairs = [] } = params;
@@ -2649,7 +2649,7 @@ export function buildWardrobeRebuildPrompt(params: RebuildPromptInput): string {
         s.measurements && Object.keys(s.measurements).length > 0
           ? `, 実寸目安: ${formatGarmentMeasurements(s.measurements, 'shirt')}`
           : '';
-      return `- [${s.id}] ${s.name} (現在区分: ${s.isOuterwear ? '羽織り' : '1枚もの'}, 現在色: ${s.color || '未設定'}, 季節袖丈: ${s.seasonSleeve || '通年'}${mStr}, メモ: ${s.notes || 'なし'}${s.archived ? ', ※現在片付け中' : ''})`;
+      return `- [${s.id}] ${s.name} (現在区分: ${s.isOuterwear ? '羽織り' : '1枚もの'}, 現在色: ${s.color || '未確定'}, 季節袖丈: ${s.seasonSleeve || '通年'}${mStr}, メモ: ${s.notes || 'なし'}${s.archived ? ', ※現在片付け中' : ''})`;
     })
     .join('\n');
 
@@ -2659,19 +2659,19 @@ export function buildWardrobeRebuildPrompt(params: RebuildPromptInput): string {
         p.measurements && Object.keys(p.measurements).length > 0
           ? `, 実寸目安: ${formatGarmentMeasurements(p.measurements, 'pants')}`
           : '';
-      return `- [${p.id}] ${p.name} (現在色: ${p.color || '未設定'}, 季節袖丈: ${p.seasonSleeve || '通年'}${mStr}, メモ: ${p.notes || 'なし'}${p.archived ? ', ※現在片付け中' : ''})`;
+      return `- [${p.id}] ${p.name} (現在色: ${p.color || '未確定'}, 季節袖丈: ${p.seasonSleeve || '通年'}${mStr}, メモ: ${p.notes || 'なし'}${p.archived ? ', ※現在片付け中' : ''})`;
     })
     .join('\n');
 
   const wifeNgSection =
     wifeNgPairs.length > 0
-      ? `### 【注意喚起】登録済みの奥様NGペア（全${wifeNgPairs.length}件）\n※妻から実際にダメ出しされた組み合わせです。絶対におすすめに含めず、NGとして扱ってください。\n` +
+      ? `### 【注意喚起】登録済みの奥様NGペア（全${wifeNgPairs.length}件）\n※奥様から実際にダメ出しされた組み合わせです。絶対におすすめに含めず、NGとして扱ってください。\n` +
         wifeNgPairs.map((ng) => `- ${ng.shirtId} × ${ng.pantsId}: ${ng.reason || '奥様NG指定'}`).join('\n') +
         '\n\n'
       : '';
 
   return `あなたは40代男性（ハイブリッド勤務：出社＋リモート）専任の骨格・カラープロスタイリストです。
-添付された ${contactSheetsCount} 枚のコンタクトシート（全${items.length}着の写真一覧、各服にIDバッジ明記）および以下の現行ワードローブ一覧を正本として、全着の属性（名前、色、実寸目安、季節・袖丈、ドレス度・快適度、メモ、羽織り分類、相性・NG）を再分析し、最新のJSONデータとして丸ごと再構築（全件リビルド）してください。
+添付された ${contactSheetsCount} 枚のコンタクトシート（全${items.length}着の写真一覧、各服にIDバッジ明記）および以下の現行ワードローブ一覧を正本として、全着の属性（名前、色、実寸目安、季節・袖丈、ドレス度・快適度、メモ、羽織り分類、相性・NG）を再分析し、最新のJSONデータとして丸ごと見直し（フル見直し）してください。
 
 ${GARMENT_COLOR_ANCHOR_GUIDE}
 
@@ -2691,7 +2691,7 @@ ${GARMENT_COLOR_ANCHOR_GUIDE}
    - リモート時: 快適度4.0以上を優先。
 
 ${wifeNgSection}### 対象アイテム一覧
-【シャツ・トップス（全${shirts.length}着）】
+【シャツ（1枚もの・羽織り）（全${shirts.length}着）】
 ${shirtsList}
 
 【パンツ・ボトムス（全${pants.length}着）】
@@ -3021,7 +3021,7 @@ export function computeRebuildDiffs(params: {
     const changedFields: RebuildFieldKey[] = [];
 
     if (mode === 'quick') {
-      // クイックリビルド: 差分・適用対象は compatibility と isOuterwear (シャツのみ) に厳格制限
+      // クイック見直し: 差分・適用対象は compatibility と isOuterwear (シャツのみ) に厳格制限
       // 1. isOuterwear (シャツのみ)
       if (
         current.category === 'shirt' &&
@@ -3078,7 +3078,7 @@ export function computeRebuildDiffs(params: {
         defaultSelection,
       });
     } else {
-      // フルリビルド: 全項目を対象に差分検出・保護判定
+      // フル見直し: 全項目を対象に差分検出・保護判定
       // 1. name
       if (current.name.trim() !== rebuild.name.trim()) {
         changedFields.push('name');

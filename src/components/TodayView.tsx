@@ -201,7 +201,7 @@ export const TodayView: React.FC = () => {
     setSelectedOuterwearId(todayRecord?.outerwearId);
   }, [todayRecord?.outerwearId]);
 
-  // 利用可能な羽織り候補（現役シャツのうち isOuterwear: true かつ 選択中シャツ以外）
+  // 利用可能な羽織り候補（片付けていないシャツのうち isOuterwear: true かつ 選択中シャツ以外）
   const availableOuterwears = useMemo(() => {
     if (!selectedShirt) return [];
     return shirts.filter((s) => Boolean(s.isOuterwear) && s.id !== selectedShirt.id);
@@ -751,8 +751,7 @@ export const TodayView: React.FC = () => {
 
                           {rec.isYesterdayWorn && (
                             <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-rose-950/70 text-rose-300 border border-rose-800/70 flex items-center gap-1">
-                              <AlertTriangle className="w-3 h-3 text-rose-400" />
-                              昨日着用（冷却中）
+                              ⚠️ 昨日着用（冷却中）
                             </span>
                           )}
 
@@ -800,11 +799,10 @@ export const TodayView: React.FC = () => {
 
                         <button
                           onClick={() => handleRegisterWifeNg(p)}
-                          className="min-h-[44px] min-w-[44px] py-2.5 px-2.5 rounded-xl text-[11px] font-semibold bg-rose-950/40 hover:bg-rose-900/60 text-rose-300 border border-rose-800/50 flex items-center justify-center gap-1 transition-colors active:scale-[0.98]"
-                          title="この組み合わせを奥様NGリストに登録"
+                          className="min-h-[44px] min-w-[44px] py-2.5 px-3 rounded-xl text-[11px] font-semibold bg-rose-950/40 hover:bg-rose-900/60 text-rose-300 border border-rose-800/50 flex items-center justify-center gap-1 transition-colors active:scale-[0.98]"
+                          title="🚨 奥様NGに登録する（候補から除外）"
                         >
-                          <AlertTriangle className="w-3.5 h-3.5 text-rose-400" />
-                          <span className="hidden sm:inline">奥様NG</span>
+                          <span>🚨 奥様NGに登録</span>
                         </button>
                       </div>
                     </div>
@@ -845,7 +843,7 @@ export const TodayView: React.FC = () => {
                       <div className="min-w-0">
                         {rec.isYesterdayWorn && (
                           <span className="text-[9px] text-rose-300 bg-rose-950 px-1 py-0.5 rounded block mb-1 truncate">
-                            ⚠️ 昨日着用
+                            ⚠️ 昨日着用（冷却中）
                           </span>
                         )}
                         <div className="flex items-center justify-between gap-1 mb-0.5">
@@ -867,10 +865,10 @@ export const TodayView: React.FC = () => {
                         </button>
                         <button
                           onClick={() => handleRegisterWifeNg(p)}
-                          className="min-h-[44px] min-w-[44px] p-2 bg-rose-950/50 hover:bg-rose-900/60 text-rose-300 rounded-lg text-xs flex items-center justify-center"
-                          title="奥様NG"
+                          className="min-h-[44px] min-w-[44px] py-2 px-2.5 bg-rose-950/40 hover:bg-rose-900/60 text-rose-300 border border-rose-800/50 rounded-lg text-[11px] font-semibold flex items-center justify-center gap-1 transition-colors"
+                          title="🚨 奥様NGに登録する（候補から除外）"
                         >
-                          🚨
+                          <span>🚨 奥様NGに登録</span>
                         </button>
                       </div>
                     </div>
@@ -954,7 +952,7 @@ export const TodayView: React.FC = () => {
                               </span>
                             ) : (
                               <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-rose-950/90 text-rose-300 border border-rose-800/60">
-                                🚫 NG
+                                × 絶対NG
                               </span>
                             )}
                             {isTodayChosen && (
@@ -965,7 +963,7 @@ export const TodayView: React.FC = () => {
                             )}
                             {isYesterdayWorn && (
                               <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-rose-950/70 text-rose-300 border border-rose-800/70">
-                                ⚠️ 昨日着用
+                                ⚠️ 昨日着用（冷却中）
                               </span>
                             )}
                             {p.color && (
@@ -980,17 +978,17 @@ export const TodayView: React.FC = () => {
                         </div>
                       </div>
 
-                      {/* Action buttons (Only Wife NG removal button if applicable; wear action is in pair modal) */}
+                      {/* アクションボタン（奥様NG解除ボタン） */}
                       {isWifeNg && (
                         <div className="flex items-center justify-end pt-0.5">
                           <button
                             type="button"
                             onClick={() => handleRemoveWifeNg(p)}
                             className="min-h-[44px] min-w-[44px] px-3 py-2 bg-slate-800/80 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700/80 rounded-xl transition-colors flex items-center justify-center gap-1 text-xs font-semibold flex-shrink-0 active:scale-[0.98]"
-                            title="奥様NGを解除"
+                            title="🚨 奥様NGを解除する"
                           >
                             <Undo2 className="w-3.5 h-3.5 flex-shrink-0" />
-                            <span>奥様NGを解除</span>
+                            <span>🚨 奥様NGを解除する</span>
                           </button>
                         </div>
                       )}

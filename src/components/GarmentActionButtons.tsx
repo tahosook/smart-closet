@@ -29,7 +29,7 @@ export const ArchiveToggleButton: React.FC<ArchiveToggleButtonProps> = ({
             ? 'flex-1 py-2.5 px-4 text-xs sm:text-sm gap-2'
             : 'min-w-[56px] px-3 py-2 text-xs gap-1.5'
         } ${className}`}
-        title={`${item.name} を現役に復帰させる`}
+        title={`${item.name} を出す`}
       >
         <Undo2 className="w-4 h-4 flex-shrink-0" />
         <span>出す</span>

@@ -683,7 +683,7 @@ export const MatrixView: React.FC = () => {
                     </div>
                   )}
 
-                  {/* Toggle Wife NG button */}
+                  {/* 奥様NG登録・解除ボタン */}
                   <div className="pt-2">
                     {ngCheck.isWifeNg ? (
                       <button

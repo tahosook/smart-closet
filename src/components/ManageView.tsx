@@ -84,7 +84,7 @@ export const ManageView: React.FC = () => {
           <span>クローゼット管理・整理・旅行 (Wardrobe Management)</span>
         </div>
         <p className="text-xs text-slate-300 leading-relaxed">
-          手持ち写真の一覧・整理、オフシーズンの服の片付け・復帰、旅行時のミニマルパッキング計画、およびデータのバックアップ・復元を行えます。
+          手持ち写真の一覧・整理、オフシーズンの服の片付け・復帰、旅行時のミニマルパッキング計画、ワードローブの全体見直し、およびデータの保存・コピー（バックアップ）を行えます。
         </p>
       </div>
 
@@ -124,7 +124,7 @@ export const ManageView: React.FC = () => {
           {displayedArchivedItems.length === 0 ? (
             <div className="p-4 bg-slate-900/60 border border-slate-800 rounded-2xl text-center text-xs text-slate-400 leading-relaxed">
               {archivedItems.length === 0
-                ? '現在片付けた服はありません。着なくなった服は下の「現役の服から選んで片付ける」から片付けることができます。'
+                ? '現在片付けた服はありません。着なくなった服は下の「今着ている服から選んで片付ける」から片付けることができます。'
                 : '現在の絞り込み条件に一致する片付けた服はありません。'}
             </div>
           ) : (
@@ -188,7 +188,7 @@ export const ManageView: React.FC = () => {
           )}
         </div>
 
-        {/* 現役の服から選んで片付けるアコーディオン */}
+        {/* 今着ている服から選んで片付けるアコーディオン */}
         <div className="pt-2">
           <button
             type="button"
@@ -197,7 +197,7 @@ export const ManageView: React.FC = () => {
           >
             <div className="flex items-center gap-2">
               <Package className="w-4 h-4 text-amber-400" />
-              <span>現役の服から選んで片付ける（全{shirts.length + pants.length}着）</span>
+              <span>今着ている服から選んで片付ける（全{shirts.length + pants.length}着）</span>
             </div>
             {isOrganizeOpen ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
           </button>
@@ -207,7 +207,7 @@ export const ManageView: React.FC = () => {
               {/* シャツ一覧 */}
               <div className="space-y-2">
                 <div className="text-[11px] font-bold text-blue-400 px-1 flex items-center justify-between">
-                  <span>👔 シャツ・トップス（{displayedShirts.length} / 全{shirts.length}着）</span>
+                  <span>シャツ（👔 1枚もの・🧥 羽織り）（{displayedShirts.length} / 全{shirts.length}着）</span>
                   <span className="text-[10px] text-slate-400 font-normal">※上のピルで絞り込み中</span>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
@@ -310,7 +310,7 @@ export const ManageView: React.FC = () => {
             <span>🔄 ワードローブ全体見直し ＆ 💾 バックアップ</span>
           </h2>
           <p className="text-xs text-slate-400 mt-1 leading-relaxed">
-            登録済みの服の相性・羽織り再判定や写真からの全件再構築、最新データの保存を行えます。
+            登録済みの服の相性・羽織り再判定や写真からのフル見直し、最新データの保存を行えます。
           </p>
         </div>
 
@@ -318,8 +318,8 @@ export const ManageView: React.FC = () => {
         <div className="p-3 bg-slate-900/90 border border-slate-800 rounded-2xl flex items-start gap-2.5">
           <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
           <div className="text-xs text-slate-300 leading-relaxed">
-            <span className="font-bold text-white">安心の保護ポリシー：</span>
-            どちらの見直しでも<strong>奥様NG・着用履歴・片付け状態</strong>は一切上書きされません。また確定済みの色や実寸データも安全に保護されます。
+            <span className="font-bold text-white">🛡️ 安心保護ポリシー：</span>
+            着用履歴・奥様NG・片付けた服の状態は、どちらの見直しを実行しても一切消えません。確定済みの色や実寸データも安全に保護されます。
           </div>
         </div>
 
@@ -338,7 +338,7 @@ export const ManageView: React.FC = () => {
                 </span>
               </div>
               <p className="text-xs text-slate-400 leading-relaxed">
-                写真のアップロードは不要。登録済みの文字情報（名前・確定色・季節・メモ）から、最新ルールに基づき<strong>相性判定</strong>と<strong>羽織り分類</strong>のみを高速に再計算します。
+                写真のアップロードは不要。登録済みの文字情報（名前・確定色・季節・メモ）から、最新ルールに基づき<strong>相性判定</strong>と<strong>羽織り分類</strong>のみを高速に見直します。
               </p>
             </div>
             <button

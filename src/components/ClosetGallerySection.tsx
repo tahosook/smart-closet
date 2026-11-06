@@ -194,7 +194,7 @@ export const ClosetGallerySection: React.FC = () => {
                     </span>
                   )}
 
-                  {/* 保管中バッジ */}
+                  {/* 片付けた服バッジ */}
                   {isArchived && (
                     <span className="absolute bottom-1 left-1 right-1 text-center py-0.5 rounded text-[9px] font-bold bg-amber-950/95 text-amber-300 border border-amber-800/80 shadow-md truncate">
                       📦 片付けた服

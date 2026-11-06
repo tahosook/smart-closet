@@ -275,7 +275,7 @@ export const FullscreenPhotoViewer: React.FC<FullscreenPhotoViewerProps> = ({
               )}
             </div>
             <div className="flex items-center gap-2 text-xs text-slate-300 flex-wrap">
-              <span>🎨 {currentItem.color || '未設定'}</span>
+              <span>🎨 {currentItem.color || '未確定'}</span>
               <span>•</span>
               <span>{currentItem.seasonSleeve}</span>
               <span>•</span>

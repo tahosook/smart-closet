@@ -78,8 +78,6 @@ export interface ClosetStoreContextType {
   mergedClosetData: ClosetData;
   shirts: ClosetItem[];
   pants: ClosetItem[];
-  allShirts: ClosetItem[];
-  allPants: ClosetItem[];
   archivedItems: ClosetItem[];
   itemMap: Map<string, ClosetItem>;
   wearHistory: WearRecord[];
@@ -165,7 +163,7 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     return [];
   });
 
-  // 3. Wife NG pairs
+  // 3. 奥様NGペア (wifeNgPairs)
   const [wifeNgPairs, setWifeNgPairs] = useState<WifeNgPair[]>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEYS.WIFE_NG);
@@ -275,14 +273,6 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   );
   const pants = useMemo(
     () => closetData.items.filter((item) => item.category === 'pants' && !item.archived),
-    [closetData]
-  );
-  const allShirts = useMemo(
-    () => closetData.items.filter((item) => item.category === 'shirt'),
-    [closetData]
-  );
-  const allPants = useMemo(
-    () => closetData.items.filter((item) => item.category === 'pants'),
     [closetData]
   );
   const archivedItems = useMemo(
@@ -902,7 +892,7 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   }, [triggerBackgroundPush]);
 
   const registerWifeNg = useCallback(
-    (shirtId: string, pantsId: string, customReason = '🚨 奥様からNG指定') => {
+    (shirtId: string, pantsId: string, customReason = '奥様NG指定') => {
       mutationSeqRef.current++;
       const key = `${shirtId}_${pantsId}`;
       const prevDeletedAt = stateRef.current.tombstones.deletedWifeNgMap?.[key] || 0;
@@ -1289,8 +1279,6 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       mergedClosetData,
       shirts,
       pants,
-      allShirts,
-      allPants,
       archivedItems,
       itemMap,
       wearHistory,
@@ -1326,8 +1314,6 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       mergedClosetData,
       shirts,
       pants,
-      allShirts,
-      allPants,
       archivedItems,
       itemMap,
       wearHistory,
