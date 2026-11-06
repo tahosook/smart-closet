@@ -32,6 +32,8 @@ import {
   buildQuickRebuildPrompt,
   validateAndBuildRebuildDiffs,
   copyTextToClipboard,
+  buildBatchRebuildFieldSelections,
+  formatGarmentMeasurements,
 } from '../utils/closetDomain';
 import type {
   DuplicateGroupCandidate,
@@ -278,6 +280,7 @@ export const WardrobeRebuildModal: React.FC<WardrobeRebuildModalProps> = ({
     return buildWardrobeRebuildPrompt({
       items: closetData.items,
       contactSheetsCount: sheetsCount,
+      wifeNgPairs,
     });
   }, [rebuildMode, closetData.items, wifeNgPairs, contactSheets.length]);
 
@@ -383,37 +386,7 @@ export const WardrobeRebuildModal: React.FC<WardrobeRebuildModalProps> = ({
   };
 
   const handleBatchSelectAll = (select: boolean, filterProtected = false) => {
-    setFieldSelections(() => {
-      const next: Record<string, RebuildFieldSelection> = {};
-      for (const d of rebuildDiffs) {
-        if (!select) {
-          next[d.id] = {
-            name: false,
-            color: false,
-            seasonSleeve: false,
-            scores: false,
-            measurements: false,
-            notes: false,
-            compatibility: false,
-            isOuterwear: false,
-          };
-        } else if (filterProtected) {
-          next[d.id] = { ...d.defaultSelection };
-        } else {
-          next[d.id] = {
-            name: d.changedFields.includes('name'),
-            color: d.changedFields.includes('color'),
-            seasonSleeve: d.changedFields.includes('seasonSleeve'),
-            scores: d.changedFields.includes('scores'),
-            measurements: d.changedFields.includes('measurements'),
-            notes: d.changedFields.includes('notes'),
-            compatibility: d.changedFields.includes('compatibility'),
-            isOuterwear: d.changedFields.includes('isOuterwear'),
-          };
-        }
-      }
-      return next;
-    });
+    setFieldSelections(() => buildBatchRebuildFieldSelections(rebuildDiffs, select, filterProtected));
   };
 
   const handleApplyRebuild = () => {
@@ -1245,6 +1218,34 @@ export const WardrobeRebuildModal: React.FC<WardrobeRebuildModalProps> = ({
                                 </div>
                                 <div className="text-emerald-700 font-medium">
                                   ドレス {diff.after.dressScore} / 快適 {diff.after.comfortScore}
+                                </div>
+                              </div>
+                            </label>
+                          )}
+
+                          {/* 4.5 実寸目安（保護機能付き） */}
+                          {diff.changedFields.includes('measurements') && (
+                            <label className="flex items-start gap-2 p-2 rounded bg-slate-50 hover:bg-slate-100 cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={selection.measurements}
+                                onChange={() => handleToggleField(diff.id, 'measurements')}
+                                className="w-4 h-4 mt-0.5 text-indigo-600 rounded"
+                              />
+                              <div className="flex-1">
+                                <div className="flex items-center gap-2">
+                                  <span className="font-bold text-slate-700">実寸目安:</span>
+                                  {diff.isMeasurementsProtected && (
+                                    <span className="text-[10px] px-1.5 py-0.2 bg-blue-100 text-blue-700 rounded font-medium">
+                                      確定実寸保護中
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="text-slate-500 line-through">
+                                  {formatGarmentMeasurements(diff.before.measurements, diff.category)}
+                                </div>
+                                <div className="text-emerald-700 font-medium">
+                                  {formatGarmentMeasurements(diff.after.measurements, diff.category)}
                                 </div>
                               </div>
                             </label>
