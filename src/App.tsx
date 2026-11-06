@@ -108,7 +108,7 @@ const AppShell: React.FC = () => {
           {/* Tab 1: 朝モード */}
           <button
             onClick={() => setActiveTab('today')}
-            className={`flex flex-col items-center justify-center py-1.5 rounded-xl transition-all ${
+            className={`flex flex-col items-center justify-center min-h-[44px] min-w-[44px] py-1.5 rounded-xl transition-all ${
               activeTab === 'today'
                 ? 'text-blue-400 font-bold bg-blue-950/50'
                 : 'text-slate-400 hover:text-slate-200'
@@ -121,7 +121,7 @@ const AppShell: React.FC = () => {
           {/* Tab 2: 追加・相談 */}
           <button
             onClick={() => setActiveTab('ai')}
-            className={`flex flex-col items-center justify-center py-1.5 rounded-xl transition-all ${
+            className={`flex flex-col items-center justify-center min-h-[44px] min-w-[44px] py-1.5 rounded-xl transition-all ${
               activeTab === 'ai'
                 ? 'text-blue-400 font-bold bg-blue-950/50'
                 : 'text-slate-400 hover:text-slate-200'
@@ -134,7 +134,7 @@ const AppShell: React.FC = () => {
           {/* Tab 3: 相性 */}
           <button
             onClick={() => setActiveTab('matrix')}
-            className={`flex flex-col items-center justify-center py-1.5 rounded-xl transition-all ${
+            className={`flex flex-col items-center justify-center min-h-[44px] min-w-[44px] py-1.5 rounded-xl transition-all ${
               activeTab === 'matrix'
                 ? 'text-blue-400 font-bold bg-blue-950/50'
                 : 'text-slate-400 hover:text-slate-200'
@@ -147,7 +147,7 @@ const AppShell: React.FC = () => {
           {/* Tab 4: 管理 */}
           <button
             onClick={() => setActiveTab('manage')}
-            className={`flex flex-col items-center justify-center py-1.5 rounded-xl transition-all ${
+            className={`flex flex-col items-center justify-center min-h-[44px] min-w-[44px] py-1.5 rounded-xl transition-all ${
               activeTab === 'manage'
                 ? 'text-blue-400 font-bold bg-blue-950/50'
                 : 'text-slate-400 hover:text-slate-200'

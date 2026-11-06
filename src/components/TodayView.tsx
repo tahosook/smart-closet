@@ -340,7 +340,7 @@ export const TodayView: React.FC = () => {
       <div className="bg-slate-800/90 p-1 rounded-xl sm:rounded-2xl border border-slate-700/80 flex shadow-md">
         <button
           onClick={() => setScene('office')}
-          className={`flex-1 py-1.5 sm:py-2.5 px-2.5 sm:px-3 rounded-lg sm:rounded-xl text-xs sm:text-sm font-bold flex items-center justify-center gap-1.5 sm:gap-2 transition-all ${
+          className={`flex-1 min-h-[44px] py-2 sm:py-2.5 px-2.5 sm:px-3 rounded-lg sm:rounded-xl text-xs sm:text-sm font-bold flex items-center justify-center gap-1.5 sm:gap-2 transition-all ${
             scene === 'office'
               ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/40'
               : 'text-slate-400 hover:text-slate-200'
@@ -351,7 +351,7 @@ export const TodayView: React.FC = () => {
         </button>
         <button
           onClick={() => setScene('remote')}
-          className={`flex-1 py-1.5 sm:py-2.5 px-2.5 sm:px-3 rounded-lg sm:rounded-xl text-xs sm:text-sm font-bold flex items-center justify-center gap-1.5 sm:gap-2 transition-all ${
+          className={`flex-1 min-h-[44px] py-2 sm:py-2.5 px-2.5 sm:px-3 rounded-lg sm:rounded-xl text-xs sm:text-sm font-bold flex items-center justify-center gap-1.5 sm:gap-2 transition-all ${
             scene === 'remote'
               ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/40'
               : 'text-slate-400 hover:text-slate-200'
@@ -467,7 +467,7 @@ export const TodayView: React.FC = () => {
           <div className="pt-1">
             <button
               onClick={() => setShowHiddenShirts(!showHiddenShirts)}
-              className="w-full py-2 px-3 rounded-xl bg-slate-800/40 hover:bg-slate-800/70 border border-slate-700/50 text-[11px] font-medium text-slate-400 hover:text-slate-200 flex items-center justify-between transition-colors"
+              className="w-full min-h-[44px] py-2 px-3 rounded-xl bg-slate-800/40 hover:bg-slate-800/70 border border-slate-700/50 text-[11px] font-medium text-slate-400 hover:text-slate-200 flex items-center justify-between transition-colors"
             >
               <div className="flex items-center gap-1.5">
                 <Thermometer className="w-3.5 h-3.5 text-slate-500" />
@@ -574,7 +574,7 @@ export const TodayView: React.FC = () => {
 
           <button
             onClick={handleScrollToShirts}
-            className="lg:hidden flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-blue-950/70 hover:bg-blue-900 border border-blue-700/50 text-[11px] font-bold text-blue-300 flex-shrink-0 transition-colors active:scale-95 shadow"
+            className="lg:hidden flex items-center justify-center gap-1 min-h-[44px] min-w-[44px] px-3 py-2 -my-1 rounded-lg bg-blue-950/70 hover:bg-blue-900 border border-blue-700/50 text-[11px] font-bold text-blue-300 flex-shrink-0 transition-colors active:scale-95 shadow"
             title="シャツ一覧へ戻る"
           >
             <ArrowUp className="w-3.5 h-3.5" />
@@ -788,7 +788,7 @@ export const TodayView: React.FC = () => {
                       <div className="flex items-center gap-2 mt-3 pt-2 border-t border-slate-700/50">
                         <button
                           onClick={() => handleSelectWear(p)}
-                          className={`flex-1 py-2.5 px-3 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all ${
+                          className={`flex-1 min-h-[44px] py-2.5 px-3 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all ${
                             isTodayChosen
                               ? 'bg-emerald-600 text-white shadow-md shadow-emerald-900/40'
                               : 'bg-blue-600 hover:bg-blue-500 text-white shadow-md shadow-blue-900/40 active:scale-[0.98]'
@@ -800,7 +800,7 @@ export const TodayView: React.FC = () => {
 
                         <button
                           onClick={() => handleRegisterWifeNg(p)}
-                          className="py-2.5 px-2.5 rounded-xl text-[11px] font-semibold bg-rose-950/40 hover:bg-rose-900/60 text-rose-300 border border-rose-800/50 flex items-center gap-1 transition-colors active:scale-[0.98]"
+                          className="min-h-[44px] min-w-[44px] py-2.5 px-2.5 rounded-xl text-[11px] font-semibold bg-rose-950/40 hover:bg-rose-900/60 text-rose-300 border border-rose-800/50 flex items-center justify-center gap-1 transition-colors active:scale-[0.98]"
                           title="この組み合わせを奥様NGリストに登録"
                         >
                           <AlertTriangle className="w-3.5 h-3.5 text-rose-400" />
@@ -820,7 +820,7 @@ export const TodayView: React.FC = () => {
           <div className="pt-1">
             <button
               onClick={() => setShowOtherPants(!showOtherPants)}
-              className="w-full py-2.5 px-3 rounded-xl bg-slate-800/60 hover:bg-slate-800 border border-slate-700/70 text-xs font-semibold text-slate-300 flex items-center justify-between"
+              className="w-full min-h-[44px] py-2.5 px-3 rounded-xl bg-slate-800/60 hover:bg-slate-800 border border-slate-700/70 text-xs font-semibold text-slate-300 flex items-center justify-between"
             >
               <span>その他の着用可能パンツ（{remainingRecommendations.length + otherOk.length}本）</span>
               {showOtherPants ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
@@ -861,13 +861,13 @@ export const TodayView: React.FC = () => {
                       <div className="flex gap-1.5 mt-2.5">
                         <button
                           onClick={() => handleSelectWear(p)}
-                          className="flex-1 py-2 px-2 bg-slate-700 hover:bg-blue-600 rounded-lg text-xs font-bold text-white transition-colors"
+                          className="flex-1 min-h-[44px] py-2 px-2 bg-slate-700 hover:bg-blue-600 rounded-lg text-xs font-bold text-white transition-colors flex items-center justify-center"
                         >
                           着る
                         </button>
                         <button
                           onClick={() => handleRegisterWifeNg(p)}
-                          className="p-2 bg-rose-950/50 hover:bg-rose-900/60 text-rose-300 rounded-lg text-xs"
+                          className="min-h-[44px] min-w-[44px] p-2 bg-rose-950/50 hover:bg-rose-900/60 text-rose-300 rounded-lg text-xs flex items-center justify-center"
                           title="奥様NG"
                         >
                           🚨
@@ -885,7 +885,7 @@ export const TodayView: React.FC = () => {
         <div className="pt-2">
           <button
             onClick={() => setShowNgAccordion(!showNgAccordion)}
-            className="w-full py-2.5 px-3 rounded-xl bg-slate-900/80 hover:bg-slate-900 border border-rose-900/40 text-xs font-semibold text-rose-300 flex items-center justify-between transition-colors"
+            className="w-full min-h-[44px] py-2.5 px-3 rounded-xl bg-slate-900/80 hover:bg-slate-900 border border-rose-900/40 text-xs font-semibold text-rose-300 flex items-center justify-between transition-colors"
           >
             <div className="flex items-center gap-1.5 flex-wrap">
               <AlertTriangle className="w-4 h-4 text-rose-400 flex-shrink-0" />
@@ -1106,7 +1106,7 @@ export const TodayView: React.FC = () => {
                 setZoomItemPair(null);
                 setSingleZoomItem(null);
               }}
-              className="w-full py-2.5 px-4 rounded-xl text-xs font-bold bg-blue-600 hover:bg-blue-500 text-white shadow-lg shadow-blue-900/40 flex items-center justify-center gap-1.5 transition-colors"
+              className="w-full min-h-[44px] py-2.5 px-4 rounded-xl text-xs font-bold bg-blue-600 hover:bg-blue-500 text-white shadow-lg shadow-blue-900/40 flex items-center justify-center gap-1.5 transition-colors"
             >
               <CheckCircle2 className="w-4 h-4" />
               <span>この組み合わせを着る</span>

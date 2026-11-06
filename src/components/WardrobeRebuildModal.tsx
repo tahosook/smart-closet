@@ -644,7 +644,7 @@ export const WardrobeRebuildModal: React.FC<WardrobeRebuildModalProps> = ({
                           }`}
                         >
                           <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-                            <label className="flex items-center gap-2 cursor-pointer font-bold text-sm text-slate-800">
+                            <label className="flex items-center gap-2 cursor-pointer font-bold text-sm text-slate-800 min-h-[44px]">
                               <input
                                 type="checkbox"
                                 checked={isIncluded}
@@ -761,7 +761,7 @@ export const WardrobeRebuildModal: React.FC<WardrobeRebuildModalProps> = ({
                       </div>
                     </div>
 
-                    <label className="flex items-center gap-2 cursor-pointer pt-2 text-xs text-slate-700">
+                    <label className="flex items-center gap-2 cursor-pointer pt-2 text-xs text-slate-700 min-h-[44px]">
                       <input
                         type="checkbox"
                         checked={deleteImagesOnGas}
@@ -886,7 +886,7 @@ export const WardrobeRebuildModal: React.FC<WardrobeRebuildModalProps> = ({
                                 `smart-closet-contact-sheet-${sheet.sheetIndex}.jpg`
                               )
                             }
-                            className="w-full py-1.5 px-2 bg-white border border-slate-300 text-slate-700 rounded text-xs font-medium hover:bg-slate-100 flex items-center justify-center gap-1 min-h-[36px]"
+                            className="w-full py-2 px-2 bg-white border border-slate-300 text-slate-700 rounded text-xs font-medium hover:bg-slate-100 flex items-center justify-center gap-1 min-h-[44px]"
                           >
                             <Download className="w-3.5 h-3.5" />
                             保存
@@ -908,7 +908,7 @@ export const WardrobeRebuildModal: React.FC<WardrobeRebuildModalProps> = ({
                   </h3>
                   <button
                     onClick={handleCopyPrompt}
-                    className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-bold transition-colors flex items-center gap-1.5 min-h-[40px]"
+                    className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-bold transition-colors flex items-center gap-1.5 min-h-[44px]"
                   >
                     {copyStatus === 'success' ? (
                       <>
@@ -1088,19 +1088,19 @@ export const WardrobeRebuildModal: React.FC<WardrobeRebuildModalProps> = ({
                 <div className="flex items-center gap-1.5 text-xs">
                   <button
                     onClick={() => handleBatchSelectAll(true, true)}
-                    className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded font-medium min-h-[36px]"
+                    className="px-2.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded font-medium min-h-[44px] flex items-center justify-center"
                   >
                     安全デフォルト（保護維持）
                   </button>
                   <button
                     onClick={() => handleBatchSelectAll(true, false)}
-                    className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded font-medium min-h-[36px]"
+                    className="px-2.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded font-medium min-h-[44px] flex items-center justify-center"
                   >
                     全項目を選択
                   </button>
                   <button
                     onClick={() => handleBatchSelectAll(false)}
-                    className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded font-medium min-h-[36px]"
+                    className="px-2.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded font-medium min-h-[44px] flex items-center justify-center"
                   >
                     全解除
                   </button>
@@ -1142,7 +1142,7 @@ export const WardrobeRebuildModal: React.FC<WardrobeRebuildModalProps> = ({
                         <div className="mt-3 space-y-2 text-xs">
                           {/* 1. 名前 */}
                           {diff.changedFields.includes('name') && (
-                            <label className="flex items-start gap-2 p-2 rounded bg-slate-50 hover:bg-slate-100 cursor-pointer">
+                            <label className="flex items-start gap-2 p-2 rounded bg-slate-50 hover:bg-slate-100 cursor-pointer min-h-[44px]">
                               <input
                                 type="checkbox"
                                 checked={selection.name}
@@ -1159,7 +1159,7 @@ export const WardrobeRebuildModal: React.FC<WardrobeRebuildModalProps> = ({
 
                           {/* 2. 色（保護機能付き） */}
                           {diff.changedFields.includes('color') && (
-                            <label className="flex items-start gap-2 p-2 rounded bg-slate-50 hover:bg-slate-100 cursor-pointer">
+                            <label className="flex items-start gap-2 p-2 rounded bg-slate-50 hover:bg-slate-100 cursor-pointer min-h-[44px]">
                               <input
                                 type="checkbox"
                                 checked={selection.color}
@@ -1185,7 +1185,7 @@ export const WardrobeRebuildModal: React.FC<WardrobeRebuildModalProps> = ({
 
                           {/* 3. 季節・袖丈 */}
                           {diff.changedFields.includes('seasonSleeve') && (
-                            <label className="flex items-start gap-2 p-2 rounded bg-slate-50 hover:bg-slate-100 cursor-pointer">
+                            <label className="flex items-start gap-2 p-2 rounded bg-slate-50 hover:bg-slate-100 cursor-pointer min-h-[44px]">
                               <input
                                 type="checkbox"
                                 checked={selection.seasonSleeve}
@@ -1204,7 +1204,7 @@ export const WardrobeRebuildModal: React.FC<WardrobeRebuildModalProps> = ({
 
                           {/* 4. スコア */}
                           {diff.changedFields.includes('scores') && (
-                            <label className="flex items-start gap-2 p-2 rounded bg-slate-50 hover:bg-slate-100 cursor-pointer">
+                            <label className="flex items-start gap-2 p-2 rounded bg-slate-50 hover:bg-slate-100 cursor-pointer min-h-[44px]">
                               <input
                                 type="checkbox"
                                 checked={selection.scores}
@@ -1225,7 +1225,7 @@ export const WardrobeRebuildModal: React.FC<WardrobeRebuildModalProps> = ({
 
                           {/* 4.5 実寸目安（保護機能付き） */}
                           {diff.changedFields.includes('measurements') && (
-                            <label className="flex items-start gap-2 p-2 rounded bg-slate-50 hover:bg-slate-100 cursor-pointer">
+                            <label className="flex items-start gap-2 p-2 rounded bg-slate-50 hover:bg-slate-100 cursor-pointer min-h-[44px]">
                               <input
                                 type="checkbox"
                                 checked={selection.measurements}
@@ -1253,7 +1253,7 @@ export const WardrobeRebuildModal: React.FC<WardrobeRebuildModalProps> = ({
 
                           {/* 5. 相性配列 */}
                           {diff.changedFields.includes('compatibility') && (
-                            <label className="flex items-start gap-2 p-2 rounded bg-slate-50 hover:bg-slate-100 cursor-pointer">
+                            <label className="flex items-start gap-2 p-2 rounded bg-slate-50 hover:bg-slate-100 cursor-pointer min-h-[44px]">
                               <input
                                 type="checkbox"
                                 checked={selection.compatibility}
@@ -1278,7 +1278,7 @@ export const WardrobeRebuildModal: React.FC<WardrobeRebuildModalProps> = ({
 
                           {/* 6. メモ */}
                           {diff.changedFields.includes('notes') && (
-                            <label className="flex items-start gap-2 p-2 rounded bg-slate-50 hover:bg-slate-100 cursor-pointer">
+                            <label className="flex items-start gap-2 p-2 rounded bg-slate-50 hover:bg-slate-100 cursor-pointer min-h-[44px]">
                               <input
                                 type="checkbox"
                                 checked={selection.notes}
@@ -1295,7 +1295,7 @@ export const WardrobeRebuildModal: React.FC<WardrobeRebuildModalProps> = ({
 
                           {/* 7. 羽織り分類 */}
                           {diff.changedFields.includes('isOuterwear') && (
-                            <label className="flex items-start gap-2 p-2 rounded bg-slate-50 hover:bg-slate-100 cursor-pointer">
+                            <label className="flex items-start gap-2 p-2 rounded bg-slate-50 hover:bg-slate-100 cursor-pointer min-h-[44px]">
                               <input
                                 type="checkbox"
                                 checked={selection.isOuterwear}
