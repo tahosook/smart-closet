@@ -465,6 +465,7 @@ export {
 // ----------------------------------------------------
 
 export type {
+  TodayTopCategoryFilter,
   SleeveCategory,
   SelectRecommendedShirtsParams,
   RecommendedShirtScoredItem,
@@ -472,7 +473,10 @@ export type {
 } from '../utils/closetDomain';
 
 export {
+  TODAY_TOP_CATEGORY_FILTER_OPTIONS,
   isShirtMatchingSleeveCategory,
+  isCollaredShirtTop,
+  isTopMatchingScene,
   selectRecommendedShirtsForToday,
 } from '../utils/closetDomain';
 

@@ -817,6 +817,57 @@ export function isShirtMatchingSleeveCategory(
 }
 
 /**
+ * 非シャツ系（カットソー・Tシャツ・ニット・スウェット等）キーワードの正規表現
+ * （「Tシャツ」「スウェットシャツ」のように文字列中に「シャツ」が含まれていても優先して非シャツと判定する）
+ */
+const NON_SHIRT_TOP_KEYWORD_REGEX =
+  /tシャツ|ティーシャツ|ロンt|カットソー|スウェット|トレーナー|プルオーバー|ニット|セーター|パーカー|フーディ|モックネック|タートルネック|ヘンリーネック|タンクトップ|ベスト|フリース/;
+
+/**
+ * シャツ系（襟付きシャツ・ブラウス等）キーワードの正規表現
+ */
+const COLLARED_SHIRT_TOP_KEYWORD_REGEX =
+  /シャツ|ブラウス|bd|オックスフォード|シャンブレー|ブロード/;
+
+/**
+ * 1枚ものトップスが「シャツ（オフィス出社向き）」か「シャツ以外（カットソー・ニット等、外出向き）」かを
+ * アイテム名（name）から決定論的に判定する純粋関数。
+ *
+ * 判定ルール:
+ * 1. 名前を正規化（全角英数は半角化、小文字化）
+ * 2. 非シャツ系キーワード（Tシャツ、ロンT、カットソー、スウェット、ニット、セーター等）を含む場合 -> false（非シャツ）
+ * 3. 上記に該当せず、シャツ系キーワード（シャツ、ブラウス、BD、オックスフォード等）を含む場合 -> true（シャツ）
+ * 4. それ以外（例: 「白クルーネック」等） -> false（非シャツ）
+ */
+export function isCollaredShirtTop(item: ClosetItem): boolean {
+  const normalized = (item.name || '').normalize('NFKC').toLowerCase();
+
+  // 1. 非シャツ系キーワードの優先除外
+  if (NON_SHIRT_TOP_KEYWORD_REGEX.test(normalized)) {
+    return false;
+  }
+
+  // 2. シャツ系キーワードの判定
+  if (COLLARED_SHIRT_TOP_KEYWORD_REGEX.test(normalized)) {
+    return true;
+  }
+
+  // 3. デフォルトは非シャツ（カジュアル・外出向き）
+  return false;
+}
+
+/**
+ * 1枚ものトップスが指定シーン（オフィス出社 / 外出）に合致するか判定する純粋関数。
+ * - office (オフィス出社): シャツ（isCollaredShirtTop === true）
+ * - remote (外出): シャツじゃないもの（isCollaredShirtTop === false）
+ * ※ 重なりなく排他的に二分される。
+ */
+export function isTopMatchingScene(item: ClosetItem, scene: SceneMode): boolean {
+  const isShirt = isCollaredShirtTop(item);
+  return scene === 'office' ? isShirt : !isShirt;
+}
+
+/**
  * YYYY-MM-DD 文字列の日付オフセット計算（純粋関数）
  */
 function getDayOffsetDateString(baseDateStr: string, offsetDays: number): string {
@@ -856,12 +907,13 @@ export interface SelectRecommendedShirtsParams {
   sleeveCategory: SleeveCategory;
   scene: SceneMode;
   wearHistory: WearRecord[];
-  itemMap: Map<string, ClosetItem>;
-  pants: ClosetItem[];
-  wifeNgPairs: WifeNgPair[];
-  yesterdayWornPantsIds: Set<string>;
   todayStr?: string;
   limit?: number;
+  // 後方互換性用（内部ではパンツ相性に依存しない）
+  itemMap?: Map<string, ClosetItem>;
+  pants?: ClosetItem[];
+  wifeNgPairs?: WifeNgPair[];
+  yesterdayWornPantsIds?: Set<string>;
 }
 
 /**
@@ -874,9 +926,6 @@ export interface RecommendedShirtScoredItem {
   recentWearCount: number;
   totalWearCount: number;
   priorityScore: number;
-  hasReliablePants: boolean;
-  hasPrimaryRecommend: boolean;
-  hasSecondaryRecommend: boolean;
 }
 
 /**
@@ -890,8 +939,8 @@ export interface RecommendedShirtsResult {
 }
 
 /**
- * 天気（気温適合）・シーン（推奨パンツが存在する1枚もの）・着用履歴・鉄板ペアから朝モード用のおすすめシャツ（上位最大3着）を選定する純粋関数
- * おすすめ対象は推奨パンツが存在するシャツ（Group A）のみとし、3着未満の場合でもGroup B/Cで補充しない。
+ * 天気（気温適合）・シーン（排他二分：出社＝シャツ／外出＝シャツ以外）・着用履歴から朝モード用のおすすめトップス（上位最大3着）を選定する純粋関数
+ * トップス自身の属性のみで選定し、パンツ推奨の有無には依存しない。
  */
 export function selectRecommendedShirtsForToday(
   params: SelectRecommendedShirtsParams
@@ -901,10 +950,6 @@ export function selectRecommendedShirtsForToday(
     sleeveCategory,
     scene,
     wearHistory,
-    itemMap,
-    pants,
-    wifeNgPairs,
-    yesterdayWornPantsIds,
     todayStr = getTodayDateString(),
     limit = 3,
   } = params;
@@ -931,8 +976,10 @@ export function selectRecommendedShirtsForToday(
     .sort((a, b) => b.date.localeCompare(a.date));
   const latestRecordDate = pastRecords[0]?.date;
 
-  // 2. 気温適合のうち「1枚もの（!isOuterwear）」のみを候補としてスコアリング
-  const candidates = matchingShirts.filter((s) => !s.isOuterwear);
+  // 2. 気温適合のうち「1枚もの（!isOuterwear）」かつ「シーン適合種別（オフィス＝シャツ / 外出＝非シャツ）」のみを母集団として選定
+  const candidates = matchingShirts.filter(
+    (s) => !s.isOuterwear && isTopMatchingScene(s, scene)
+  );
 
   const scoredCandidates: RecommendedShirtScoredItem[] = candidates.map((shirt) => {
     // このシャツが着用された履歴（shirtId または outerwearId として）
@@ -967,42 +1014,12 @@ export function selectRecommendedShirtsForToday(
     const recentWearCount = shirtWears.filter((r) => r.date >= thirtyDaysAgoStr).length;
     const totalWearCount = shirtWears.length;
 
-    // シーン適合パンツの算出
-    const rec = calculateRecommendationsForShirt(
-      shirt.id,
-      scene,
-      itemMap,
-      pants,
-      wifeNgPairs,
-      yesterdayWornPantsIds
-    );
-
-    const hasPrimaryRecommend = rec.recommended.length > 0;
-    const hasSecondaryRecommend = rec.otherOk.length > 0;
-
-    // 冷却中でない推奨パンツの存在・鉄板ペアボーナス
-    const nonCoolingRecPants = rec.recommended.find((p) => !p.isYesterdayWorn);
-    const topPants = nonCoolingRecPants || rec.recommended[0];
-
-    let hasReliablePants = false;
-    if (topPants) {
-      const isShirtRecommendsPants =
-        scene === 'office'
-          ? shirt.officeRecommendIds.includes(topPants.pants.id)
-          : shirt.remoteRecommendIds.includes(topPants.pants.id);
-      const isPantsRecommendsShirt =
-        scene === 'office'
-          ? topPants.pants.officeRecommendIds.includes(shirt.id)
-          : topPants.pants.remoteRecommendIds.includes(shirt.id);
-      hasReliablePants = isShirtRecommendsPants && isPantsRecommendsShirt;
-    }
-
-    const reliableBonus = hasReliablePants ? 10 : topPants ? 5 : 0;
-    const sceneScore = scene === 'office' ? shirt.dressScore * 2 : shirt.comfortScore * 2;
+    // トップス自身のシーン適性スコア微調整（オフィス: dressScore * 1.5、外出: comfortScore * 1.5）
+    const sceneScore = (scene === 'office' ? shirt.dressScore : shirt.comfortScore) * 1.5;
     const daysBonus = 2.0 * Math.min(30, daysSinceLastWorn);
-    const wearPenalty = 8.0 * recentWearCount + 1.5 * totalWearCount;
+    const wearPenalty = 8.0 * recentWearCount + 1.5 * Math.min(10, totalWearCount);
 
-    const priorityScore = reliableBonus + sceneScore + daysBonus - wearPenalty;
+    const priorityScore = sceneScore + daysBonus - wearPenalty;
 
     return {
       shirt,
@@ -1011,9 +1028,6 @@ export function selectRecommendedShirtsForToday(
       recentWearCount,
       totalWearCount,
       priorityScore,
-      hasReliablePants,
-      hasPrimaryRecommend,
-      hasSecondaryRecommend,
     };
   });
 
@@ -1030,18 +1044,8 @@ export function selectRecommendedShirtsForToday(
     return a.shirt.id.localeCompare(b.shirt.id, undefined, { numeric: true });
   };
 
-  // 推奨パンツが存在するグループ（Group A）、着用可パンツが存在するグループ（Group B）、その他（Group C）
-  const groupA = scoredCandidates.filter((item) => item.hasPrimaryRecommend).sort(sortScoredItems);
-  const groupB = scoredCandidates
-    .filter((item) => !item.hasPrimaryRecommend && item.hasSecondaryRecommend)
-    .sort(sortScoredItems);
-  const groupC = scoredCandidates
-    .filter((item) => !item.hasPrimaryRecommend && !item.hasSecondaryRecommend)
-    .sort(sortScoredItems);
-
-  // おすすめは推奨パンツが存在するグループ（Group A）のみから選定（3着未満でもGroup B/Cで補充しない）
-  const recommendedShirts = groupA.slice(0, limit).map((item) => item.shirt);
-  const ordered = [...groupA, ...groupB, ...groupC];
+  const ordered = scoredCandidates.sort(sortScoredItems);
+  const recommendedShirts = ordered.slice(0, limit).map((item) => item.shirt);
 
   return {
     recommendedShirts,
@@ -3644,7 +3648,17 @@ export interface FilterOption<T extends string = string> {
 }
 
 /**
- * シャツ分類フィルター（朝画面・ワードローブ整理）
+ * 朝画面のトップス分類フィルター（1枚もの／羽織り）
+ */
+export type TodayTopCategoryFilter = 'single' | 'outerwear';
+
+export const TODAY_TOP_CATEGORY_FILTER_OPTIONS: readonly FilterOption<TodayTopCategoryFilter>[] = [
+  { id: 'single', label: '👔 1枚もの' },
+  { id: 'outerwear', label: '🧥 羽織り' },
+] as const;
+
+/**
+ * シャツ分類フィルター（ワードローブ整理）
  */
 export type ShirtCategoryFilter = 'all' | 'single' | 'outerwear';
 
