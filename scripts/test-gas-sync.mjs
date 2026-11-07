@@ -72,6 +72,7 @@ const {
   validateAndBuildRebuildDiffs,
   applyRebuildDiffs,
   setShirtOuterwear,
+  TODAY_TOP_CATEGORY_FILTER_OPTIONS,
   SHIRT_CATEGORY_FILTER_OPTIONS,
   GALLERY_CATEGORY_FILTER_OPTIONS,
   MATRIX_CATEGORY_FILTER_OPTIONS,
@@ -80,6 +81,8 @@ const {
   computeWearCountMap,
   resolveNextGalleryViewerItemId,
   isShirtMatchingSleeveCategory,
+  isCollaredShirtTop,
+  isTopMatchingScene,
   selectRecommendedShirtsForToday,
 } = closetDomain;
 
@@ -5350,6 +5353,15 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
 
   // 4. Phase 1: 画面共通フィルター定義の単一正本化と用語集整合性検証
   assert.deepEqual(
+    TODAY_TOP_CATEGORY_FILTER_OPTIONS,
+    [
+      { id: 'single', label: '👔 1枚もの' },
+      { id: 'outerwear', label: '🧥 羽織り' },
+    ],
+    'TODAY_TOP_CATEGORY_FILTER_OPTIONS must have 2 options (single and outerwear)'
+  );
+
+  assert.deepEqual(
     SHIRT_CATEGORY_FILTER_OPTIONS,
     [
       { id: 'all', label: 'すべて' },
@@ -5746,7 +5758,7 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
   console.log('  ✅ Quick rebuild (prompt, parse fallback, strict diff bounds & sanctuary protection) verified');
 }
 
-// Test Case: 朝モードのシャツ選びの絞り込み表示ロジック（selectRecommendedShirtsForToday & isShirtMatchingSleeveCategory）
+// Test Case: 朝モードのトップス選びの絞り込み表示ロジック（selectRecommendedShirtsForToday, isCollaredShirtTop, isTopMatchingScene, isShirtMatchingSleeveCategory）
 {
   const testShirts = [
     {
@@ -5829,40 +5841,33 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
       ngReason: '',
       notes: '',
     },
-  ];
-
-  const testPants = [
     {
-      id: 'P3',
-      category: 'pants',
-      name: 'グレージュチノトラウザー',
-      seasonSleeve: '通年',
-      dressScore: 4.0,
-      comfortScore: 4.0,
-      officeRecommendIds: ['S1', 'S2', 'S3', 'S4', 'S5'],
-      remoteRecommendIds: ['S1', 'S2', 'S3', 'S4', 'S5'],
+      id: 'S7',
+      category: 'shirt',
+      name: '黒クルーネック長袖Tシャツ',
+      seasonSleeve: '長袖・通年',
+      dressScore: 2.5,
+      comfortScore: 4.5,
+      officeRecommendIds: [],
+      remoteRecommendIds: ['P3'],
       ngIds: [],
       ngReason: '',
       notes: '',
     },
     {
-      id: 'P8',
-      category: 'pants',
-      name: '濃紺スラックス',
-      seasonSleeve: '通年',
-      dressScore: 4.5,
-      comfortScore: 3.5,
-      officeRecommendIds: ['S2'],
-      remoteRecommendIds: ['S2'],
+      id: 'S8',
+      category: 'shirt',
+      name: 'グレースウェットプルオーバー',
+      seasonSleeve: '長袖・通年',
+      dressScore: 2.0,
+      comfortScore: 5.0,
+      officeRecommendIds: [],
+      remoteRecommendIds: ['P3'],
       ngIds: [],
       ngReason: '',
       notes: '',
     },
   ];
-
-  const itemMap = new Map();
-  testShirts.forEach((s) => itemMap.set(s.id, s));
-  testPants.forEach((p) => itemMap.set(p.id, p));
 
   // 1. isShirtMatchingSleeveCategory の動作検証
   assert.equal(isShirtMatchingSleeveCategory(testShirts[0], 'long'), true);
@@ -5873,53 +5878,129 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
   assert.equal(isShirtMatchingSleeveCategory(testShirts[3], 'seven'), false);
   assert.equal(isShirtMatchingSleeveCategory(testShirts[3], 'long'), false);
 
-  // 2. selectRecommendedShirtsForToday の基本選定（長袖、履歴なし）
-  const res1 = selectRecommendedShirtsForToday({
+  // 2. isCollaredShirtTop および isTopMatchingScene の決定論的二分判定の検証
+  const collaredShirtNames = [
+    'サックスブルー ロンドンストライプシャツ',
+    'ホワイト オックスフォードBDシャツ',
+    '鹿の子ポロシャツ',
+    'リネンブラウス',
+    'シャンブレーBD',
+    'ブロード無地シャツ',
+  ];
+  for (const name of collaredShirtNames) {
+    const item = { id: 'T_test', category: 'shirt', name };
+    assert.equal(isCollaredShirtTop(item), true, `"${name}" must be classified as collared shirt`);
+    assert.equal(isTopMatchingScene(item, 'office'), true, `"${name}" must match office scene`);
+    assert.equal(isTopMatchingScene(item, 'remote'), false, `"${name}" must not match remote scene`);
+  }
+
+  const nonShirtNames = [
+    '白 クルーネック Tシャツ',
+    '白無地 Ｔシャツ',
+    'ヘビーウェイト ロンT',
+    '黒 カットソー',
+    'グレー クルーネック スウェット',
+    'スウェットシャツ',
+    'ミラノリブ ニット',
+    'タートルネック セーター',
+    'ジップパーカー',
+    'フリース プルオーバー',
+    'ヘンリーネック長袖',
+    '黒 クルーネック',
+  ];
+  for (const name of nonShirtNames) {
+    const item = { id: 'T_test', category: 'shirt', name };
+    assert.equal(isCollaredShirtTop(item), false, `"${name}" must be classified as non-shirt`);
+    assert.equal(isTopMatchingScene(item, 'office'), false, `"${name}" must not match office scene`);
+    assert.equal(isTopMatchingScene(item, 'remote'), true, `"${name}" must match remote scene`);
+  }
+
+  // 3. selectRecommendedShirtsForToday の基本選定（オフィス出社: シャツのみが選定されること）
+  const resOffice = selectRecommendedShirtsForToday({
     shirts: testShirts,
     sleeveCategory: 'long',
     scene: 'office',
     wearHistory: [],
-    itemMap,
-    pants: testPants,
-    wifeNgPairs: [],
-    yesterdayWornPantsIds: new Set(),
     todayStr: '2026-11-07',
   });
 
   // (a) 片付けた服（S6: archived）および気温外（S4: 半袖）が除外されていること
-  assert.ok(!res1.matchingShirts.some((s) => s.id === 'S6'), 'Archived shirt must not be in matchingShirts');
-  assert.ok(!res1.recommendedShirts.some((s) => s.id === 'S6'), 'Archived shirt must not be in recommendedShirts');
-  assert.ok(!res1.recommendedShirts.some((s) => s.id === 'S4'), 'Short sleeve shirt must not be in long sleeve recommendations');
+  assert.ok(!resOffice.matchingShirts.some((s) => s.id === 'S6'), 'Archived shirt must not be in matchingShirts');
+  assert.ok(!resOffice.recommendedShirts.some((s) => s.id === 'S6'), 'Archived shirt must not be in recommendedShirts');
+  assert.ok(!resOffice.recommendedShirts.some((s) => s.id === 'S4'), 'Short sleeve shirt must not be in long sleeve recommendations');
 
   // (b) 羽織り（S5: isOuterwear）は matchingShirts に入るが、recommendedShirts には入らないこと
-  assert.ok(res1.matchingShirts.some((s) => s.id === 'S5'), 'Outerwear should be in matchingShirts');
-  assert.ok(!res1.recommendedShirts.some((s) => s.id === 'S5'), 'Outerwear must be excluded from recommendedShirts');
+  assert.ok(resOffice.matchingShirts.some((s) => s.id === 'S5'), 'Outerwear should be in matchingShirts');
+  assert.ok(!resOffice.recommendedShirts.some((s) => s.id === 'S5'), 'Outerwear must be excluded from recommendedShirts');
 
-  // (c) おすすめ件数が最大3着であること
-  assert.ok(res1.recommendedShirts.length <= 3);
+  // (c) オフィス出社ではシャツのみが候補となり、非シャツ（S7, S8）はおすすめ・候補から除外されること
+  assert.ok(resOffice.recommendedShirts.every((s) => isCollaredShirtTop(s)), 'Office recommendations must all be shirts');
+  assert.ok(!resOffice.recommendedShirts.some((s) => s.id === 'S7' || s.id === 'S8'), 'Non-shirts must not be in office recommendations');
+  assert.ok(!resOffice.scoredCandidates.some((c) => c.shirt.id === 'S7' || c.shirt.id === 'S8'), 'Non-shirts must not be in office candidates');
 
-  // 3. 着用履歴による優先度変更（冷却判定）の検証
+  // (d) おすすめ件数が最大3着であること
+  assert.ok(resOffice.recommendedShirts.length <= 3);
+
+  // 4. 外出モード選定（外出: シャツじゃないもののみが選定されること）
+  const resRemote = selectRecommendedShirtsForToday({
+    shirts: testShirts,
+    sleeveCategory: 'long',
+    scene: 'remote',
+    wearHistory: [],
+    todayStr: '2026-11-07',
+  });
+
+  // (a) 外出モードでは非シャツ（S7, S8）のみがおすすめ・候補となり、シャツ（S1, S2, S3）は除外されること
+  assert.ok(resRemote.recommendedShirts.every((s) => !isCollaredShirtTop(s)), 'Remote recommendations must all be non-shirts');
+  assert.ok(resRemote.recommendedShirts.some((s) => s.id === 'S7'), 'S7 must be in remote recommendations');
+  assert.ok(resRemote.recommendedShirts.some((s) => s.id === 'S8'), 'S8 must be in remote recommendations');
+  assert.ok(!resRemote.recommendedShirts.some((s) => s.id === 'S1' || s.id === 'S2' || s.id === 'S3'), 'Shirts must not be in remote recommendations');
+
+  // 5. パンツ推奨の有無に依存しないことの検証（推奨パンツが一切なくてもトップス自身の属性で選定される）
+  const lonelyShirt = [
+    {
+      id: 'S20',
+      category: 'shirt',
+      name: '推奨パンツなし長袖シャツ',
+      seasonSleeve: '長袖・通年',
+      dressScore: 4.0,
+      comfortScore: 4.0,
+      officeRecommendIds: [],
+      remoteRecommendIds: [],
+      ngIds: [],
+      ngReason: '',
+      notes: '',
+    },
+  ];
+
+  const resLonely = selectRecommendedShirtsForToday({
+    shirts: lonelyShirt,
+    sleeveCategory: 'long',
+    scene: 'office',
+    wearHistory: [],
+    todayStr: '2026-11-07',
+  });
+  assert.equal(resLonely.recommendedShirts.length, 1, 'Shirt without recommended pants must still be recommended');
+  assert.equal(resLonely.recommendedShirts[0].id, 'S20', 'Lonely shirt S20 should be recommended');
+
+  // 6. 着用履歴による優先度変更（冷却判定）の検証
   // S2を昨日着用（2026-11-06）、S1を3日前着用（2026-11-04）、S3を未着用とする
   const wearHistory = [
     { id: 'w1', date: '2026-11-06', shirtId: 'S2', pantsId: 'P3', scene: 'office', timestamp: 1 },
     { id: 'w2', date: '2026-11-04', shirtId: 'S1', pantsId: 'P3', scene: 'office', timestamp: 2 },
   ];
 
-  const res2 = selectRecommendedShirtsForToday({
+  const resHistory = selectRecommendedShirtsForToday({
     shirts: testShirts,
     sleeveCategory: 'long',
     scene: 'office',
     wearHistory,
-    itemMap,
-    pants: testPants,
-    wifeNgPairs: [],
-    yesterdayWornPantsIds: new Set(),
     todayStr: '2026-11-07',
   });
 
-  const scoredS1 = res2.scoredCandidates.find((c) => c.shirt.id === 'S1');
-  const scoredS2 = res2.scoredCandidates.find((c) => c.shirt.id === 'S2');
-  const scoredS3 = res2.scoredCandidates.find((c) => c.shirt.id === 'S3');
+  const scoredS1 = resHistory.scoredCandidates.find((c) => c.shirt.id === 'S1');
+  const scoredS2 = resHistory.scoredCandidates.find((c) => c.shirt.id === 'S2');
+  const scoredS3 = resHistory.scoredCandidates.find((c) => c.shirt.id === 'S3');
 
   // 昨日着用の S2 は coolingTier 2（末尾）
   assert.equal(scoredS2.coolingTier, 2, 'Yesterday worn shirt must be coolingTier 2');
@@ -5929,77 +6010,11 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
   assert.equal(scoredS3.coolingTier, 0, 'Unworn shirt must be coolingTier 0');
 
   // おすすめリストの並び順で S3 が最上位、S2 が最下位になること
-  const recIds = res2.recommendedShirts.map((s) => s.id);
+  const recIds = resHistory.recommendedShirts.map((s) => s.id);
   assert.equal(recIds[0], 'S3', 'Unworn shirt S3 should be 1st recommendation');
   assert.equal(recIds[recIds.length - 1], 'S2', 'Yesterday worn shirt S2 should be at the end');
 
-  // 4. おすすめ対象が推奨パンツあり（Group A）のみに限定され、Group B/C で補充されないことの検証
-  const shirtsWithGroupB = [
-    {
-      id: 'S10',
-      category: 'shirt',
-      name: '出社推奨パンツありシャツ',
-      seasonSleeve: '長袖・通年',
-      dressScore: 4.0,
-      comfortScore: 4.0,
-      officeRecommendIds: ['P3'],
-      remoteRecommendIds: [],
-      ngIds: [],
-      ngReason: '',
-      notes: '',
-    },
-    {
-      id: 'S11',
-      category: 'shirt',
-      name: '出社着用可のみシャツ（Group B）',
-      seasonSleeve: '長袖・通年',
-      dressScore: 3.5,
-      comfortScore: 3.5,
-      officeRecommendIds: [], // 推奨パンツなし（P3はngIdsに含まれずotherOk扱い）
-      remoteRecommendIds: [],
-      ngIds: [],
-      ngReason: '',
-      notes: '',
-    },
-    {
-      id: 'S12',
-      category: 'shirt',
-      name: '全パンツNGシャツ（Group C）',
-      seasonSleeve: '長袖・通年',
-      dressScore: 3.0,
-      comfortScore: 3.0,
-      officeRecommendIds: [],
-      remoteRecommendIds: [],
-      ngIds: ['P3', 'P8'],
-      ngReason: '',
-      notes: '',
-    },
-  ];
-  const itemMapGroupB = new Map(itemMap);
-  shirtsWithGroupB.forEach((s) => itemMapGroupB.set(s.id, s));
-
-  const resGroupAOnly = selectRecommendedShirtsForToday({
-    shirts: shirtsWithGroupB,
-    sleeveCategory: 'long',
-    scene: 'office',
-    wearHistory: [],
-    itemMap: itemMapGroupB,
-    pants: testPants,
-    wifeNgPairs: [],
-    yesterdayWornPantsIds: new Set(),
-    todayStr: '2026-11-07',
-    limit: 3,
-  });
-
-  // おすすめは Group A の S10 のみ（1着）となり、limit=3 でも S11 (Group B) や S12 (Group C) で補充されないこと
-  assert.equal(resGroupAOnly.recommendedShirts.length, 1, 'recommendedShirts should only contain Group A shirts');
-  assert.equal(resGroupAOnly.recommendedShirts[0].id, 'S10', 'Only S10 (has primary recommend) should be recommended');
-  assert.ok(
-    resGroupAOnly.scoredCandidates.some((c) => c.shirt.id === 'S11' && c.hasSecondaryRecommend),
-    'S11 should be in scoredCandidates as Group B'
-  );
-
-  console.log('  ✅ Today shirt recommendation & sleeve filtering logic verified');
+  console.log('  ✅ Today top recommendation, scene binary partitioning & sleeve filtering logic verified');
 }
 
 console.log('🎉 All GAS backend & sync logic tests passed successfully!');

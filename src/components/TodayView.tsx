@@ -18,10 +18,11 @@ import {
   SceneMode,
   ClosetItem,
   GarmentMeasurements,
-  ShirtCategoryFilter,
-  SHIRT_CATEGORY_FILTER_OPTIONS,
+  TodayTopCategoryFilter,
+  TODAY_TOP_CATEGORY_FILTER_OPTIONS,
   SleeveCategory,
   isShirtMatchingSleeveCategory,
+  isTopMatchingScene,
   selectRecommendedShirtsForToday,
 } from '../types/closet';
 import { useClosetStore } from '../hooks/useClosetStore';
@@ -57,12 +58,10 @@ function formatShirtMeasurements(m?: GarmentMeasurements): string | null {
 export const TodayView: React.FC = () => {
   const {
     shirts,
-    pants,
     wearHistory,
     itemMap,
     todayRecord,
     yesterdayWornPantsIds,
-    wifeNgPairs,
     getRecommendationsForShirt,
     recordWear,
     updateTodayOuterwear,
@@ -70,9 +69,9 @@ export const TodayView: React.FC = () => {
     removeWifeNg,
   } = useClosetStore();
 
-  const [scene, setScene] = useState<SceneMode>('office');
+  const [scene, setScene] = useState<SceneMode>(todayRecord?.scene ?? 'office');
   const [sleeveCategory, setSleeveCategory] = useState<SleeveCategory>('long');
-  const [shirtTypeFilter, setShirtTypeFilter] = useState<ShirtCategoryFilter>('all');
+  const [shirtTypeFilter, setShirtTypeFilter] = useState<TodayTopCategoryFilter>('single');
   const [showAllMatchingShirts, setShowAllMatchingShirts] = useState(false);
   const [showHiddenShirts, setShowHiddenShirts] = useState(false);
   const [showOtherPants, setShowOtherPants] = useState(false);
@@ -90,12 +89,19 @@ export const TodayView: React.FC = () => {
   const recommendationsRef = useRef<HTMLElement>(null);
   const shirtSectionRef = useRef<HTMLElement>(null);
 
-  // Default selected shirt: today's recorded shirt (if active), or first active shirt
+  // Default selected top: today's recorded shirt (if active), or #1 recommended top for initial scene / long sleeve
   const [selectedShirtId, setSelectedShirtId] = useState<string>(() => {
     if (todayRecord?.shirtId && shirts.some((s) => s.id === todayRecord.shirtId)) {
       return todayRecord.shirtId;
     }
-    return shirts[0]?.id || 'S1';
+    const initialRecs = selectRecommendedShirtsForToday({
+      shirts,
+      sleeveCategory: 'long',
+      scene: todayRecord?.scene ?? 'office',
+      wearHistory,
+      limit: 1,
+    });
+    return initialRecs.recommendedShirts[0]?.id || shirts[0]?.id || 'S1';
   });
 
   const handleSelectShirt = (shirtId: string) => {
@@ -125,163 +131,128 @@ export const TodayView: React.FC = () => {
     }, 3500);
   };
 
-  // 天気・シーン・着用履歴・鉄板ペアに基づくおすすめシャツの算出
+  // 天気・シーン・着用履歴に基づくおすすめトップスの算出（パンツ推奨には依存しない）
   const recommendedResult = useMemo(() => {
     return selectRecommendedShirtsForToday({
       shirts,
       sleeveCategory,
       scene,
       wearHistory,
-      itemMap,
-      pants,
-      wifeNgPairs,
-      yesterdayWornPantsIds,
       limit: 3,
     });
-  }, [
-    shirts,
-    sleeveCategory,
-    scene,
-    wearHistory,
-    itemMap,
-    pants,
-    wifeNgPairs,
-    yesterdayWornPantsIds,
-  ]);
+  }, [shirts, sleeveCategory, scene, wearHistory]);
 
-  const { matchingShirts, hiddenShirts } = recommendedResult;
+  const { hiddenShirts } = recommendedResult;
+
+  // 条件（シーン、袖丈、種別フィルター）ごとの母集団を決定論的に解決する純粋ヘルパー
+  const getTopPopulation = useCallback(
+    (
+      targetScene: SceneMode,
+      targetSleeveCategory: SleeveCategory,
+      targetFilter: TodayTopCategoryFilter
+    ): ClosetItem[] => {
+      const activeShirts = shirts.filter((s) => !s.archived);
+      const matching = activeShirts.filter((s) =>
+        isShirtMatchingSleeveCategory(s, targetSleeveCategory)
+      );
+      if (targetFilter === 'outerwear') {
+        return matching.filter((s) => Boolean(s.isOuterwear));
+      }
+      const recs = selectRecommendedShirtsForToday({
+        shirts,
+        sleeveCategory: targetSleeveCategory,
+        scene: targetScene,
+        wearHistory,
+        limit: 3,
+      });
+      return recs.scoredCandidates.map((c) => c.shirt);
+    },
+    [shirts, wearHistory]
+  );
+
+  // 現在の条件（シーン・気温・種別ピル）におけるトップス母集団
+  const currentPopulation = useMemo(
+    () => getTopPopulation(scene, sleeveCategory, shirtTypeFilter),
+    [getTopPopulation, scene, sleeveCategory, shirtTypeFilter]
+  );
+
+  // 選択の自動変更ヘルパー:
+  // 選択中トップスが新しい母集団の外に出た場合のみ、新しい母集団のおすすめ第1位（または先頭）へ移動する。
+  const ensureSelectionInPopulation = useCallback(
+    (
+      targetScene: SceneMode,
+      targetSleeveCategory: SleeveCategory,
+      targetFilter: TodayTopCategoryFilter
+    ) => {
+      const population = getTopPopulation(targetScene, targetSleeveCategory, targetFilter);
+      const currentSelected = shirts.find((s) => s.id === selectedShirtId);
+      const isStillInPopulation =
+        currentSelected && population.some((s) => s.id === currentSelected.id);
+
+      if (!isStillInPopulation) {
+        const nextTop = population[0];
+        if (nextTop) {
+          setSelectedShirtId(nextTop.id);
+        }
+      }
+    },
+    [getTopPopulation, selectedShirtId, shirts]
+  );
 
   const handleSceneChange = (nextScene: SceneMode) => {
     setScene(nextScene);
-    // 当日着用記録がまだない場合、切り替えたシーンの第1おすすめシャツに自動切り替え（1秒即決を加速）
-    // おすすめが空の場合は、気温適合シャツのうち1枚もの（!isOuterwear）を優先し、なければ気温適合シャツの先頭へフォールバック
-    if (!todayRecord) {
-      const nextRecs = selectRecommendedShirtsForToday({
-        shirts,
-        sleeveCategory,
-        scene: nextScene,
-        wearHistory,
-        itemMap,
-        pants,
-        wifeNgPairs,
-        yesterdayWornPantsIds,
-        limit: 3,
-      });
-      const targetShirt =
-        nextRecs.recommendedShirts[0] ||
-        nextRecs.matchingShirts.find((s) => !s.isOuterwear) ||
-        nextRecs.matchingShirts[0];
-      if (targetShirt) {
-        setSelectedShirtId(targetShirt.id);
-      }
-    }
+    ensureSelectionInPopulation(nextScene, sleeveCategory, shirtTypeFilter);
+  };
+
+  const handleCategoryChange = (nextCategory: SleeveCategory) => {
+    setSleeveCategory(nextCategory);
+    ensureSelectionInPopulation(scene, nextCategory, shirtTypeFilter);
   };
 
   const handleWeatherLoaded = useCallback(
     (data: WeatherData) => {
       setSleeveCategory(data.recommendedCategory);
-      // 当日着用記録が既にある場合で、そのシャツが片付けられていない場合は上書きしない
-      if (todayRecord?.shirtId && shirts.some((s) => s.id === todayRecord.shirtId)) {
-        return;
-      }
-      const currentItem =
-        itemMap.get(selectedShirtId) || shirts.find((s) => s.id === selectedShirtId);
-      const isCurrentMatching = currentItem
-        ? isShirtMatchingSleeveCategory(currentItem, data.recommendedCategory)
-        : false;
-
-      if (!isCurrentMatching || !shirts.some((s) => s.id === selectedShirtId)) {
-        const nextRecs = selectRecommendedShirtsForToday({
-          shirts,
-          sleeveCategory: data.recommendedCategory,
-          scene,
-          wearHistory,
-          itemMap,
-          pants,
-          wifeNgPairs,
-          yesterdayWornPantsIds,
-          limit: 3,
-        });
-        const targetShirt =
-          nextRecs.recommendedShirts[0] ||
-          nextRecs.matchingShirts.find((s) => !s.isOuterwear) ||
-          nextRecs.matchingShirts[0];
-        if (targetShirt) {
-          setSelectedShirtId(targetShirt.id);
-        }
-      }
+      ensureSelectionInPopulation(scene, data.recommendedCategory, shirtTypeFilter);
     },
-    [
-      todayRecord,
-      selectedShirtId,
-      shirts,
-      itemMap,
-      scene,
-      wearHistory,
-      pants,
-      wifeNgPairs,
-      yesterdayWornPantsIds,
-    ]
+    [ensureSelectionInPopulation, scene, shirtTypeFilter]
   );
 
-  // 種別フィルター（すべて / 1枚もの / 羽織り）の適用
-  const filterShirtList = useCallback(
-    (list: ClosetItem[]) => {
-      if (shirtTypeFilter === 'outerwear') {
-        return list.filter((s) => Boolean(s.isOuterwear));
-      }
-      if (shirtTypeFilter === 'single') {
-        return list.filter((s) => !s.isOuterwear);
-      }
-      return list;
-    },
-    [shirtTypeFilter]
-  );
-
-  const displayedMatchingShirts = useMemo(
-    () => filterShirtList(matchingShirts),
-    [filterShirtList, matchingShirts]
-  );
-
-  const displayedHiddenShirts = useMemo(
-    () => filterShirtList(hiddenShirts),
-    [filterShirtList, hiddenShirts]
-  );
+  const handleFilterChange = (nextFilter: TodayTopCategoryFilter) => {
+    setShirtTypeFilter(nextFilter);
+    ensureSelectionInPopulation(scene, sleeveCategory, nextFilter);
+  };
 
   const selectedShirt = useMemo(
     () =>
       shirts.find((s) => s.id === selectedShirtId) ||
-      recommendedResult.recommendedShirts[0] ||
-      matchingShirts.find((s) => !s.isOuterwear) ||
-      matchingShirts[0] ||
+      currentPopulation[0] ||
       shirts[0],
-    [selectedShirtId, recommendedResult.recommendedShirts, matchingShirts, shirts]
+    [selectedShirtId, shirts, currentPopulation]
   );
 
-  // 画面に表示する気温適合シャツ（おすすめ枠3着 または 全件）
+  // 画面に表示する気温適合トップス（おすすめ枠3着 または 全件）
+  // おすすめ枠表示時は、厳密におすすめ上位（最大3着）のみを表示し、選択中トップスの例外追加表示は行わない
   const visibleMatchingShirts = useMemo(() => {
-    if (shirtTypeFilter === 'outerwear' || showAllMatchingShirts) {
-      return displayedMatchingShirts;
+    if (shirtTypeFilter === 'outerwear') {
+      return currentPopulation;
     }
-    // おすすめ枠（3着）
-    const recs = filterShirtList(recommendedResult.recommendedShirts);
-    // 選択中のシャツが気温適合リストに存在し、かつおすすめ枠に含まれていない場合は追加表示して選択を可視化
-    if (
-      selectedShirt &&
-      displayedMatchingShirts.some((s) => s.id === selectedShirt.id) &&
-      !recs.some((s) => s.id === selectedShirt.id)
-    ) {
-      return [...recs, selectedShirt];
+    if (showAllMatchingShirts) {
+      return currentPopulation;
     }
-    return recs;
+    return recommendedResult.recommendedShirts;
   }, [
     shirtTypeFilter,
     showAllMatchingShirts,
-    displayedMatchingShirts,
-    filterShirtList,
+    currentPopulation,
     recommendedResult.recommendedShirts,
-    selectedShirt,
   ]);
+
+  const displayedHiddenShirts = useMemo(() => {
+    if (shirtTypeFilter === 'outerwear') {
+      return hiddenShirts.filter((s) => Boolean(s.isOuterwear));
+    }
+    return hiddenShirts.filter((s) => !s.isOuterwear && isTopMatchingScene(s, scene));
+  }, [hiddenShirts, shirtTypeFilter, scene]);
 
   // todayRecord の変更に追従（undefined を含め常に同期）
   useEffect(() => {
@@ -392,9 +363,9 @@ export const TodayView: React.FC = () => {
     return (
       <div className="p-8 text-center bg-slate-900/80 border border-slate-800 rounded-2xl space-y-3">
         <div className="text-3xl">👕</div>
-        <h3 className="text-base font-bold text-white">利用可能なシャツがありません</h3>
+        <h3 className="text-base font-bold text-white">利用可能なトップスがありません</h3>
         <p className="text-xs text-slate-400 leading-relaxed max-w-sm mx-auto">
-          すべてのシャツが「片付けた服」に入っているか、登録されていません。「管理」タブの「ワードローブ整理」セクションから「出す」で戻すことができます。
+          すべてのトップスが「片付けた服」に入っているか、登録されていません。「管理」タブの「ワードローブ整理」セクションから「出す」で戻すことができます。
         </p>
       </div>
     );
@@ -420,7 +391,7 @@ export const TodayView: React.FC = () => {
           <WeatherWidget
             onWeatherLoaded={handleWeatherLoaded}
             activeCategory={sleeveCategory}
-            onCategoryChange={setSleeveCategory}
+            onCategoryChange={handleCategoryChange}
           />
 
       {/* 2. Scene Selector */}
@@ -491,22 +462,22 @@ export const TodayView: React.FC = () => {
         <div className="flex items-center justify-between px-1">
           <h2 className="text-sm font-bold text-slate-200 flex items-center gap-1.5">
             <span className="w-2 h-2 rounded-full bg-blue-500"></span>
-            <span>今日のシャツを選ぶ（1タップ）</span>
+            <span>今日のトップスを選ぶ（1タップ）</span>
           </h2>
           <span className="text-xs text-blue-400 font-medium">
-            {!showAllMatchingShirts &&
-            shirtTypeFilter !== 'outerwear' &&
-            displayedMatchingShirts.length > recommendedResult.recommendedShirts.length
-              ? `おすすめ ${visibleMatchingShirts.length}着 / 気温適合 ${displayedMatchingShirts.length}着`
-              : `気温に最適 ${displayedMatchingShirts.length}着`}
+            {shirtTypeFilter === 'single' &&
+            !showAllMatchingShirts &&
+            currentPopulation.length > recommendedResult.recommendedShirts.length
+              ? `おすすめ ${visibleMatchingShirts.length}着 / 気温適合 ${currentPopulation.length}着`
+              : `気温に最適 ${visibleMatchingShirts.length}着`}
           </span>
         </div>
 
-        {/* Shirt Category Type Filter Pills */}
+        {/* Top Category Type Filter Pills (2 pills: 1枚もの / 羽織り) */}
         <FilterPillBar
-          options={SHIRT_CATEGORY_FILTER_OPTIONS}
+          options={TODAY_TOP_CATEGORY_FILTER_OPTIONS}
           activeId={shirtTypeFilter}
-          onSelect={setShirtTypeFilter}
+          onSelect={handleFilterChange}
         />
 
         {/* Matching Shirts (Primary View - Large 3-Column Grid) */}
@@ -553,9 +524,9 @@ export const TodayView: React.FC = () => {
           })}
         </div>
 
-        {/* All Matching Shirts Expand Toggle */}
-        {shirtTypeFilter !== 'outerwear' &&
-          displayedMatchingShirts.length > recommendedResult.recommendedShirts.length && (
+        {/* All Matching Tops Expand Toggle */}
+        {shirtTypeFilter === 'single' &&
+          currentPopulation.length > recommendedResult.recommendedShirts.length && (
             <div className="pt-0.5">
               <button
                 type="button"
@@ -566,8 +537,8 @@ export const TodayView: React.FC = () => {
                   <Sparkles className="w-3.5 h-3.5 text-amber-400 flex-shrink-0" />
                   <span>
                     {showAllMatchingShirts
-                      ? '✨ おすすめのシャツ（3着）に絞る'
-                      : `👕 気温に合うシャツを全部見る（全${displayedMatchingShirts.length}着）`}
+                      ? '✨ おすすめのトップスに絞る'
+                      : `👕 気温に合うトップスを全部見る（全${currentPopulation.length}着）`}
                   </span>
                 </div>
                 {showAllMatchingShirts ? (
@@ -579,7 +550,7 @@ export const TodayView: React.FC = () => {
             </div>
           )}
 
-        {/* Hidden Shirts Accordion Toggle (For shirts that don't match today's weather) */}
+        {/* Hidden Tops Accordion Toggle (For tops that don't match today's weather) */}
         {displayedHiddenShirts.length > 0 && (
           <div className="pt-1">
             <button
@@ -590,8 +561,8 @@ export const TodayView: React.FC = () => {
                 <Thermometer className="w-3.5 h-3.5 text-slate-500" />
                 <span>
                   {showHiddenShirts || isSelectedShirtHidden
-                    ? '気温外のシャツを折りたたむ'
-                    : `今日の気温外のシャツも見る（${displayedHiddenShirts.length}着）`}
+                    ? '気温外のトップスを折りたたむ'
+                    : `今日の気温外のトップスも見る（${displayedHiddenShirts.length}着）`}
                 </span>
               </div>
               {showHiddenShirts || isSelectedShirtHidden ? (
@@ -692,10 +663,10 @@ export const TodayView: React.FC = () => {
           <button
             onClick={handleScrollToShirts}
             className="lg:hidden flex items-center justify-center gap-1 min-h-[44px] min-w-[44px] px-3 py-2 -my-1 rounded-lg bg-blue-950/70 hover:bg-blue-900 border border-blue-700/50 text-[11px] font-bold text-blue-300 flex-shrink-0 transition-colors active:scale-95 shadow"
-            title="シャツ一覧へ戻る"
+            title="トップス一覧へ戻る"
           >
             <ArrowUp className="w-3.5 h-3.5" />
-            <span>シャツ変更</span>
+            <span>トップス変更</span>
           </button>
         </div>
 
@@ -802,7 +773,7 @@ export const TodayView: React.FC = () => {
         {/* Top Recommendations (1st to 3rd candidates) with ENLARGED photos */}
         {topRecommendations.length === 0 ? (
           <div className="p-6 bg-slate-800/40 border border-dashed border-slate-700 rounded-2xl text-center text-slate-400 text-sm">
-            このシャツに合う推奨パンツがありません。
+            このトップスに合う推奨パンツがありません。
           </div>
         ) : (
           <div className="space-y-3.5">
@@ -842,7 +813,7 @@ export const TodayView: React.FC = () => {
                       {/* Mini Shirt Thumbnail overlay in top-right corner */}
                       <div
                         className="absolute top-1.5 right-1.5 w-8 h-10 rounded-lg border border-slate-600/80 overflow-hidden shadow-lg bg-slate-900"
-                        title="選択中のシャツ"
+                        title="選択中のトップス"
                       >
                         <ItemImage item={selectedShirt} showBadge={false} className="w-full h-full" />
                       </div>
@@ -1004,7 +975,7 @@ export const TodayView: React.FC = () => {
           >
             <div className="flex items-center gap-1.5 flex-wrap">
               <AlertTriangle className="w-4 h-4 text-rose-400 flex-shrink-0" />
-              <span>🚫 このシャツのNGパンツ（{ngList.length}本）</span>
+              <span>🚫 このトップスのNGパンツ（{ngList.length}本）</span>
               {isSelectedPantsInNg && (
                 <span className="text-[10px] bg-emerald-950/90 text-emerald-300 border border-emerald-700/60 px-1.5 py-0.5 rounded font-bold">
                   本日着用中あり
@@ -1022,7 +993,7 @@ export const TodayView: React.FC = () => {
             <div className="space-y-2 mt-2">
               {ngList.length === 0 ? (
                 <div className="p-3 text-center text-xs text-slate-400 bg-slate-900/60 rounded-xl">
-                  このシャツにはNGパンツはありません。すべてのパンツと合わせられます。
+                  このトップスにはNGパンツはありません。すべてのパンツと合わせられます。
                 </div>
               ) : (
                 ngList.map(({ pants: p, reason, isWifeNg }) => {
@@ -1144,7 +1115,7 @@ export const TodayView: React.FC = () => {
             {/* Side-by-side large photo showcase */}
             <div className="grid grid-cols-2 gap-3 items-stretch">
               <div className="p-3 bg-slate-800/80 rounded-2xl border border-slate-700 flex flex-col items-center">
-                <div className="text-[10px] font-bold text-blue-400 mb-1">{zoomItemPair.shirt.id} (シャツ)</div>
+                <div className="text-[10px] font-bold text-blue-400 mb-1">{zoomItemPair.shirt.id} (トップス)</div>
                 <button
                   type="button"
                   onClick={() => setSingleZoomItem(zoomItemPair.shirt)}
