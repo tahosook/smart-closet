@@ -890,7 +890,8 @@ export interface RecommendedShirtsResult {
 }
 
 /**
- * 天気（気温適合）・シーン・着用履歴・鉄板ペアから朝モード用のおすすめシャツ（上位数着・デフォルト3着）を選定する純粋関数
+ * 天気（気温適合）・シーン（推奨パンツが存在する1枚もの）・着用履歴・鉄板ペアから朝モード用のおすすめシャツ（上位最大3着）を選定する純粋関数
+ * おすすめ対象は推奨パンツが存在するシャツ（Group A）のみとし、3着未満の場合でもGroup B/Cで補充しない。
  */
 export function selectRecommendedShirtsForToday(
   params: SelectRecommendedShirtsParams
@@ -1038,8 +1039,9 @@ export function selectRecommendedShirtsForToday(
     .filter((item) => !item.hasPrimaryRecommend && !item.hasSecondaryRecommend)
     .sort(sortScoredItems);
 
+  // おすすめは推奨パンツが存在するグループ（Group A）のみから選定（3着未満でもGroup B/Cで補充しない）
+  const recommendedShirts = groupA.slice(0, limit).map((item) => item.shirt);
   const ordered = [...groupA, ...groupB, ...groupC];
-  const recommendedShirts = ordered.slice(0, limit).map((item) => item.shirt);
 
   return {
     recommendedShirts,

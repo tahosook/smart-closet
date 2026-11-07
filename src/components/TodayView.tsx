@@ -154,6 +154,7 @@ export const TodayView: React.FC = () => {
   const handleSceneChange = (nextScene: SceneMode) => {
     setScene(nextScene);
     // 当日着用記録がまだない場合、切り替えたシーンの第1おすすめシャツに自動切り替え（1秒即決を加速）
+    // おすすめが空の場合は、気温適合シャツのうち1枚もの（!isOuterwear）を優先し、なければ気温適合シャツの先頭へフォールバック
     if (!todayRecord) {
       const nextRecs = selectRecommendedShirtsForToday({
         shirts,
@@ -166,8 +167,12 @@ export const TodayView: React.FC = () => {
         yesterdayWornPantsIds,
         limit: 3,
       });
-      if (nextRecs.recommendedShirts.length > 0) {
-        setSelectedShirtId(nextRecs.recommendedShirts[0].id);
+      const targetShirt =
+        nextRecs.recommendedShirts[0] ||
+        nextRecs.matchingShirts.find((s) => !s.isOuterwear) ||
+        nextRecs.matchingShirts[0];
+      if (targetShirt) {
+        setSelectedShirtId(targetShirt.id);
       }
     }
   };
@@ -197,10 +202,12 @@ export const TodayView: React.FC = () => {
           yesterdayWornPantsIds,
           limit: 3,
         });
-        if (nextRecs.recommendedShirts.length > 0) {
-          setSelectedShirtId(nextRecs.recommendedShirts[0].id);
-        } else if (nextRecs.matchingShirts.length > 0) {
-          setSelectedShirtId(nextRecs.matchingShirts[0].id);
+        const targetShirt =
+          nextRecs.recommendedShirts[0] ||
+          nextRecs.matchingShirts.find((s) => !s.isOuterwear) ||
+          nextRecs.matchingShirts[0];
+        if (targetShirt) {
+          setSelectedShirtId(targetShirt.id);
         }
       }
     },
@@ -245,6 +252,7 @@ export const TodayView: React.FC = () => {
     () =>
       shirts.find((s) => s.id === selectedShirtId) ||
       recommendedResult.recommendedShirts[0] ||
+      matchingShirts.find((s) => !s.isOuterwear) ||
       matchingShirts[0] ||
       shirts[0],
     [selectedShirtId, recommendedResult.recommendedShirts, matchingShirts, shirts]

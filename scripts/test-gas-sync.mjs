@@ -5933,6 +5933,72 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
   assert.equal(recIds[0], 'S3', 'Unworn shirt S3 should be 1st recommendation');
   assert.equal(recIds[recIds.length - 1], 'S2', 'Yesterday worn shirt S2 should be at the end');
 
+  // 4. おすすめ対象が推奨パンツあり（Group A）のみに限定され、Group B/C で補充されないことの検証
+  const shirtsWithGroupB = [
+    {
+      id: 'S10',
+      category: 'shirt',
+      name: '出社推奨パンツありシャツ',
+      seasonSleeve: '長袖・通年',
+      dressScore: 4.0,
+      comfortScore: 4.0,
+      officeRecommendIds: ['P3'],
+      remoteRecommendIds: [],
+      ngIds: [],
+      ngReason: '',
+      notes: '',
+    },
+    {
+      id: 'S11',
+      category: 'shirt',
+      name: '出社着用可のみシャツ（Group B）',
+      seasonSleeve: '長袖・通年',
+      dressScore: 3.5,
+      comfortScore: 3.5,
+      officeRecommendIds: [], // 推奨パンツなし（P3はngIdsに含まれずotherOk扱い）
+      remoteRecommendIds: [],
+      ngIds: [],
+      ngReason: '',
+      notes: '',
+    },
+    {
+      id: 'S12',
+      category: 'shirt',
+      name: '全パンツNGシャツ（Group C）',
+      seasonSleeve: '長袖・通年',
+      dressScore: 3.0,
+      comfortScore: 3.0,
+      officeRecommendIds: [],
+      remoteRecommendIds: [],
+      ngIds: ['P3', 'P8'],
+      ngReason: '',
+      notes: '',
+    },
+  ];
+  const itemMapGroupB = new Map(itemMap);
+  shirtsWithGroupB.forEach((s) => itemMapGroupB.set(s.id, s));
+
+  const resGroupAOnly = selectRecommendedShirtsForToday({
+    shirts: shirtsWithGroupB,
+    sleeveCategory: 'long',
+    scene: 'office',
+    wearHistory: [],
+    itemMap: itemMapGroupB,
+    pants: testPants,
+    wifeNgPairs: [],
+    yesterdayWornPantsIds: new Set(),
+    todayStr: '2026-11-07',
+    limit: 3,
+  });
+
+  // おすすめは Group A の S10 のみ（1着）となり、limit=3 でも S11 (Group B) や S12 (Group C) で補充されないこと
+  assert.equal(resGroupAOnly.recommendedShirts.length, 1, 'recommendedShirts should only contain Group A shirts');
+  assert.equal(resGroupAOnly.recommendedShirts[0].id, 'S10', 'Only S10 (has primary recommend) should be recommended');
+  assert.ok(
+    resGroupAOnly.scoredCandidates.some((c) => c.shirt.id === 'S11' && c.hasSecondaryRecommend),
+    'S11 should be in scoredCandidates as Group B'
+  );
+
   console.log('  ✅ Today shirt recommendation & sleeve filtering logic verified');
 }
 
