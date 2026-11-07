@@ -69,7 +69,7 @@ export const TodayView: React.FC = () => {
     removeWifeNg,
   } = useClosetStore();
 
-  const [scene, setScene] = useState<SceneMode>('office');
+  const [scene, setScene] = useState<SceneMode>(todayRecord?.scene ?? 'office');
   const [sleeveCategory, setSleeveCategory] = useState<SleeveCategory>('long');
   const [shirtTypeFilter, setShirtTypeFilter] = useState<TodayTopCategoryFilter>('single');
   const [showAllMatchingShirts, setShowAllMatchingShirts] = useState(false);
@@ -89,7 +89,7 @@ export const TodayView: React.FC = () => {
   const recommendationsRef = useRef<HTMLElement>(null);
   const shirtSectionRef = useRef<HTMLElement>(null);
 
-  // Default selected top: today's recorded shirt (if active), or #1 recommended top for default office/long
+  // Default selected top: today's recorded shirt (if active), or #1 recommended top for initial scene / long sleeve
   const [selectedShirtId, setSelectedShirtId] = useState<string>(() => {
     if (todayRecord?.shirtId && shirts.some((s) => s.id === todayRecord.shirtId)) {
       return todayRecord.shirtId;
@@ -97,7 +97,7 @@ export const TodayView: React.FC = () => {
     const initialRecs = selectRecommendedShirtsForToday({
       shirts,
       sleeveCategory: 'long',
-      scene: 'office',
+      scene: todayRecord?.scene ?? 'office',
       wearHistory,
       limit: 1,
     });
