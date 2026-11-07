@@ -795,6 +795,261 @@ export function calculateRecommendationsForShirt(
 }
 
 /**
+ * 気象連動の推奨袖丈区分
+ */
+export type SleeveCategory = 'short' | 'seven' | 'long';
+
+/**
+ * シャツが指定の袖丈区分（気温目安）に合致するか判定する純粋関数
+ */
+export function isShirtMatchingSleeveCategory(
+  shirt: ClosetItem,
+  category: SleeveCategory
+): boolean {
+  const sleeve = shirt.seasonSleeve || '';
+  if (category === 'long') {
+    return sleeve.includes('長袖');
+  }
+  if (category === 'seven') {
+    return sleeve.includes('七分袖') || sleeve.includes('長袖');
+  }
+  return sleeve.includes('半袖') || sleeve.includes('七分袖');
+}
+
+/**
+ * YYYY-MM-DD 文字列の日付オフセット計算（純粋関数）
+ */
+function getDayOffsetDateString(baseDateStr: string, offsetDays: number): string {
+  const [year, month, day] = baseDateStr.split('-').map(Number);
+  const d = new Date(year, month - 1, day);
+  d.setDate(d.getDate() + offsetDays);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const dt = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${dt}`;
+}
+
+/**
+ * 2つの YYYY-MM-DD 文字列の日数差 (dateStrA - dateStrB)
+ */
+function getDaysDifference(dateStrA: string, dateStrB: string): number {
+  const [yA, mA, dA] = dateStrA.split('-').map(Number);
+  const [yB, mB, dB] = dateStrB.split('-').map(Number);
+  const utcA = Date.UTC(yA, mA - 1, dA);
+  const utcB = Date.UTC(yB, mB - 1, dB);
+  return Math.round((utcA - utcB) / (24 * 60 * 60 * 1000));
+}
+
+function getTodayDateString(): string {
+  const d = new Date();
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+/**
+ * おすすめシャツ選定用の入力パラメータ
+ */
+export interface SelectRecommendedShirtsParams {
+  shirts: ClosetItem[];
+  sleeveCategory: SleeveCategory;
+  scene: SceneMode;
+  wearHistory: WearRecord[];
+  itemMap: Map<string, ClosetItem>;
+  pants: ClosetItem[];
+  wifeNgPairs: WifeNgPair[];
+  yesterdayWornPantsIds: Set<string>;
+  todayStr?: string;
+  limit?: number;
+}
+
+/**
+ * おすすめシャツのスコアリング詳細
+ */
+export interface RecommendedShirtScoredItem {
+  shirt: ClosetItem;
+  coolingTier: number; // 0: 4日以上前または未着用, 1: 2〜3日前, 2: 昨日（または直近記録日）
+  daysSinceLastWorn: number;
+  recentWearCount: number;
+  totalWearCount: number;
+  priorityScore: number;
+  hasReliablePants: boolean;
+  hasPrimaryRecommend: boolean;
+  hasSecondaryRecommend: boolean;
+}
+
+/**
+ * おすすめシャツ選定結果
+ */
+export interface RecommendedShirtsResult {
+  recommendedShirts: ClosetItem[];
+  matchingShirts: ClosetItem[];
+  hiddenShirts: ClosetItem[];
+  scoredCandidates: RecommendedShirtScoredItem[];
+}
+
+/**
+ * 天気（気温適合）・シーン・着用履歴・鉄板ペアから朝モード用のおすすめシャツ（上位数着・デフォルト3着）を選定する純粋関数
+ */
+export function selectRecommendedShirtsForToday(
+  params: SelectRecommendedShirtsParams
+): RecommendedShirtsResult {
+  const {
+    shirts,
+    sleeveCategory,
+    scene,
+    wearHistory,
+    itemMap,
+    pants,
+    wifeNgPairs,
+    yesterdayWornPantsIds,
+    todayStr = getTodayDateString(),
+    limit = 3,
+  } = params;
+
+  const yesterdayStr = getDayOffsetDateString(todayStr, -1);
+  const thirtyDaysAgoStr = getDayOffsetDateString(todayStr, -30);
+
+  // 1. 全シャツを気温適合・非適合に分割（片付けた服は除外）
+  const activeShirts = shirts.filter((s) => !s.archived);
+  const matchingShirts: ClosetItem[] = [];
+  const hiddenShirts: ClosetItem[] = [];
+
+  for (const s of activeShirts) {
+    if (isShirtMatchingSleeveCategory(s, sleeveCategory)) {
+      matchingShirts.push(s);
+    } else {
+      hiddenShirts.push(s);
+    }
+  }
+
+  // 過去の着用履歴から直近記録日（yesterdayStrが存在しない場合のフォールバック）を特定
+  const pastRecords = wearHistory
+    .filter((r) => r.date < todayStr)
+    .sort((a, b) => b.date.localeCompare(a.date));
+  const latestRecordDate = pastRecords[0]?.date;
+
+  // 2. 気温適合のうち「1枚もの（!isOuterwear）」のみを候補としてスコアリング
+  const candidates = matchingShirts.filter((s) => !s.isOuterwear);
+
+  const scoredCandidates: RecommendedShirtScoredItem[] = candidates.map((shirt) => {
+    // このシャツが着用された履歴（shirtId または outerwearId として）
+    const shirtWears = wearHistory.filter(
+      (r) => r.date < todayStr && (r.shirtId === shirt.id || r.outerwearId === shirt.id)
+    );
+    const sortedWears = shirtWears.sort((a, b) => b.date.localeCompare(a.date));
+    const lastWornDate = sortedWears[0]?.date;
+
+    // 冷却階層 (coolingTier):
+    // 2: 昨日（または直近記録日）に着用
+    // 1: 2〜3日前に着用
+    // 0: 4日以上前または未着用
+    let coolingTier = 0;
+    let daysSinceLastWorn = 30;
+
+    if (lastWornDate) {
+      daysSinceLastWorn = Math.max(1, getDaysDifference(todayStr, lastWornDate));
+      const isYesterday = lastWornDate === yesterdayStr;
+      const isLatestPast =
+        !wearHistory.some((r) => r.date === yesterdayStr) && lastWornDate === latestRecordDate;
+      if (isYesterday || isLatestPast || daysSinceLastWorn <= 1) {
+        coolingTier = 2;
+      } else if (daysSinceLastWorn <= 3) {
+        coolingTier = 1;
+      } else {
+        coolingTier = 0;
+      }
+    }
+
+    // 着用回数
+    const recentWearCount = shirtWears.filter((r) => r.date >= thirtyDaysAgoStr).length;
+    const totalWearCount = shirtWears.length;
+
+    // シーン適合パンツの算出
+    const rec = calculateRecommendationsForShirt(
+      shirt.id,
+      scene,
+      itemMap,
+      pants,
+      wifeNgPairs,
+      yesterdayWornPantsIds
+    );
+
+    const hasPrimaryRecommend = rec.recommended.length > 0;
+    const hasSecondaryRecommend = rec.otherOk.length > 0;
+
+    // 冷却中でない推奨パンツの存在・鉄板ペアボーナス
+    const nonCoolingRecPants = rec.recommended.find((p) => !p.isYesterdayWorn);
+    const topPants = nonCoolingRecPants || rec.recommended[0];
+
+    let hasReliablePants = false;
+    if (topPants) {
+      const isShirtRecommendsPants =
+        scene === 'office'
+          ? shirt.officeRecommendIds.includes(topPants.pants.id)
+          : shirt.remoteRecommendIds.includes(topPants.pants.id);
+      const isPantsRecommendsShirt =
+        scene === 'office'
+          ? topPants.pants.officeRecommendIds.includes(shirt.id)
+          : topPants.pants.remoteRecommendIds.includes(shirt.id);
+      hasReliablePants = isShirtRecommendsPants && isPantsRecommendsShirt;
+    }
+
+    const reliableBonus = hasReliablePants ? 10 : topPants ? 5 : 0;
+    const sceneScore = scene === 'office' ? shirt.dressScore * 2 : shirt.comfortScore * 2;
+    const daysBonus = 2.0 * Math.min(30, daysSinceLastWorn);
+    const wearPenalty = 8.0 * recentWearCount + 1.5 * totalWearCount;
+
+    const priorityScore = reliableBonus + sceneScore + daysBonus - wearPenalty;
+
+    return {
+      shirt,
+      coolingTier,
+      daysSinceLastWorn,
+      recentWearCount,
+      totalWearCount,
+      priorityScore,
+      hasReliablePants,
+      hasPrimaryRecommend,
+      hasSecondaryRecommend,
+    };
+  });
+
+  const sortScoredItems = (a: RecommendedShirtScoredItem, b: RecommendedShirtScoredItem) => {
+    // 1. 冷却階層（0が最優先、2が末尾）
+    if (a.coolingTier !== b.coolingTier) {
+      return a.coolingTier - b.coolingTier;
+    }
+    // 2. 優先度スコア（高い順）
+    if (b.priorityScore !== a.priorityScore) {
+      return b.priorityScore - a.priorityScore;
+    }
+    // 3. ID昇順（決定論的タイブレーク）
+    return a.shirt.id.localeCompare(b.shirt.id, undefined, { numeric: true });
+  };
+
+  // 推奨パンツが存在するグループ（Group A）、着用可パンツが存在するグループ（Group B）、その他（Group C）
+  const groupA = scoredCandidates.filter((item) => item.hasPrimaryRecommend).sort(sortScoredItems);
+  const groupB = scoredCandidates
+    .filter((item) => !item.hasPrimaryRecommend && item.hasSecondaryRecommend)
+    .sort(sortScoredItems);
+  const groupC = scoredCandidates
+    .filter((item) => !item.hasPrimaryRecommend && !item.hasSecondaryRecommend)
+    .sort(sortScoredItems);
+
+  const ordered = [...groupA, ...groupB, ...groupC];
+  const recommendedShirts = ordered.slice(0, limit).map((item) => item.shirt);
+
+  return {
+    recommendedShirts,
+    matchingShirts,
+    hiddenShirts,
+    scoredCandidates: ordered,
+  };
+}
+
+/**
  * 既存アイテム群から指定カテゴリの次の連番IDを算出する (最大値 + 1)
  */
 export function getNextSequentialId(items: ClosetItem[], category: Category): string {
