@@ -74,7 +74,7 @@ export const HistoryModal: React.FC<HistoryModalProps> = ({ isOpen, onClose }) =
                     </div>
                     <div className="min-w-0">
                       <div className="text-[10px] text-blue-400 font-mono font-bold">
-                        {rec.date} ({rec.scene === 'office' ? '出社' : 'リモート'})
+                        {rec.date} ({rec.scene === 'office' ? '出社' : '外出'})
                       </div>
                       <div className="text-xs font-semibold text-white truncate">
                         {shirt?.name || rec.shirtId} × {p?.name || rec.pantsId}

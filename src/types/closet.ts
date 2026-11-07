@@ -460,6 +460,22 @@ export {
   resolveNextGalleryViewerItemId,
 } from '../utils/closetDomain';
 
+// ----------------------------------------------------
+// 朝モード推奨シャツ選定関連の型定義と関数
+// ----------------------------------------------------
+
+export type {
+  SleeveCategory,
+  SelectRecommendedShirtsParams,
+  RecommendedShirtScoredItem,
+  RecommendedShirtsResult,
+} from '../utils/closetDomain';
+
+export {
+  isShirtMatchingSleeveCategory,
+  selectRecommendedShirtsForToday,
+} from '../utils/closetDomain';
+
 
 
 
