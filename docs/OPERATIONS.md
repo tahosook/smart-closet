@@ -249,8 +249,11 @@ flowchart TD
      上部の **「この版を復元」** をクリックして確定します（`wear_history`、`wife_ng`、`meta_config` のすべてが当時の状態に戻ります）。
 3. **`meta_config` シートの確認と設定値・墓標の整合調整:**
    スプレッドシートの `meta_config` シートを開き、以下の点を確認・調整します。
-   - **① 削除墓標（`syncTombstones`）のクリア（方法A・B共通）:**
-     A列が `syncTombstones` の行を確認します。方法Bでシート行のみを戻した場合や、方法Aで復元した過去版に誤削除時の墓標が含まれている場合は、`syncTombstones` 行の B列（値）を空欄にするか、初期値 `{"deletedWearMap":{},"deletedWifeNgMap":{},"wearHistoryClearedAt":0,"customClosetDataClearedAt":0}` に書き換えて墓標をリセットします。
+   - **① 削除墓標（`syncTombstones`）の限定リセット（方法A・B共通）:**
+     A列が `syncTombstones` の行を確認します。方法Bでシート行のみを戻した場合や、方法Aで復元した過去版に誤削除時の墓標が含まれている場合は、B列（JSON文字列）を編集し、**復旧対象に対応する墓標項目のみをリセット**します。
+     - **リセットする項目:** `deletedWearMap` を `{}`、`deletedWifeNgMap` を `{}`、`wearHistoryClearedAt` を `0` に書き換えます。
+     - **保持すべき項目（重要）:** カスタム服データ自体の復旧を行わない場合、B列全体を空欄にしたり `customClosetDataClearedAt` まで `0` にリセットしてはいけません。`customClosetDataClearedAt` を消去すると、意図的に削除済みのカスタム服データが別端末や後続同期で再出現（ゾンビ復活）する原因になります。そのため、`customClosetDataClearedAt` だけは**現在設定されている数値タイムスタンプのまま保持**してください。
+     *(設定例: `{"deletedWearMap":{},"deletedWifeNgMap":{},"wearHistoryClearedAt":0,"customClosetDataClearedAt":<現在の値を維持>}`)*
    - **② `secretToken` および `imageFolderId` の整合確認（★方法Aを実行した場合に必須）:**
      方法Aでシート全体を過去版に戻した場合、`meta_config` の `secretToken` や `imageFolderId` も過去の値に戻ってしまいます。しかし Cloudflare Pages 側の Production Secret（`GAS_SECRET_TOKEN`）は自動で巻き戻らないため、値が食い違うと以降のすべての同期が認証エラーとなります。必ず `meta_config` の `secretToken` が Cloudflare Pages Production の `GAS_SECRET_TOKEN` と一致していること、および `imageFolderId` が現在の正しい写真フォルダIDであることを確認し、食い違いがある場合は現在の正本値へ書き直してください。
 4. **誤消去を実行した端末のローカル墓標クリアと「シートから取り直す」の実行:**
