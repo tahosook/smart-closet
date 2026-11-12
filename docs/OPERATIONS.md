@@ -243,11 +243,16 @@ flowchart TD
 2. **Google スプレッドシートの「変更履歴（版数履歴）」からデータを復元:**
    - PC で対象の Google スプレッドシートを開き、上部メニュー **「ファイル」>「変更履歴」>「変更履歴を表示」**（`Cmd+Option+Shift+H` / `Ctrl+Alt+Shift+H`）を開きます。
    - 右ペインのタイムラインから、誤消去や破損が発生する直前の正常な版を選択します。
-   - **方法A（スプレッドシート全体をその時点に戻す場合）:** 上部の **「この版を復元」** をクリックして確定します（`wear_history`、`wife_ng`、`meta_config` のすべてが正常時点に戻ります）。
-   - **方法B（特定のシート・行のみを戻す場合）:** 過去の版の `wear_history` シートや `wife_ng` シートの該当セル範囲をコピーし、現在のシートへ貼り付けて戻します。
-3. **`meta_config` シートの `syncTombstones`（削除墓標）の確認・クリア:**
-   - スプレッドシートの `meta_config` シートを開き、A列が `syncTombstones` の行を確認します。
-   - 方法Bでシート行のみを戻した場合や、復元した版に誤削除の墓標が含まれている場合は、`syncTombstones` 行の B列（値）を空欄にするか、初期値 `{"deletedWearMap":{},"deletedWifeNgMap":{},"wearHistoryClearedAt":0,"customClosetDataClearedAt":0}` に書き換えます。
+   - **【原則推奨】方法B（対象シートのデータのみを戻す）:**
+     着用履歴や奥様NGのデータのみの復旧が目的なら、`meta_config`（合言葉や画像フォルダID）を巻き戻さず安全に復旧できるため、**原則として方法Bを推奨**します。過去の版の `wear_history` シートや `wife_ng` シートの該当セル範囲をコピーし、現在のシートへ貼り付けて復旧します。
+   - **方法A（スプレッドシート全体を過去版へ戻す場合）:**
+     上部の **「この版を復元」** をクリックして確定します（`wear_history`、`wife_ng`、`meta_config` のすべてが当時の状態に戻ります）。
+3. **`meta_config` シートの確認と設定値・墓標の整合調整:**
+   スプレッドシートの `meta_config` シートを開き、以下の点を確認・調整します。
+   - **① 削除墓標（`syncTombstones`）のクリア（方法A・B共通）:**
+     A列が `syncTombstones` の行を確認します。方法Bでシート行のみを戻した場合や、方法Aで復元した過去版に誤削除時の墓標が含まれている場合は、`syncTombstones` 行の B列（値）を空欄にするか、初期値 `{"deletedWearMap":{},"deletedWifeNgMap":{},"wearHistoryClearedAt":0,"customClosetDataClearedAt":0}` に書き換えて墓標をリセットします。
+   - **② `secretToken` および `imageFolderId` の整合確認（★方法Aを実行した場合に必須）:**
+     方法Aでシート全体を過去版に戻した場合、`meta_config` の `secretToken` や `imageFolderId` も過去の値に戻ってしまいます。しかし Cloudflare Pages 側の Production Secret（`GAS_SECRET_TOKEN`）は自動で巻き戻らないため、値が食い違うと以降のすべての同期が認証エラーとなります。必ず `meta_config` の `secretToken` が Cloudflare Pages Production の `GAS_SECRET_TOKEN` と一致していること、および `imageFolderId` が現在の正しい写真フォルダIDであることを確認し、食い違いがある場合は現在の正本値へ書き直してください。
 4. **誤消去を実行した端末のローカル墓標クリアと「シートから取り直す」の実行:**
    - 誤消去を実行した端末で、もし未送信の削除墓標が残っている（「未送信の変更があります」表示になっている）場合は、ブラウザの開発者ツール（Application > Local Storage）またはサイトデータ消去で `smart_closet_sync_tombstones` と `smart_closet_sync_dirty` を削除します（※これを残したまま同期すると、端末側の未送信墓標が再び Push されてしまいます）。
    - クラウド同期モーダルを開き、折りたたみ「詳細・復旧（個別でやり直す場合）」の中の **「📥 シートから取り直す」**（または未送信がない状態で「今すぐ同期」）をタップします。
