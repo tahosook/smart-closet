@@ -246,14 +246,16 @@ flowchart TD
    - **【原則推奨】方法B（対象シートのデータのみを戻す）:**
      着用履歴や奥様NGのデータのみの復旧が目的なら、`meta_config`（合言葉や画像フォルダID）を巻き戻さず安全に復旧できるため、**原則として方法Bを推奨**します。過去の版の `wear_history` シートや `wife_ng` シートの該当セル範囲をコピーし、現在のシートへ貼り付けて復旧します。
    - **方法A（スプレッドシート全体を過去版へ戻す場合）:**
-     上部の **「この版を復元」** をクリックして確定します（`wear_history`、`wife_ng`、`meta_config` のすべてが当時の状態に戻ります）。
+     **【事前準備（必須）】** 「この版を復元」をクリックする**前**に、現在の `meta_config` シートを開き、A列 `syncTombstones` の B列（値）に含まれる `customClosetDataClearedAt` の数値タイムスタンプをメモ等に控えておきます（全体復元により過去の値に巻き戻るため、手順3で書き戻すのに使用します）。その後、変更履歴のタイムラインから上部の **「この版を復元」** をクリックして確定します（`wear_history`、`wife_ng`、`meta_config` のすべてが当時の状態に戻ります）。
 3. **`meta_config` シートの確認と設定値・墓標の整合調整:**
    スプレッドシートの `meta_config` シートを開き、以下の点を確認・調整します。
    - **① 削除墓標（`syncTombstones`）の限定リセット（方法A・B共通）:**
      A列が `syncTombstones` の行を確認します。方法Bでシート行のみを戻した場合や、方法Aで復元した過去版に誤削除時の墓標が含まれている場合は、B列（JSON文字列）を編集し、**復旧対象に対応する墓標項目のみをリセット**します。
      - **リセットする項目:** `deletedWearMap` を `{}`、`deletedWifeNgMap` を `{}`、`wearHistoryClearedAt` を `0` に書き換えます。
-     - **保持すべき項目（重要）:** カスタム服データ自体の復旧を行わない場合、B列全体を空欄にしたり `customClosetDataClearedAt` まで `0` にリセットしてはいけません。`customClosetDataClearedAt` を消去すると、意図的に削除済みのカスタム服データが別端末や後続同期で再出現（ゾンビ復活）する原因になります。そのため、`customClosetDataClearedAt` だけは**現在設定されている数値タイムスタンプのまま保持**してください。
-     *(設定例: `{"deletedWearMap":{},"deletedWifeNgMap":{},"wearHistoryClearedAt":0,"customClosetDataClearedAt":<現在の値を維持>}`)*
+     - **保持・復旧すべき項目（重要）:** カスタム服データ自体の復旧を行わない場合、B列全体を空欄にしたり `customClosetDataClearedAt` まで `0` にリセットしてはいけません。`customClosetDataClearedAt` を消去または過去の古い値に巻き戻すと、意図的に削除済みのカスタム服データが別端末や後続同期で再出現（ゾンビ復活）する原因になります。
+       - **方法Bの場合:** 現在設定されている数値タイムスタンプをそのまま保持してください。
+       - **方法Aの場合:** 全体復元により過去の値（または `0`）に巻き戻っているため、**手順2の復元前に控えておいた数値タイムスタンプ**を書き戻してください。
+     *(設定例: `{"deletedWearMap":{},"deletedWifeNgMap":{},"wearHistoryClearedAt":0,"customClosetDataClearedAt":<保持または控えておいた値>}`)*
    - **② `secretToken` および `imageFolderId` の整合確認（★方法Aを実行した場合に必須）:**
      方法Aでシート全体を過去版に戻した場合、`meta_config` の `secretToken` や `imageFolderId` も過去の値に戻ってしまいます。しかし Cloudflare Pages 側の Production Secret（`GAS_SECRET_TOKEN`）は自動で巻き戻らないため、値が食い違うと以降のすべての同期が認証エラーとなります。必ず `meta_config` の `secretToken` が Cloudflare Pages Production の `GAS_SECRET_TOKEN` と一致していること、および `imageFolderId` が現在の正しい写真フォルダIDであることを確認し、食い違いがある場合は現在の正本値へ書き直してください。
 4. **誤消去を実行した端末のローカル墓標クリアと「シートから取り直す」の実行:**
