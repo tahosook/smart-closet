@@ -2200,6 +2200,66 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
   assert.equal(resAfterTtl.status, 200);
   assert.equal(certsFetchCount, 3, 'After 10-min TTL expiry, JWKS refresh must run again');
 
+  // 8c. 未知 kid の強制再取得が一時失敗 (503) した場合は抑制状態を残さず、JWKS 復旧後に新しい鍵 (key2) を再取得できること
+  clearJwksCache();
+  certsFetchCount = 0;
+  certsShouldFail = false;
+  currentJwksKeys = [key1.publicJwk];
+
+  const resWarmBeforeFail = await onRequestGet({
+    request: new Request('https://smart-closet-djw.pages.dev/api/bootstrap-config', {
+      headers: { 'Cf-Access-Jwt-Assertion': validUserJwt },
+    }),
+    env: baseEnv,
+    fetchFn: mockFetch,
+    nowMs: fixedNowMs,
+  });
+  assert.equal(resWarmBeforeFail.status, 200);
+  assert.equal(certsFetchCount, 1);
+
+  // 新しい鍵 (key2) での強制再取得が一時的に失敗
+  certsShouldFail = true;
+  const resRotatedFail = await onRequestGet({
+    request: new Request('https://smart-closet-djw.pages.dev/api/bootstrap-config', {
+      headers: { 'Cf-Access-Jwt-Assertion': rotatedJwt },
+    }),
+    env: baseEnv,
+    fetchFn: mockFetch,
+    nowMs: fixedNowMs + 5_000,
+  });
+  assert.equal(resRotatedFail.status, 503);
+  assert.equal(certsFetchCount, 2);
+
+  // 同一 TTL 内で JWKS が復旧 -> 失敗時は抑制されていないため再試行で key2 を取得して 200 になること
+  certsShouldFail = false;
+  currentJwksKeys = [key1.publicJwk, key2.publicJwk];
+  const resRotatedRecovered = await onRequestGet({
+    request: new Request('https://smart-closet-djw.pages.dev/api/bootstrap-config', {
+      headers: { 'Cf-Access-Jwt-Assertion': rotatedJwt },
+    }),
+    env: baseEnv,
+    fetchFn: mockFetch,
+    nowMs: fixedNowMs + 10_000,
+  });
+  assert.equal(resRotatedRecovered.status, 200);
+  assert.equal(
+    certsFetchCount,
+    3,
+    'Failed forced refresh must NOT lock out retry once JWKS recovers within TTL'
+  );
+
+  // 成功後は抑制時刻が確定しているため、同一 TTL 内の別未知 kid は再取得せず 401 になること
+  const resSuppressedAfterSuccess = await onRequestGet({
+    request: new Request('https://smart-closet-djw.pages.dev/api/bootstrap-config', {
+      headers: { 'Cf-Access-Jwt-Assertion': unknownKidJwt1 },
+    }),
+    env: baseEnv,
+    fetchFn: mockFetch,
+    nowMs: fixedNowMs + 20_000,
+  });
+  assert.equal(resSuppressedAfterSuccess.status, 401);
+  assert.equal(certsFetchCount, 3, 'After successful forced refresh, subsequent unknown kid within TTL must be suppressed');
+
   // 9. JWKS 取得失敗時は Fail-Closed (503) で設定を返さない
   clearJwksCache();
   certsShouldFail = true;

@@ -205,7 +205,7 @@ async function getSigningKeyByKid(
       return null;
     }
 
-    cached.unknownKidRefreshedAt = nowMs;
+    // fetch 成功時にのみ fetchJwksForTeam 経由で抑制時刻を記録（一時的失敗時は抑制状態を残さない）
     const rotatedKeys = await fetchJwksForTeam(teamDomain, fetchImpl, nowMs, nowMs);
     return rotatedKeys.get(kid) ?? null;
   }
