@@ -17,7 +17,7 @@ flowchart TD
     subgraph CF["Cloudflare Edge Infrastructure"]
         CFA["Cloudflare Access (Zero Trust)<br/>アプリ: smart-closet-production<br/>認証: Google OAuth 2.0<br/>セッション: 1か月"]
         Pages["Cloudflare Pages (smart-closet)<br/>URL: smart-closet-djw.pages.dev"]
-        Func["Pages Functions (/api/bootstrap-config)<br/>※Production Secret (URL/合言葉/許可メール) 保持"]
+        Func["Pages Functions (/api/bootstrap-config)<br/>※Production Secret (URL/合言葉/許可メール/Access検証設定) 保持<br/>※Access JWT (RS256) 暗号検証実施"]
     end
 
     subgraph GoogleCloud["Google Cloud / Google Workspace"]
@@ -73,7 +73,9 @@ flowchart TD
   - `GAS_WEB_APP_URL`: デプロイ済み GAS ウェブアプリの URL (Encrypted)
   - `GAS_SECRET_TOKEN`: スプレッドシート `meta_config` と一致するシークレット合言葉 (Encrypted)
   - `ALLOWED_EMAILS`: `tahosook@gmail.com` (Encrypted)
-  - *※ Preview 環境ではこれらが未登録のため `/api/bootstrap-config` が 404 となり、安全に手入力モードへフォールバックします。*
+  - `CF_ACCESS_TEAM_DOMAIN`: `https://smart-closet-djw-pages.cloudflareaccess.com` (Encrypted / Plaintext) — Access JWT の `iss` 検証および JWKS（`/cdn-cgi/access/certs`）取得元
+  - `CF_ACCESS_AUD`: `smart-closet-production` の Application Audience (AUD) Tag (Encrypted) — Access JWT の `aud` 検証用
+  - *※ Preview 環境ではこれらが未登録のため `/api/bootstrap-config` が 404 となり、安全に手入力モードへフォールバックします。また、Production でも 5 つすべてが揃わない場合は Fail-Closed で 404 を返します。*
 
 ### 3.2 Cloudflare Zero Trust (Access)
 - **プラン:** Free プラン（支払い方法として Google Pay 登録済み、現時点で課金なし）
@@ -109,7 +111,7 @@ flowchart TD
 | 検証タイミング（いつ） | 対象コンポーネント | 確認・実施する具体的内容（何を） | 異常時の対応 |
 | :--- | :--- | :--- | :--- |
 | **月次（毎月1日頃：Access セッション 1か月の満了に伴う再ログイン時）** | **Cloudflare Access & Google OAuth** | 1. Pixel 9a / Mac mini で Access のセッション期限切れ後に Google ログイン画面へ正常にリダイレクトされ、再認証が通過するか確認。<br/>2. Google Cloud Console (`cloudflare-access`) の OAuth 同意画面ステータス（「テスト中」）とテストユーザー（`tahosook@gmail.com`）が維持されているか確認。 | OAuth エラー時は Google Cloud Console の Credentials / Redirect URI と Zero Trust > Settings > Authentication > Login methods (`Google`) の Client ID / Secret を再照合。 |
-| **四半期ごと（1月・4月・7月・10月の月初）および設定変更時** | **Cloudflare Pages Secrets & スプレッドシート `meta_config` の整合** | 1. Cloudflare Pages (`smart-closet`) の Production Secret（`GAS_WEB_APP_URL`, `GAS_SECRET_TOKEN`, `ALLOWED_EMAILS`）が登録・暗号化維持されており、Preview 環境には未登録のままであることを確認。<br/>2. スプレッドシート `meta_config` シートの `secretToken`・`imageFolderId` が意図した正本値と一致しているか確認。<br/>3. クラウド同期モーダルの「☁️ クラウドから設定を自動取得」を実行し、`/api/bootstrap-config` から正常に設定が配布され「今すぐ同期」が成功するか確認。 | 不一致がある場合は §4.1 の手順に従って `meta_config` と Pages Production Secret を揃え、Pages の「Retry deployment」を実行。 |
+| **四半期ごと（1月・4月・7月・10月の月初）および設定変更時** | **Cloudflare Pages Secrets & スプレッドシート `meta_config` の整合** | 1. Cloudflare Pages (`smart-closet`) の Production Secret（`GAS_WEB_APP_URL`, `GAS_SECRET_TOKEN`, `ALLOWED_EMAILS`, `CF_ACCESS_TEAM_DOMAIN`, `CF_ACCESS_AUD`）が登録・暗号化維持されており、Preview 環境には未登録のままであることを確認。<br/>2. スプレッドシート `meta_config` シートの `secretToken`・`imageFolderId` が意図した正本値と一致しているか確認。<br/>3. クラウド同期モーダルの「☁️ クラウドから設定を自動取得」を実行し、`/api/bootstrap-config` から正常に設定が配布され「今すぐ同期」が成功するか確認。 | 不一致がある場合は §4.1 の手順に従って `meta_config` と Pages Production Secret を揃え、Pages の「Retry deployment」を実行。 |
 | **半年ごと（4月・10月の衣替え・全体見直し時）** | **Access ポリシー & GitHub 連携権限** | 1. Cloudflare Zero Trust > Access > Applications (`smart-closet-production`) の Include ルールが許可メールアドレスのみに限定されているか確認。<br/>2. GitHub App `Cloudflare Workers and Pages` の認可対象リポジトリが `tahosook/smart-closet` のみに限定されているか確認。 | 意図しないアカウントやリポジトリが含まれている場合は即座に削除し、§4.1 の合言葉ローテーションを実施。 |
 
 ---
@@ -120,7 +122,7 @@ flowchart TD
 
 #### 脅威モデルと合言葉の役割
 - **二重防御における位置づけ:**
-  1. **フロントエンド（PWA ＆ `/api/bootstrap-config`）:** Cloudflare Access（Google OAuth 2.0）と `ALLOWED_EMAILS` により、オーナー（および明示的に追加した家族）以外のアクセスをエッジで遮断します。
+  1. **フロントエンド（PWA ＆ `/api/bootstrap-config`）:** Cloudflare Access（Google OAuth 2.0）でエッジ保護した上で、Pages Function 側でも Access JWT（`Cf-Access-Jwt-Assertion` / `CF_Authorization`）の RS256 署名・`iss`（`CF_ACCESS_TEAM_DOMAIN`）・`aud`（`CF_ACCESS_AUD`）・`exp`/`nbf`・`email` 一致および `ALLOWED_EMAILS` を暗号検証（Fail-Closed）し、多層防御でオーナー（および明示的に追加した家族）以外のアクセスを遮断します。
   2. **バックエンド（GAS Web アプリ `gas/Code.gs`）:** GAS Web アプリはブラウザから CORS Simple Request で直接通信する仕様上、デプロイ設定が「アクセスできるユーザー: 全員」となります。そのため、万が一 GAS の実行 URL（`https://script.google.com/macros/s/.../exec`）が外部に知られるか推測された場合でも、第2の防壁として `meta_config` シートの `secretToken` による **Fail-Closed 認証（`validateToken`）** が機能し、正しい合言葉を持たないリクエスト（データの読み書き・写真の取得／アップロード／削除）をすべて拒否します。
 - **保護対象と限界:**
   - `secretToken` と `GAS_WEB_APP_URL` が**同時に**第三者へ漏洩した場合、その第三者は GAS エンドポイントへ直接リクエストを送ることで、スプレッドシートのデータ（着用履歴・奥様NG・カスタム服データ）および Google ドライブ非公開フォルダ内の服写真へアクセス可能になります（Google アカウント自体の他ファイルにはアクセス不可ですが、GAS に付与された権限範囲の操作が可能になります）。
