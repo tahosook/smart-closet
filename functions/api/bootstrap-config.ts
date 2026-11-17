@@ -27,6 +27,7 @@ interface PagesContext {
 interface JwksCacheEntry {
   fetchedAt: number;
   keysByKid: Map<string, JsonWebKey>;
+  unknownKidRefreshedAt: number | null;
 }
 
 type JwtVerifyResult =
@@ -146,7 +147,8 @@ function decodeBase64UrlJson(input: string): Record<string, unknown> | null {
 async function fetchJwksForTeam(
   teamDomain: string,
   fetchImpl: typeof fetch,
-  nowMs: number
+  nowMs: number,
+  unknownKidRefreshedAt: number | null
 ): Promise<Map<string, JsonWebKey>> {
   const certsUrl = `${teamDomain}/cdn-cgi/access/certs`;
   const res = await fetchImpl(certsUrl, {
@@ -178,7 +180,7 @@ async function fetchJwksForTeam(
     throw new Error('No usable RSA keys in JWKS');
   }
 
-  jwksCache.set(teamDomain, { fetchedAt: nowMs, keysByKid });
+  jwksCache.set(teamDomain, { fetchedAt: nowMs, keysByKid, unknownKidRefreshedAt });
   return keysByKid;
 }
 
@@ -194,10 +196,22 @@ async function getSigningKeyByKid(
     if (cachedKey) {
       return cachedKey;
     }
+
+    // 未知の kid による強制再取得は、同一チームドメインにつきキャッシュ TTL (10分) あたり1回までに制限
+    if (
+      cached.unknownKidRefreshedAt !== null &&
+      nowMs - cached.unknownKidRefreshedAt < JWKS_CACHE_TTL_MS
+    ) {
+      return null;
+    }
+
+    cached.unknownKidRefreshedAt = nowMs;
+    const rotatedKeys = await fetchJwksForTeam(teamDomain, fetchImpl, nowMs, nowMs);
+    return rotatedKeys.get(kid) ?? null;
   }
 
-  // キャッシュ未命中・期限切れ・鍵ローテーション(未知の kid)時は最新の公開鍵を取得
-  const freshKeys = await fetchJwksForTeam(teamDomain, fetchImpl, nowMs);
+  // キャッシュ未命中または TTL 期限切れ時は最新の公開鍵を取得
+  const freshKeys = await fetchJwksForTeam(teamDomain, fetchImpl, nowMs, null);
   return freshKeys.get(kid) ?? null;
 }
 

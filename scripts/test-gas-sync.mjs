@@ -2109,6 +2109,97 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
   assert.equal(resRotated.status, 200);
   assert.equal(certsFetchCount, 2, 'Unknown kid must trigger fresh JWKS fetch for key rotation');
 
+  // 8b. 未知 kid の連続リクエストで JWKS fetch が増幅しないこと（TTL 10分あたり強制再取得は1回まで）
+  clearJwksCache();
+  certsFetchCount = 0;
+  currentJwksKeys = [key1.publicJwk];
+
+  // 初回通常取得（key1）
+  const resWarmCache = await onRequestGet({
+    request: new Request('https://smart-closet-djw.pages.dev/api/bootstrap-config', {
+      headers: { 'Cf-Access-Jwt-Assertion': validUserJwt },
+    }),
+    env: baseEnv,
+    fetchFn: mockFetch,
+    nowMs: fixedNowMs,
+  });
+  assert.equal(resWarmCache.status, 200);
+  assert.equal(certsFetchCount, 1);
+
+  // 1回目の未知 kid: 鍵ローテーション追従のため1回だけ強制再取得 -> 見つからず 401
+  const unknownKidJwt1 = await signJwt(
+    { alg: 'RS256', kid: 'kid-unknown-1', typ: 'JWT' },
+    makeValidClaims({ email: 'tahosook@gmail.com' }),
+    key1.privateKey
+  );
+  const resUnknown1 = await onRequestGet({
+    request: new Request('https://smart-closet-djw.pages.dev/api/bootstrap-config', {
+      headers: { 'Cf-Access-Jwt-Assertion': unknownKidJwt1 },
+    }),
+    env: baseEnv,
+    fetchFn: mockFetch,
+    nowMs: fixedNowMs + 1_000,
+  });
+  assert.equal(resUnknown1.status, 401);
+  assert.equal(certsFetchCount, 2, 'First unknown kid within TTL triggers 1 forced JWKS refresh');
+
+  // 2回目・3回目の未知 kid（同一 TTL 内）: 再取得せず即 401（fetch 回数が増えないこと）
+  for (const [idx, kidName] of ['kid-unknown-2', 'kid-unknown-3'].entries()) {
+    const unknownJwt = await signJwt(
+      { alg: 'RS256', kid: kidName, typ: 'JWT' },
+      makeValidClaims({ email: 'tahosook@gmail.com' }),
+      key1.privateKey
+    );
+    const resUnknownFollowup = await onRequestGet({
+      request: new Request('https://smart-closet-djw.pages.dev/api/bootstrap-config', {
+        headers: { 'Cf-Access-Jwt-Assertion': unknownJwt },
+      }),
+      env: baseEnv,
+      fetchFn: mockFetch,
+      nowMs: fixedNowMs + (idx + 2) * 10_000,
+    });
+    assert.equal(resUnknownFollowup.status, 401);
+    assert.equal(
+      certsFetchCount,
+      2,
+      `Subsequent unknown kid (${kidName}) within TTL must NOT trigger additional JWKS fetch`
+    );
+  }
+
+  // 既存の正規鍵 (key1) は引き続きキャッシュから 200 で通ること
+  const resValidDuringCooldown = await onRequestGet({
+    request: new Request('https://smart-closet-djw.pages.dev/api/bootstrap-config', {
+      headers: { 'Cf-Access-Jwt-Assertion': validUserJwt },
+    }),
+    env: baseEnv,
+    fetchFn: mockFetch,
+    nowMs: fixedNowMs + 30_000,
+  });
+  assert.equal(resValidDuringCooldown.status, 200);
+  assert.equal(certsFetchCount, 2);
+
+  // TTL (10分) 経過後は通常再取得が走り、新しい鍵 (key2) も再取得できること
+  currentJwksKeys = [key1.publicJwk, key2.publicJwk];
+  const afterTtlMs = fixedNowMs + 10 * 60 * 1000 + 2_000;
+  const rotatedAfterTtlJwt = await signJwt(
+    { alg: 'RS256', kid: key2.kid, typ: 'JWT' },
+    makeValidClaims({
+      email: 'tahosook@gmail.com',
+      exp: Math.floor(afterTtlMs / 1000) + 3600,
+    }),
+    key2.privateKey
+  );
+  const resAfterTtl = await onRequestGet({
+    request: new Request('https://smart-closet-djw.pages.dev/api/bootstrap-config', {
+      headers: { 'Cf-Access-Jwt-Assertion': rotatedAfterTtlJwt },
+    }),
+    env: baseEnv,
+    fetchFn: mockFetch,
+    nowMs: afterTtlMs,
+  });
+  assert.equal(resAfterTtl.status, 200);
+  assert.equal(certsFetchCount, 3, 'After 10-min TTL expiry, JWKS refresh must run again');
+
   // 9. JWKS 取得失敗時は Fail-Closed (503) で設定を返さない
   clearJwksCache();
   certsShouldFail = true;
