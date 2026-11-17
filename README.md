@@ -170,7 +170,7 @@ Smart Closet は **Cloudflare Pages**（`https://smart-closet-djw.pages.dev`）�
 ### 自動ブートストラップの仕組み
 Cloudflare Access で認証されたユーザーに対して、同一オリジンの Pages Function（`/api/bootstrap-config`）が以下の安全策のもとで同期設定を自動配布します：
 1. **成果物へのシークレット非混入:** `GAS_WEB_APP_URL` と `GAS_SECRET_TOKEN` は Cloudflare Pages の Production Secret（暗号化変数）としてのみ保持され、ビルド成果物（`dist/`）や公開 Git には一切含まれません。
-2. **多層防御:** `Cf-Access-Authenticated-User-Email` ヘッダーと `ALLOWED_EMAILS`（`tahosook@gmail.com` 等）の照合を必須検証（Fail-Closed）。未登録の Preview 環境では 404 を返し、静かに手入力へフォールバックします。
+2. **多層防御:** Cloudflare Access のエッジ認証に加え、Function 側でも Access JWT（`Cf-Access-Jwt-Assertion` / `CF_Authorization`）の RS256 署名（JWKS）・`iss`（`CF_ACCESS_TEAM_DOMAIN`）・`aud`（`CF_ACCESS_AUD`）・`exp`/`nbf`・`email` 一致および `ALLOWED_EMAILS`（`tahosook@gmail.com` 等）の照合を必須検証（Fail-Closed）。未登録の Preview 環境では 404 を返し、静かに手入力へフォールバックします。
 3. **サーバー正本整合:** 写真フォルダ ID（`imageFolderId`）はスプレッドシートの `meta_config` シートを唯一の正本とし、ブートストラップ直後の初回同期（Pull）で自動セットされます。
 
 ### シークレット合言葉 (`secretToken`) のローテーション・家族追加

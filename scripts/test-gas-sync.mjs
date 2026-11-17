@@ -1708,7 +1708,7 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
 }
 
 // -------------------------------------------------------------
-// Test Case 13: Cloudflare Pages Function bootstrap-config.ts 単体テスト
+// Test Case 13: Cloudflare Pages Function bootstrap-config.ts 単体テスト (Access JWT 検証含む)
 // -------------------------------------------------------------
 {
   const bootstrapTsPath = path.join(projectRoot, 'functions/api/bootstrap-config.ts');
@@ -1718,80 +1718,350 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
   const transpiledBootstrap = ts.transpileModule(bootstrapCode, {
     compilerOptions: { module: ts.ModuleKind.ESNext },
   }).outputText;
-  const { onRequestGet } = await import(
+  const { onRequestGet, clearJwksCache } = await import(
     'data:text/javascript;base64,' + Buffer.from(transpiledBootstrap).toString('base64')
   );
+
+  const toBase64Url = (input) =>
+    Buffer.from(input)
+      .toString('base64')
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+      .replace(/=+$/g, '');
+
+  const generateTestRsaKey = async (kid) => {
+    const keyPair = await crypto.subtle.generateKey(
+      {
+        name: 'RSASSA-PKCS1-v1_5',
+        modulusLength: 2048,
+        publicExponent: new Uint8Array([1, 0, 1]),
+        hash: 'SHA-256',
+      },
+      true,
+      ['sign', 'verify']
+    );
+    const publicJwk = await crypto.subtle.exportKey('jwk', keyPair.publicKey);
+    return {
+      kid,
+      privateKey: keyPair.privateKey,
+      publicJwk: {
+        ...publicJwk,
+        kid,
+        alg: 'RS256',
+        use: 'sig',
+      },
+    };
+  };
+
+  const signJwt = async (header, payload, privateKey) => {
+    const headerB64 = toBase64Url(JSON.stringify(header));
+    const payloadB64 = toBase64Url(JSON.stringify(payload));
+    const signingInput = new TextEncoder().encode(`${headerB64}.${payloadB64}`);
+    const signature = await crypto.subtle.sign('RSASSA-PKCS1-v1_5', privateKey, signingInput);
+    const sigB64 = toBase64Url(new Uint8Array(signature));
+    return `${headerB64}.${payloadB64}.${sigB64}`;
+  };
+
+  const key1 = await generateTestRsaKey('kid-primary-1');
+  const key2 = await generateTestRsaKey('kid-rotated-2');
+  const rogueKey = await generateTestRsaKey('kid-primary-1');
 
   const validUrl = 'https://script.google.com/macros/s/AKfycb_sample/exec';
   const validToken = 'sc_testtoken12345';
   const allowedEmails = 'tahosook@gmail.com,family@example.com';
+  const teamDomain = 'https://smart-closet-djw-pages.cloudflareaccess.com';
+  const validAud = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+  const fixedNowMs = 1_800_000_000_000;
+  const fixedNowSec = Math.floor(fixedNowMs / 1000);
 
-  // 1. 環境変数未設定（Preview環境想定など） -> 404
+  const baseEnv = {
+    GAS_WEB_APP_URL: validUrl,
+    GAS_SECRET_TOKEN: validToken,
+    ALLOWED_EMAILS: allowedEmails,
+    CF_ACCESS_TEAM_DOMAIN: `${teamDomain}/`, // 末尾スラッシュ正規化も検証
+    CF_ACCESS_AUD: validAud,
+  };
+
+  let currentJwksKeys = [key1.publicJwk];
+  let certsFetchCount = 0;
+  let certsShouldFail = false;
+
+  const mockFetch = async (url) => {
+    assert.equal(
+      url,
+      `${teamDomain}/cdn-cgi/access/certs`,
+      'JWKS fetch URL must match normalized team domain certs endpoint'
+    );
+    certsFetchCount++;
+    if (certsShouldFail) {
+      return new Response('Upstream error', { status: 500 });
+    }
+    return new Response(JSON.stringify({ keys: currentJwksKeys }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  const makeValidClaims = (overrides = {}) => ({
+    iss: teamDomain,
+    aud: [validAud],
+    exp: fixedNowSec + 3600,
+    nbf: fixedNowSec - 60,
+    iat: fixedNowSec - 60,
+    email: 'tahosook@gmail.com',
+    ...overrides,
+  });
+
+  clearJwksCache();
+
+  // 1. 環境変数未設定（Preview環境想定、CF_ACCESS_* 欠落含む） -> 404
   const resMissingEnv = await onRequestGet({
     request: new Request('https://smart-closet-djw.pages.dev/api/bootstrap-config', {
       headers: { 'Cf-Access-Authenticated-User-Email': 'tahosook@gmail.com' },
     }),
-    env: { GAS_WEB_APP_URL: validUrl }, // token, allowedEmails が欠落
+    env: { GAS_WEB_APP_URL: validUrl },
+    fetchFn: mockFetch,
+    nowMs: fixedNowMs,
   });
   assert.equal(resMissingEnv.status, 404);
   const dataMissingEnv = await resMissingEnv.json();
   assert.equal(dataMissingEnv.ok, false);
   assert.ok(resMissingEnv.headers.get('Cache-Control')?.includes('no-store'));
 
-  // 1b. URLが https://script.google.com/ で始まらない場合 -> 404
-  const resBadUrl = await onRequestGet({
-    request: new Request('https://smart-closet-djw.pages.dev/api/bootstrap-config', {
-      headers: { 'Cf-Access-Authenticated-User-Email': 'tahosook@gmail.com' },
-    }),
+  const resMissingAccessEnv = await onRequestGet({
+    request: new Request('https://smart-closet-djw.pages.dev/api/bootstrap-config'),
     env: {
-      GAS_WEB_APP_URL: 'https://evil.example.com/exec',
+      GAS_WEB_APP_URL: validUrl,
       GAS_SECRET_TOKEN: validToken,
       ALLOWED_EMAILS: allowedEmails,
     },
+    fetchFn: mockFetch,
+    nowMs: fixedNowMs,
+  });
+  assert.equal(resMissingAccessEnv.status, 404);
+
+  // 1b. URL・チームドメイン形式不正 -> 404
+  const resBadUrl = await onRequestGet({
+    request: new Request('https://smart-closet-djw.pages.dev/api/bootstrap-config'),
+    env: {
+      ...baseEnv,
+      GAS_WEB_APP_URL: 'https://evil.example.com/exec',
+    },
+    fetchFn: mockFetch,
+    nowMs: fixedNowMs,
   });
   assert.equal(resBadUrl.status, 404);
 
-  // 2. メールヘッダー欠如（Cookie があってもヘッダーが無い場合は拒否） -> 401
-  const resNoEmailHeader = await onRequestGet({
-    request: new Request('https://smart-closet-djw.pages.dev/api/bootstrap-config', {
-      headers: { Cookie: 'CF_Authorization=sample_jwt_cookie' },
-    }),
+  const resBadTeamDomain = await onRequestGet({
+    request: new Request('https://smart-closet-djw.pages.dev/api/bootstrap-config'),
     env: {
-      GAS_WEB_APP_URL: validUrl,
-      GAS_SECRET_TOKEN: validToken,
-      ALLOWED_EMAILS: allowedEmails,
+      ...baseEnv,
+      CF_ACCESS_TEAM_DOMAIN: 'https://evil.example.com',
     },
+    fetchFn: mockFetch,
+    nowMs: fixedNowMs,
   });
-  assert.equal(resNoEmailHeader.status, 401);
-  const dataNoEmail = await resNoEmailHeader.json();
-  assert.equal(dataNoEmail.ok, false);
-  assert.match(dataNoEmail.error, /Cf-Access-Authenticated-User-Email/);
+  assert.equal(resBadTeamDomain.status, 404);
 
-  // 3. ALLOWED_EMAILS に含まれないメールアドレス -> 403
+  // 2. JWT 無し（偽装メールヘッダーのみ） -> 401
+  const resNoJwt = await onRequestGet({
+    request: new Request('https://smart-closet-djw.pages.dev/api/bootstrap-config', {
+      headers: { 'Cf-Access-Authenticated-User-Email': 'tahosook@gmail.com' },
+    }),
+    env: baseEnv,
+    fetchFn: mockFetch,
+    nowMs: fixedNowMs,
+  });
+  assert.equal(resNoJwt.status, 401);
+  assert.equal((await resNoJwt.json()).ok, false);
+  assert.equal(certsFetchCount, 0, 'Missing JWT must fail before fetching JWKS');
+
+  // 3. 不正形式・alg=none・未知のkid・署名改ざん -> 401
+  const resMalformed = await onRequestGet({
+    request: new Request('https://smart-closet-djw.pages.dev/api/bootstrap-config', {
+      headers: { 'Cf-Access-Jwt-Assertion': 'not-a-jwt' },
+    }),
+    env: baseEnv,
+    fetchFn: mockFetch,
+    nowMs: fixedNowMs,
+  });
+  assert.equal(resMalformed.status, 401);
+
+  const algNoneJwt = `${toBase64Url(JSON.stringify({ alg: 'none', kid: key1.kid }))}.${toBase64Url(
+    JSON.stringify(makeValidClaims())
+  )}.fakeSig`;
+  const resAlgNone = await onRequestGet({
+    request: new Request('https://smart-closet-djw.pages.dev/api/bootstrap-config', {
+      headers: { 'Cf-Access-Jwt-Assertion': algNoneJwt },
+    }),
+    env: baseEnv,
+    fetchFn: mockFetch,
+    nowMs: fixedNowMs,
+  });
+  assert.equal(resAlgNone.status, 401);
+
+  const wrongKeyJwt = await signJwt(
+    { alg: 'RS256', kid: key1.kid, typ: 'JWT' },
+    makeValidClaims(),
+    rogueKey.privateKey
+  );
+  const resWrongSig = await onRequestGet({
+    request: new Request('https://smart-closet-djw.pages.dev/api/bootstrap-config', {
+      headers: { 'Cf-Access-Jwt-Assertion': wrongKeyJwt },
+    }),
+    env: baseEnv,
+    fetchFn: mockFetch,
+    nowMs: fixedNowMs,
+  });
+  assert.equal(resWrongSig.status, 401);
+  assert.equal(certsFetchCount, 1);
+
+  // 署名後にペイロードを改ざんした場合 -> 401
+  const validJwtForTamper = await signJwt(
+    { alg: 'RS256', kid: key1.kid, typ: 'JWT' },
+    makeValidClaims(),
+    key1.privateKey
+  );
+  const tamperParts = validJwtForTamper.split('.');
+  const tamperedJwt = `${tamperParts[0]}.${toBase64Url(
+    JSON.stringify(makeValidClaims({ email: 'attacker@example.com' }))
+  )}.${tamperParts[2]}`;
+  const resTampered = await onRequestGet({
+    request: new Request('https://smart-closet-djw.pages.dev/api/bootstrap-config', {
+      headers: { 'Cf-Access-Jwt-Assertion': tamperedJwt },
+    }),
+    env: baseEnv,
+    fetchFn: mockFetch,
+    nowMs: fixedNowMs,
+  });
+  assert.equal(resTampered.status, 401);
+  assert.equal(certsFetchCount, 1, 'Cached JWKS must be reused within TTL');
+
+  // 4. 期限切れ・未来 nbf・iss 不一致・aud 不一致・email 欠如 -> 401 / 403
+  const expiredJwt = await signJwt(
+    { alg: 'RS256', kid: key1.kid, typ: 'JWT' },
+    makeValidClaims({ exp: fixedNowSec - 120 }),
+    key1.privateKey
+  );
+  const resExpired = await onRequestGet({
+    request: new Request('https://smart-closet-djw.pages.dev/api/bootstrap-config', {
+      headers: { 'Cf-Access-Jwt-Assertion': expiredJwt },
+    }),
+    env: baseEnv,
+    fetchFn: mockFetch,
+    nowMs: fixedNowMs,
+  });
+  assert.equal(resExpired.status, 401);
+
+  const futureNbfJwt = await signJwt(
+    { alg: 'RS256', kid: key1.kid, typ: 'JWT' },
+    makeValidClaims({ nbf: fixedNowSec + 120 }),
+    key1.privateKey
+  );
+  const resFutureNbf = await onRequestGet({
+    request: new Request('https://smart-closet-djw.pages.dev/api/bootstrap-config', {
+      headers: { 'Cf-Access-Jwt-Assertion': futureNbfJwt },
+    }),
+    env: baseEnv,
+    fetchFn: mockFetch,
+    nowMs: fixedNowMs,
+  });
+  assert.equal(resFutureNbf.status, 401);
+
+  const wrongIssJwt = await signJwt(
+    { alg: 'RS256', kid: key1.kid, typ: 'JWT' },
+    makeValidClaims({ iss: 'https://other-team.cloudflareaccess.com' }),
+    key1.privateKey
+  );
+  const resWrongIss = await onRequestGet({
+    request: new Request('https://smart-closet-djw.pages.dev/api/bootstrap-config', {
+      headers: { 'Cf-Access-Jwt-Assertion': wrongIssJwt },
+    }),
+    env: baseEnv,
+    fetchFn: mockFetch,
+    nowMs: fixedNowMs,
+  });
+  assert.equal(resWrongIss.status, 401);
+
+  const wrongAudJwt = await signJwt(
+    { alg: 'RS256', kid: key1.kid, typ: 'JWT' },
+    makeValidClaims({ aud: ['ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff'] }),
+    key1.privateKey
+  );
+  const resWrongAud = await onRequestGet({
+    request: new Request('https://smart-closet-djw.pages.dev/api/bootstrap-config', {
+      headers: { 'Cf-Access-Jwt-Assertion': wrongAudJwt },
+    }),
+    env: baseEnv,
+    fetchFn: mockFetch,
+    nowMs: fixedNowMs,
+  });
+  assert.equal(resWrongAud.status, 403);
+
+  const noEmailClaimJwt = await signJwt(
+    { alg: 'RS256', kid: key1.kid, typ: 'JWT' },
+    makeValidClaims({ email: '' }),
+    key1.privateKey
+  );
+  const resNoEmailClaim = await onRequestGet({
+    request: new Request('https://smart-closet-djw.pages.dev/api/bootstrap-config', {
+      headers: { 'Cf-Access-Jwt-Assertion': noEmailClaimJwt },
+    }),
+    env: baseEnv,
+    fetchFn: mockFetch,
+    nowMs: fixedNowMs,
+  });
+  assert.equal(resNoEmailClaim.status, 401);
+
+  // 5. メールヘッダー不一致 / 未許可メール -> 403
+  const validUserJwt = await signJwt(
+    { alg: 'RS256', kid: key1.kid, typ: 'JWT' },
+    makeValidClaims({ email: 'TAHOSOOK@GMAIL.COM' }),
+    key1.privateKey
+  );
+  const resHeaderMismatch = await onRequestGet({
+    request: new Request('https://smart-closet-djw.pages.dev/api/bootstrap-config', {
+      headers: {
+        'Cf-Access-Jwt-Assertion': validUserJwt,
+        'Cf-Access-Authenticated-User-Email': 'family@example.com',
+      },
+    }),
+    env: baseEnv,
+    fetchFn: mockFetch,
+    nowMs: fixedNowMs,
+  });
+  assert.equal(resHeaderMismatch.status, 403);
+
+  const unallowedJwt = await signJwt(
+    { alg: 'RS256', kid: key1.kid, typ: 'JWT' },
+    makeValidClaims({ email: 'unauthorized@example.com' }),
+    key1.privateKey
+  );
   const resForbidden = await onRequestGet({
     request: new Request('https://smart-closet-djw.pages.dev/api/bootstrap-config', {
-      headers: { 'Cf-Access-Authenticated-User-Email': 'unauthorized@example.com' },
+      headers: {
+        'Cf-Access-Jwt-Assertion': unallowedJwt,
+        'Cf-Access-Authenticated-User-Email': 'unauthorized@example.com',
+      },
     }),
-    env: {
-      GAS_WEB_APP_URL: validUrl,
-      GAS_SECRET_TOKEN: validToken,
-      ALLOWED_EMAILS: allowedEmails,
-    },
+    env: baseEnv,
+    fetchFn: mockFetch,
+    nowMs: fixedNowMs,
   });
   assert.equal(resForbidden.status, 403);
-  const dataForbidden = await resForbidden.json();
-  assert.equal(dataForbidden.ok, false);
+  assert.equal((await resForbidden.json()).ok, false);
 
-  // 4. 許可メールアドレス（大文字小文字不問） -> 200 + no-store + 設定JSON
+  // 6. 正規 JWT（ヘッダー経由・大文字小文字不問） -> 200 + no-store + 設定JSON
   const resSuccess = await onRequestGet({
     request: new Request('https://smart-closet-djw.pages.dev/api/bootstrap-config', {
-      headers: { 'Cf-Access-Authenticated-User-Email': 'TAHOSOOK@GMAIL.COM' },
+      headers: {
+        'Cf-Access-Jwt-Assertion': validUserJwt,
+        'Cf-Access-Authenticated-User-Email': 'tahosook@gmail.com',
+      },
     }),
-    env: {
-      GAS_WEB_APP_URL: validUrl,
-      GAS_SECRET_TOKEN: validToken,
-      ALLOWED_EMAILS: allowedEmails,
-    },
+    env: baseEnv,
+    fetchFn: mockFetch,
+    nowMs: fixedNowMs,
   });
   assert.equal(resSuccess.status, 200);
   assert.ok(resSuccess.headers.get('Cache-Control')?.includes('no-store'));
@@ -1801,22 +2071,210 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
   assert.equal(dataSuccess.secretToken, validToken);
   assert.equal(dataSuccess.userEmail, 'tahosook@gmail.com');
 
-  // 5. 複数許可メールの2番目（family@example.com） -> 200
-  const resFamilySuccess = await onRequestGet({
+  // 7. CF_Authorization Cookie フォールバック + string aud + 2番目の許可メール -> 200
+  const familyJwt = await signJwt(
+    { alg: 'RS256', kid: key1.kid, typ: 'JWT' },
+    makeValidClaims({ email: 'family@example.com', aud: validAud }),
+    key1.privateKey
+  );
+  const resFamilyCookie = await onRequestGet({
     request: new Request('https://smart-closet-djw.pages.dev/api/bootstrap-config', {
-      headers: { 'Cf-Access-Authenticated-User-Email': 'family@example.com' },
+      headers: { Cookie: `other=1; CF_Authorization=${familyJwt}` },
     }),
-    env: {
-      GAS_WEB_APP_URL: validUrl,
-      GAS_SECRET_TOKEN: validToken,
-      ALLOWED_EMAILS: allowedEmails,
-    },
+    env: baseEnv,
+    fetchFn: mockFetch,
+    nowMs: fixedNowMs,
   });
-  assert.equal(resFamilySuccess.status, 200);
-  const dataFamilySuccess = await resFamilySuccess.json();
-  assert.equal(dataFamilySuccess.ok, true);
+  assert.equal(resFamilyCookie.status, 200);
+  const dataFamilyCookie = await resFamilyCookie.json();
+  assert.equal(dataFamilyCookie.ok, true);
+  assert.equal(dataFamilyCookie.userEmail, 'family@example.com');
+  assert.equal(certsFetchCount, 1, 'Valid cookie flow should also reuse cached JWKS');
 
-  console.log('  ✅ Cloudflare Pages Function bootstrap-config.ts (404/401/403/200 & no-store) verified');
+  // 8. 鍵ローテーション（新しい kid が来た場合は certs を再取得して成功する） -> 200
+  currentJwksKeys = [key1.publicJwk, key2.publicJwk];
+  const rotatedJwt = await signJwt(
+    { alg: 'RS256', kid: key2.kid, typ: 'JWT' },
+    makeValidClaims({ email: 'tahosook@gmail.com' }),
+    key2.privateKey
+  );
+  const resRotated = await onRequestGet({
+    request: new Request('https://smart-closet-djw.pages.dev/api/bootstrap-config', {
+      headers: { 'Cf-Access-Jwt-Assertion': rotatedJwt },
+    }),
+    env: baseEnv,
+    fetchFn: mockFetch,
+    nowMs: fixedNowMs,
+  });
+  assert.equal(resRotated.status, 200);
+  assert.equal(certsFetchCount, 2, 'Unknown kid must trigger fresh JWKS fetch for key rotation');
+
+  // 8b. 未知 kid の連続リクエストで JWKS fetch が増幅しないこと（TTL 10分あたり強制再取得は1回まで）
+  clearJwksCache();
+  certsFetchCount = 0;
+  currentJwksKeys = [key1.publicJwk];
+
+  // 初回通常取得（key1）
+  const resWarmCache = await onRequestGet({
+    request: new Request('https://smart-closet-djw.pages.dev/api/bootstrap-config', {
+      headers: { 'Cf-Access-Jwt-Assertion': validUserJwt },
+    }),
+    env: baseEnv,
+    fetchFn: mockFetch,
+    nowMs: fixedNowMs,
+  });
+  assert.equal(resWarmCache.status, 200);
+  assert.equal(certsFetchCount, 1);
+
+  // 1回目の未知 kid: 鍵ローテーション追従のため1回だけ強制再取得 -> 見つからず 401
+  const unknownKidJwt1 = await signJwt(
+    { alg: 'RS256', kid: 'kid-unknown-1', typ: 'JWT' },
+    makeValidClaims({ email: 'tahosook@gmail.com' }),
+    key1.privateKey
+  );
+  const resUnknown1 = await onRequestGet({
+    request: new Request('https://smart-closet-djw.pages.dev/api/bootstrap-config', {
+      headers: { 'Cf-Access-Jwt-Assertion': unknownKidJwt1 },
+    }),
+    env: baseEnv,
+    fetchFn: mockFetch,
+    nowMs: fixedNowMs + 1_000,
+  });
+  assert.equal(resUnknown1.status, 401);
+  assert.equal(certsFetchCount, 2, 'First unknown kid within TTL triggers 1 forced JWKS refresh');
+
+  // 2回目・3回目の未知 kid（同一 TTL 内）: 再取得せず即 401（fetch 回数が増えないこと）
+  for (const [idx, kidName] of ['kid-unknown-2', 'kid-unknown-3'].entries()) {
+    const unknownJwt = await signJwt(
+      { alg: 'RS256', kid: kidName, typ: 'JWT' },
+      makeValidClaims({ email: 'tahosook@gmail.com' }),
+      key1.privateKey
+    );
+    const resUnknownFollowup = await onRequestGet({
+      request: new Request('https://smart-closet-djw.pages.dev/api/bootstrap-config', {
+        headers: { 'Cf-Access-Jwt-Assertion': unknownJwt },
+      }),
+      env: baseEnv,
+      fetchFn: mockFetch,
+      nowMs: fixedNowMs + (idx + 2) * 10_000,
+    });
+    assert.equal(resUnknownFollowup.status, 401);
+    assert.equal(
+      certsFetchCount,
+      2,
+      `Subsequent unknown kid (${kidName}) within TTL must NOT trigger additional JWKS fetch`
+    );
+  }
+
+  // 既存の正規鍵 (key1) は引き続きキャッシュから 200 で通ること
+  const resValidDuringCooldown = await onRequestGet({
+    request: new Request('https://smart-closet-djw.pages.dev/api/bootstrap-config', {
+      headers: { 'Cf-Access-Jwt-Assertion': validUserJwt },
+    }),
+    env: baseEnv,
+    fetchFn: mockFetch,
+    nowMs: fixedNowMs + 30_000,
+  });
+  assert.equal(resValidDuringCooldown.status, 200);
+  assert.equal(certsFetchCount, 2);
+
+  // TTL (10分) 経過後は通常再取得が走り、新しい鍵 (key2) も再取得できること
+  currentJwksKeys = [key1.publicJwk, key2.publicJwk];
+  const afterTtlMs = fixedNowMs + 10 * 60 * 1000 + 2_000;
+  const rotatedAfterTtlJwt = await signJwt(
+    { alg: 'RS256', kid: key2.kid, typ: 'JWT' },
+    makeValidClaims({
+      email: 'tahosook@gmail.com',
+      exp: Math.floor(afterTtlMs / 1000) + 3600,
+    }),
+    key2.privateKey
+  );
+  const resAfterTtl = await onRequestGet({
+    request: new Request('https://smart-closet-djw.pages.dev/api/bootstrap-config', {
+      headers: { 'Cf-Access-Jwt-Assertion': rotatedAfterTtlJwt },
+    }),
+    env: baseEnv,
+    fetchFn: mockFetch,
+    nowMs: afterTtlMs,
+  });
+  assert.equal(resAfterTtl.status, 200);
+  assert.equal(certsFetchCount, 3, 'After 10-min TTL expiry, JWKS refresh must run again');
+
+  // 8c. 未知 kid の強制再取得が一時失敗 (503) した場合は抑制状態を残さず、JWKS 復旧後に新しい鍵 (key2) を再取得できること
+  clearJwksCache();
+  certsFetchCount = 0;
+  certsShouldFail = false;
+  currentJwksKeys = [key1.publicJwk];
+
+  const resWarmBeforeFail = await onRequestGet({
+    request: new Request('https://smart-closet-djw.pages.dev/api/bootstrap-config', {
+      headers: { 'Cf-Access-Jwt-Assertion': validUserJwt },
+    }),
+    env: baseEnv,
+    fetchFn: mockFetch,
+    nowMs: fixedNowMs,
+  });
+  assert.equal(resWarmBeforeFail.status, 200);
+  assert.equal(certsFetchCount, 1);
+
+  // 新しい鍵 (key2) での強制再取得が一時的に失敗
+  certsShouldFail = true;
+  const resRotatedFail = await onRequestGet({
+    request: new Request('https://smart-closet-djw.pages.dev/api/bootstrap-config', {
+      headers: { 'Cf-Access-Jwt-Assertion': rotatedJwt },
+    }),
+    env: baseEnv,
+    fetchFn: mockFetch,
+    nowMs: fixedNowMs + 5_000,
+  });
+  assert.equal(resRotatedFail.status, 503);
+  assert.equal(certsFetchCount, 2);
+
+  // 同一 TTL 内で JWKS が復旧 -> 失敗時は抑制されていないため再試行で key2 を取得して 200 になること
+  certsShouldFail = false;
+  currentJwksKeys = [key1.publicJwk, key2.publicJwk];
+  const resRotatedRecovered = await onRequestGet({
+    request: new Request('https://smart-closet-djw.pages.dev/api/bootstrap-config', {
+      headers: { 'Cf-Access-Jwt-Assertion': rotatedJwt },
+    }),
+    env: baseEnv,
+    fetchFn: mockFetch,
+    nowMs: fixedNowMs + 10_000,
+  });
+  assert.equal(resRotatedRecovered.status, 200);
+  assert.equal(
+    certsFetchCount,
+    3,
+    'Failed forced refresh must NOT lock out retry once JWKS recovers within TTL'
+  );
+
+  // 成功後は抑制時刻が確定しているため、同一 TTL 内の別未知 kid は再取得せず 401 になること
+  const resSuppressedAfterSuccess = await onRequestGet({
+    request: new Request('https://smart-closet-djw.pages.dev/api/bootstrap-config', {
+      headers: { 'Cf-Access-Jwt-Assertion': unknownKidJwt1 },
+    }),
+    env: baseEnv,
+    fetchFn: mockFetch,
+    nowMs: fixedNowMs + 20_000,
+  });
+  assert.equal(resSuppressedAfterSuccess.status, 401);
+  assert.equal(certsFetchCount, 3, 'After successful forced refresh, subsequent unknown kid within TTL must be suppressed');
+
+  // 9. JWKS 取得失敗時は Fail-Closed (503) で設定を返さない
+  clearJwksCache();
+  certsShouldFail = true;
+  const resCertsFail = await onRequestGet({
+    request: new Request('https://smart-closet-djw.pages.dev/api/bootstrap-config', {
+      headers: { 'Cf-Access-Jwt-Assertion': validUserJwt },
+    }),
+    env: baseEnv,
+    fetchFn: mockFetch,
+    nowMs: fixedNowMs,
+  });
+  assert.equal(resCertsFail.status, 503);
+  assert.equal((await resCertsFail.json()).ok, false);
+
+  console.log('  ✅ Cloudflare Pages Function bootstrap-config.ts (Access JWT RS256, claims, rotation & fail-closed) verified');
 }
 
 // -------------------------------------------------------------
