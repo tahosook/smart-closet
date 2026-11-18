@@ -184,7 +184,7 @@
    - **💾 データバックアップ（アコーディオン）:**
      - ［JSON保存］: マージ済み最新アイテム（`items`）・着用履歴（`wearHistory`）・登録日付き奥様NG一覧（`wifeNgPairs`）を含むバックアップJSON（`ClosetBackupData`）をダウンロード。
      - ［JSONコピー］: 上記バックアップJSONをクリップボードにコピー。
-     - ［バックアップから復元（ファイル選択 / JSON貼り付け）］: バックアップJSONを取り込み、服データ・着用履歴・奥様NG一覧を復元（`wearHistory` / `wifeNgPairs` を含まない旧形式のバックアップJSONも後方互換でインポート可能）。
+     - ［バックアップから復元（ファイル選択 / JSON貼り付け）］: バックアップJSONを取り込み、服データ・着用履歴・奥様NG一覧を復元（`wearHistory` / `wifeNgPairs` を含まない旧形式のバックアップJSONも後方互換でインポート可能）。復元操作時には、復元対象に対応する削除 Tombstone を解除するマーカー（`wearHistoryRestoredAt`, `restoredWearMap`, `restoredWifeNgMap`）を同期へ連携し、過去の全履歴クリアや個別削除後にバックアップ復元してもクラウド同期後に消えずに定着する。
 
 ---
 

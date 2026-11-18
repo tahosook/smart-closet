@@ -52,7 +52,7 @@ flowchart TD
 | **シークレット合言葉** | スプレッドシート `meta_config` シート (`secretToken`)<br/>＋ Cloudflare Pages Production Secret (`GAS_SECRET_TOKEN`) | Pages Functions `/api/bootstrap-config` 経由で PWA に自動ブートストラップ | GAS の Fail-Closed 認証に必須 |
 | **写真フォルダ ID** | スプレッドシート `meta_config` シート (`imageFolderId`) | GAS 初回同期 (Pull/Push) のレスポンスから PWA へ自動配信 | **Cloudflare 側では二重管理せず、スプレッドシートのみを唯一の正本とする** |
 | **服の写真実体** | Google ドライブ非公開フォルダ (`SmartCloset_Photos`) | GAS `fetchImages` 経由で Base64 取得し端末の `IndexedDB` へキャッシュ | Git リポジトリには一切コミットしない完全プライベート構成 |
-| **着用履歴・奥様NG** | スプレッドシート (`wear_history`, `wife_ng`) ＋ 端末 `localStorage` | GAS 双方向マージ (LWW + Tombstones) で Pixel ⇔ Mac 間自動同期 | オフライン時は保留し次回接続時に自動同期。<br/>※アプリのバックアップ JSON（`closet.json` スキーマ）には着用履歴および独立した奥様NG配列（`wifeNgPairs`）は含まれないため、復旧正本はスプレッドシートの版数履歴となる（詳細は §4.5 参照）。 |
+| **着用履歴・奥様NG** | スプレッドシート (`wear_history`, `wife_ng`) ＋ 端末 `localStorage` | GAS 双方向マージ (LWW + Tombstones) で Pixel ⇔ Mac 間自動同期 | オフライン時は保留し次回接続時に自動同期。<br/>※管理タブのバックアップ JSON（`ClosetBackupData`）にも `wearHistory` と `wifeNgPairs`（登録日付き）が含まれ、アプリ内復元時は対応 Tombstone を解除してクラウド同期へ定着させる。スプレッドシートの版数履歴からの復旧手順は §4.5 参照。 |
 
 ---
 
@@ -226,10 +226,10 @@ flowchart TD
 ### 4.5 着用履歴・奥様NGの誤消去・破損時の復旧手順
 
 #### 前提知識：バックアップ JSON の対象範囲と「全履歴をクリア」の伝播仕様
-1. **アプリのバックアップ JSON に含まれるもの・含まれないもの（現状仕様）:**
-   - 管理タブ ＞「💾 データバックアップ（JSON保存・JSONコピー）」で出力される JSON は `ClosetData` スキーマ（`src/data/closet.json` 差し替え用）です。
-   - ここには服一覧（`items`）に加え、出力時点で登録されていた奥様NGペアが各アイテムの `ngIds`・`ngReason` 等に**マージされた状態**で含まれますが、**着用履歴（`wearHistory`）は一切含まれず、独立した奥様NG配列（`wifeNgPairs`：個別の登録日時や「奥様NG」専用バッジ・個別解除用の元データ）もそのままの形では含まれません。**
-   - したがって、着用履歴（`wearHistory`）と独立した奥様NG記録（`wifeNgPairs`）のバックアップ・復旧の正本は **Google スプレッドシート（`wear_history` シートおよび `wife_ng` シート）の版数履歴（変更履歴）** となります。
+1. **アプリのバックアップ JSON に含まれるもの:**
+   - 管理タブ ＞「💾 データバックアップ（JSON保存・コピー・復元）」で出力される JSON は `ClosetBackupData` スキーマです。
+   - ここには服一覧（`items`、奥様NGマージ済み）に加えて、**着用履歴（`wearHistory`）** および **登録日（`createdAt`）を含む独立した奥様NG一覧（`wifeNgPairs`）** が含まれます。
+   - 手元にバックアップ JSON がある場合は、管理タブ ＞「💾 データバックアップ」内の復元 UI から復元でき、対応する削除 Tombstone の解除マーカー（`wearHistoryRestoredAt`, `restoredWearMap`, `restoredWifeNgMap`）が GAS へ送信されるため、同期後も復元データが定着します。バックアップ JSON が手元にない場合は、以下の **Google スプレッドシート（`wear_history` シートおよび `wife_ng` シート）の版数履歴（変更履歴）** から復旧できます。
 2. **「全履歴をクリア」や個別削除が全端末・スプレッドシートへ伝播する仕組み（Sync Tombstone）:**
    - 着用履歴モーダルで **「全履歴をクリア」**（または履歴の個別削除、奥様NGの解除）を実行すると、端末の `localStorage`（`smart_closet_sync_tombstones`）に削除タイムスタンプ（墓標：`wearHistoryClearedAt`、`deletedWearMap`、`deletedWifeNgMap`）が記録され、バックグラウンド Push によってスプレッドシートの `meta_config` シート内の `syncTombstones` 行へ永続化されます。
    - その後、別の端末（例: Pixel で全消去した後の Mac）が同期（Push/Pull）を行うと、サーバーの `syncTombstones` に記録された削除時刻（`wearHistoryClearedAt` 等）以前の古いデータはすべて「削除済み」としてフィルタリングされ、**全端末およびスプレッドシートから一斉に消去されます（古い端末から勝手に復活しないための LWW + Tombstone 設計）。**

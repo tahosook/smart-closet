@@ -279,6 +279,7 @@ function readTombstones(ss) {
       deletedWearMap: {},
       deletedWifeNgMap: {},
       wearHistoryClearedAt: 0,
+      wearHistoryRestoredAt: 0,
       customClosetDataClearedAt: 0
     };
   }
@@ -288,6 +289,7 @@ function readTombstones(ss) {
       deletedWearMap: parsed.deletedWearMap || {},
       deletedWifeNgMap: parsed.deletedWifeNgMap || {},
       wearHistoryClearedAt: Number(parsed.wearHistoryClearedAt) || 0,
+      wearHistoryRestoredAt: Number(parsed.wearHistoryRestoredAt) || 0,
       customClosetDataClearedAt: Number(parsed.customClosetDataClearedAt) || 0
     };
   } catch (e) {
@@ -295,6 +297,7 @@ function readTombstones(ss) {
       deletedWearMap: {},
       deletedWifeNgMap: {},
       wearHistoryClearedAt: 0,
+      wearHistoryRestoredAt: 0,
       customClosetDataClearedAt: 0
     };
   }
@@ -305,12 +308,16 @@ function writeTombstones(ss, tombstones) {
 }
 
 function integrateIncomingTombstones(serverTombstones, payload) {
-  // 1. 全削除タイムスタンプの統合
+  // 1. 全削除タイムスタンプの統合（過去の復元時刻より新しい場合のみ反映）
   if (payload.wearHistoryClearedAt) {
-    serverTombstones.wearHistoryClearedAt = Math.max(
-      serverTombstones.wearHistoryClearedAt || 0,
-      Number(payload.wearHistoryClearedAt) || 0
-    );
+    const incomingClearedAt = Number(payload.wearHistoryClearedAt) || 0;
+    const restoredAt = Number(serverTombstones.wearHistoryRestoredAt || 0);
+    if (incomingClearedAt > restoredAt) {
+      serverTombstones.wearHistoryClearedAt = Math.max(
+        serverTombstones.wearHistoryClearedAt || 0,
+        incomingClearedAt
+      );
+    }
   }
 
   // 2. 着用履歴の個別削除マップの統合（正当なタイムスタンプを持つ削除のみ統合）
@@ -335,6 +342,38 @@ function integrateIncomingTombstones(serverTombstones, payload) {
           serverTombstones.deletedWifeNgMap[key] || 0,
           ts
         );
+      }
+    });
+  }
+
+  // 4. バックアップ復元による明示的 Tombstone 解除（削除時刻以降の復元のみ解除）
+  if (payload.wearHistoryRestoredAt) {
+    const restoreTs = Number(payload.wearHistoryRestoredAt) || 0;
+    if (restoreTs > 0) {
+      serverTombstones.wearHistoryRestoredAt = Math.max(
+        serverTombstones.wearHistoryRestoredAt || 0,
+        restoreTs
+      );
+      if (restoreTs >= (serverTombstones.wearHistoryClearedAt || 0)) {
+        serverTombstones.wearHistoryClearedAt = 0;
+      }
+    }
+  }
+
+  if (payload.restoredWearMap && typeof payload.restoredWearMap === 'object') {
+    Object.keys(payload.restoredWearMap).forEach(id => {
+      const restoreTs = Number(payload.restoredWearMap[id] || 0);
+      if (restoreTs > 0 && restoreTs >= Number(serverTombstones.deletedWearMap[id] || 0)) {
+        delete serverTombstones.deletedWearMap[id];
+      }
+    });
+  }
+
+  if (payload.restoredWifeNgMap && typeof payload.restoredWifeNgMap === 'object') {
+    Object.keys(payload.restoredWifeNgMap).forEach(key => {
+      const restoreTs = Number(payload.restoredWifeNgMap[key] || 0);
+      if (restoreTs > 0 && restoreTs >= Number(serverTombstones.deletedWifeNgMap[key] || 0)) {
+        delete serverTombstones.deletedWifeNgMap[key];
       }
     });
   }
@@ -406,7 +445,8 @@ function mergeWifeNg(existingList, incomingList, tombstones) {
   const addPair = (p) => {
     if (!p || !p.shirtId || !p.pantsId) return;
     const key = p.shirtId + '_' + p.pantsId;
-    const pTime = p.createdAt ? new Date(p.createdAt).getTime() : 0;
+    const rawTime = p.createdAt ? new Date(p.createdAt).getTime() : 0;
+    const pTime = Number.isFinite(rawTime) ? rawTime : 0;
 
     // 削除タイムスタンプとの比較
     const deletedAt = tombstones.deletedWifeNgMap[key];
@@ -424,7 +464,8 @@ function mergeWifeNg(existingList, incomingList, tombstones) {
     if (!existing) {
       map.set(key, p);
     } else {
-      const existingTime = existing.createdAt ? new Date(existing.createdAt).getTime() : 0;
+      const rawExistingTime = existing.createdAt ? new Date(existing.createdAt).getTime() : 0;
+      const existingTime = Number.isFinite(rawExistingTime) ? rawExistingTime : 0;
       if (pTime >= existingTime) {
         map.set(key, p);
       }

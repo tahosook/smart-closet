@@ -702,6 +702,13 @@ function validateBackupWifeNgPairs(raw: unknown): {
     if (typeof p.createdAt !== 'string' || p.createdAt.trim() === '') {
       return { valid: false, error: `wifeNgPairs[${i}] の createdAt が不正です。` };
     }
+    const createdAtTs = new Date(p.createdAt.trim()).getTime();
+    if (!Number.isFinite(createdAtTs) || createdAtTs <= 0) {
+      return {
+        valid: false,
+        error: `wifeNgPairs[${i}] の createdAt ("${p.createdAt}") は有効な日時文字列である必要があります。`,
+      };
+    }
 
     const shirtId = p.shirtId.trim();
     const pantsId = p.pantsId.trim();

@@ -123,6 +123,9 @@ export interface SyncTombstones {
   deletedWearMap: Record<string, number>;   // { [id]: deletedAtTimestamp }
   wearHistoryClearedAt?: number;
   deletedWifeNgMap: Record<string, number>; // { [shirtId_pantsId]: deletedAtTimestamp }
+  restoredWearMap?: Record<string, number>; // バックアップ復元による個別着用履歴のTombstone解除時刻
+  wearHistoryRestoredAt?: number;           // バックアップ復元による全履歴クリアのTombstone解除時刻
+  restoredWifeNgMap?: Record<string, number>; // バックアップ復元による奥様NGのTombstone解除時刻
   clearCustomClosetData?: boolean;
   customClosetDataClearedAt?: number;       // カスタムデータリセット実行時刻タイムスタンプ
 }
@@ -139,6 +142,9 @@ export interface GasSyncPayload {
   deletedWearMap?: Record<string, number>;
   wearHistoryClearedAt?: number;
   deletedWifeNgMap?: Record<string, number>;
+  restoredWearMap?: Record<string, number>;
+  wearHistoryRestoredAt?: number;
+  restoredWifeNgMap?: Record<string, number>;
   itemNamesMap?: Record<string, string>;
   imageFolderId?: string;
 }

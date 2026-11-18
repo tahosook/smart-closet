@@ -215,6 +215,9 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           deletedWearMap: parsed.deletedWearMap || {},
           deletedWifeNgMap: parsed.deletedWifeNgMap || {},
           wearHistoryClearedAt: parsed.wearHistoryClearedAt,
+          restoredWearMap: parsed.restoredWearMap || {},
+          wearHistoryRestoredAt: parsed.wearHistoryRestoredAt,
+          restoredWifeNgMap: parsed.restoredWifeNgMap || {},
           clearCustomClosetData: parsed.clearCustomClosetData,
           customClosetDataClearedAt: parsed.customClosetDataClearedAt,
         };
@@ -381,6 +384,17 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       deletedWearMap: { ...stateRef.current.tombstones.deletedWearMap },
       deletedWifeNgMap: { ...stateRef.current.tombstones.deletedWifeNgMap },
       wearHistoryClearedAt: stateRef.current.tombstones.wearHistoryClearedAt,
+      ...(stateRef.current.tombstones.restoredWearMap &&
+      Object.keys(stateRef.current.tombstones.restoredWearMap).length > 0
+        ? { restoredWearMap: { ...stateRef.current.tombstones.restoredWearMap } }
+        : {}),
+      ...(stateRef.current.tombstones.wearHistoryRestoredAt !== undefined
+        ? { wearHistoryRestoredAt: stateRef.current.tombstones.wearHistoryRestoredAt }
+        : {}),
+      ...(stateRef.current.tombstones.restoredWifeNgMap &&
+      Object.keys(stateRef.current.tombstones.restoredWifeNgMap).length > 0
+        ? { restoredWifeNgMap: { ...stateRef.current.tombstones.restoredWifeNgMap } }
+        : {}),
       clearCustomClosetData: stateRef.current.tombstones.clearCustomClosetData,
       customClosetDataClearedAt: stateRef.current.tombstones.customClosetDataClearedAt,
     };
@@ -399,6 +413,11 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       deletedWearMap: sentTombstones.deletedWearMap,
       wearHistoryClearedAt: sentTombstones.wearHistoryClearedAt,
       deletedWifeNgMap: sentTombstones.deletedWifeNgMap,
+      ...(sentTombstones.restoredWearMap ? { restoredWearMap: sentTombstones.restoredWearMap } : {}),
+      ...(sentTombstones.wearHistoryRestoredAt !== undefined
+        ? { wearHistoryRestoredAt: sentTombstones.wearHistoryRestoredAt }
+        : {}),
+      ...(sentTombstones.restoredWifeNgMap ? { restoredWifeNgMap: sentTombstones.restoredWifeNgMap } : {}),
       itemNamesMap,
       imageFolderId: stateRef.current.gasConfig.imageFolderId,
     };
@@ -865,11 +884,18 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const removeWearRecord = useCallback(
     (id: string) => {
       mutationSeqRef.current++;
-      const now = Math.max(Date.now(), (stateRef.current.tombstones.deletedWearMap?.[id] || 0) + 1);
+      const now = Math.max(
+        Date.now(),
+        (stateRef.current.tombstones.deletedWearMap?.[id] || 0) + 1,
+        (stateRef.current.tombstones.restoredWearMap?.[id] || 0) + 1
+      );
       const updatedWear = stateRef.current.wearHistory.filter((r) => r.id !== id);
+      const nextRestoredWearMap = { ...(stateRef.current.tombstones.restoredWearMap || {}) };
+      delete nextRestoredWearMap[id];
       const updatedTombstones: SyncTombstones = {
         ...stateRef.current.tombstones,
         deletedWearMap: { ...stateRef.current.tombstones.deletedWearMap, [id]: now },
+        restoredWearMap: nextRestoredWearMap,
       };
       stateRef.current.wearHistory = updatedWear;
       stateRef.current.tombstones = updatedTombstones;
@@ -882,11 +908,17 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const clearAllWearHistory = useCallback(() => {
     mutationSeqRef.current++;
-    const now = Math.max(Date.now(), (stateRef.current.tombstones.wearHistoryClearedAt || 0) + 1);
+    const now = Math.max(
+      Date.now(),
+      (stateRef.current.tombstones.wearHistoryClearedAt || 0) + 1,
+      (stateRef.current.tombstones.wearHistoryRestoredAt || 0) + 1
+    );
     const updatedTombstones: SyncTombstones = {
       ...stateRef.current.tombstones,
       wearHistoryClearedAt: now,
       deletedWearMap: {},
+      wearHistoryRestoredAt: undefined,
+      restoredWearMap: {},
     };
     stateRef.current.wearHistory = [];
     stateRef.current.tombstones = updatedTombstones;
@@ -932,11 +964,18 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     (shirtId: string, pantsId: string) => {
       mutationSeqRef.current++;
       const key = `${shirtId}_${pantsId}`;
-      const now = Math.max(Date.now(), (stateRef.current.tombstones.deletedWifeNgMap?.[key] || 0) + 1);
+      const now = Math.max(
+        Date.now(),
+        (stateRef.current.tombstones.deletedWifeNgMap?.[key] || 0) + 1,
+        (stateRef.current.tombstones.restoredWifeNgMap?.[key] || 0) + 1
+      );
       const updatedWifeNg = stateRef.current.wifeNgPairs.filter((p) => !(p.shirtId === shirtId && p.pantsId === pantsId));
+      const nextRestoredWifeNgMap = { ...(stateRef.current.tombstones.restoredWifeNgMap || {}) };
+      delete nextRestoredWifeNgMap[key];
       const updatedTombstones: SyncTombstones = {
         ...stateRef.current.tombstones,
         deletedWifeNgMap: { ...stateRef.current.tombstones.deletedWifeNgMap, [key]: now },
+        restoredWifeNgMap: nextRestoredWifeNgMap,
       };
       stateRef.current.wifeNgPairs = updatedWifeNg;
       stateRef.current.tombstones = updatedTombstones;
@@ -1104,19 +1143,33 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
         const nextDeletedWearMap = { ...stateRef.current.tombstones.deletedWearMap };
         const nextDeletedWifeNgMap = { ...stateRef.current.tombstones.deletedWifeNgMap };
+        const nextRestoredWearMap = { ...(stateRef.current.tombstones.restoredWearMap || {}) };
+        const nextRestoredWifeNgMap = { ...(stateRef.current.tombstones.restoredWifeNgMap || {}) };
         let nextWearHistoryClearedAt = stateRef.current.tombstones.wearHistoryClearedAt;
+        let nextWearHistoryRestoredAt = stateRef.current.tombstones.wearHistoryRestoredAt;
 
         if (restoredWearHistory !== undefined) {
           localStorage.setItem(STORAGE_KEYS.WEAR_HISTORY, JSON.stringify(restoredWearHistory));
           stateRef.current.wearHistory = restoredWearHistory;
           setWearHistory(restoredWearHistory);
+
+          let wearRestoreNow = Math.max(
+            now,
+            (nextWearHistoryClearedAt || 0) + 1,
+            (nextWearHistoryRestoredAt || 0) + 1
+          );
+          for (const rec of restoredWearHistory) {
+            const delTs = nextDeletedWearMap[rec.id] || 0;
+            if (delTs >= wearRestoreNow) {
+              wearRestoreNow = delTs + 1;
+            }
+          }
           for (const rec of restoredWearHistory) {
             delete nextDeletedWearMap[rec.id];
+            nextRestoredWearMap[rec.id] = wearRestoreNow;
           }
-          if (
-            nextWearHistoryClearedAt !== undefined &&
-            restoredWearHistory.some((rec) => rec.timestamp <= nextWearHistoryClearedAt!)
-          ) {
+          nextWearHistoryRestoredAt = wearRestoreNow;
+          if (nextWearHistoryClearedAt !== undefined && wearRestoreNow >= nextWearHistoryClearedAt) {
             nextWearHistoryClearedAt = undefined;
           }
         }
@@ -1125,8 +1178,19 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           localStorage.setItem(STORAGE_KEYS.WIFE_NG, JSON.stringify(restoredWifeNgPairs));
           stateRef.current.wifeNgPairs = restoredWifeNgPairs;
           setWifeNgPairs(restoredWifeNgPairs);
+
+          let ngRestoreNow = now;
           for (const pair of restoredWifeNgPairs) {
-            delete nextDeletedWifeNgMap[`${pair.shirtId}_${pair.pantsId}`];
+            const key = `${pair.shirtId}_${pair.pantsId}`;
+            const delTs = nextDeletedWifeNgMap[key] || 0;
+            if (delTs >= ngRestoreNow) {
+              ngRestoreNow = delTs + 1;
+            }
+          }
+          for (const pair of restoredWifeNgPairs) {
+            const key = `${pair.shirtId}_${pair.pantsId}`;
+            delete nextDeletedWifeNgMap[key];
+            nextRestoredWifeNgMap[key] = ngRestoreNow;
           }
         }
 
@@ -1135,6 +1199,9 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           deletedWearMap: nextDeletedWearMap,
           deletedWifeNgMap: nextDeletedWifeNgMap,
           wearHistoryClearedAt: nextWearHistoryClearedAt,
+          restoredWearMap: nextRestoredWearMap,
+          wearHistoryRestoredAt: nextWearHistoryRestoredAt,
+          restoredWifeNgMap: nextRestoredWifeNgMap,
           clearCustomClosetData: false,
           customClosetDataClearedAt: undefined,
         };
