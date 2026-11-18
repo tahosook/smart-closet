@@ -280,6 +280,8 @@ function readTombstones(ss) {
       deletedWifeNgMap: {},
       wearHistoryClearedAt: 0,
       wearHistoryRestoredAt: 0,
+      restoredWearMap: {},
+      restoredWifeNgMap: {},
       customClosetDataClearedAt: 0
     };
   }
@@ -290,6 +292,8 @@ function readTombstones(ss) {
       deletedWifeNgMap: parsed.deletedWifeNgMap || {},
       wearHistoryClearedAt: Number(parsed.wearHistoryClearedAt) || 0,
       wearHistoryRestoredAt: Number(parsed.wearHistoryRestoredAt) || 0,
+      restoredWearMap: parsed.restoredWearMap || {},
+      restoredWifeNgMap: parsed.restoredWifeNgMap || {},
       customClosetDataClearedAt: Number(parsed.customClosetDataClearedAt) || 0
     };
   } catch (e) {
@@ -298,6 +302,8 @@ function readTombstones(ss) {
       deletedWifeNgMap: {},
       wearHistoryClearedAt: 0,
       wearHistoryRestoredAt: 0,
+      restoredWearMap: {},
+      restoredWifeNgMap: {},
       customClosetDataClearedAt: 0
     };
   }
@@ -307,7 +313,35 @@ function writeTombstones(ss, tombstones) {
   writeConfigValue(ss, 'syncTombstones', JSON.stringify(tombstones));
 }
 
+function integrateDeletedTimestampMap(deletedMap, restoredMap, incomingMap) {
+  if (!incomingMap || typeof incomingMap !== 'object') return;
+  Object.keys(incomingMap).forEach(key => {
+    const ts = Number(incomingMap[key] || 0);
+    const restoredAt = Number(restoredMap[key] || 0);
+    if (ts > 0 && ts > restoredAt) {
+      deletedMap[key] = Math.max(deletedMap[key] || 0, ts);
+      if (restoredAt > 0) {
+        delete restoredMap[key];
+      }
+    }
+  });
+}
+
+function integrateRestoredTimestampMap(restoredMap, deletedMap, incomingMap) {
+  if (!incomingMap || typeof incomingMap !== 'object') return;
+  Object.keys(incomingMap).forEach(key => {
+    const restoreTs = Number(incomingMap[key] || 0);
+    if (restoreTs > 0 && restoreTs >= Number(deletedMap[key] || 0)) {
+      restoredMap[key] = Math.max(restoredMap[key] || 0, restoreTs);
+      delete deletedMap[key];
+    }
+  });
+}
+
 function integrateIncomingTombstones(serverTombstones, payload) {
+  serverTombstones.restoredWearMap = serverTombstones.restoredWearMap || {};
+  serverTombstones.restoredWifeNgMap = serverTombstones.restoredWifeNgMap || {};
+
   // 1. 全削除タイムスタンプの統合（過去の復元時刻より新しい場合のみ反映）
   if (payload.wearHistoryClearedAt) {
     const incomingClearedAt = Number(payload.wearHistoryClearedAt) || 0;
@@ -320,33 +354,21 @@ function integrateIncomingTombstones(serverTombstones, payload) {
     }
   }
 
-  // 2. 着用履歴の個別削除マップの統合（正当なタイムスタンプを持つ削除のみ統合）
-  if (payload.deletedWearMap && typeof payload.deletedWearMap === 'object') {
-    Object.keys(payload.deletedWearMap).forEach(id => {
-      const ts = Number(payload.deletedWearMap[id] || 0);
-      if (ts > 0) {
-        serverTombstones.deletedWearMap[id] = Math.max(
-          serverTombstones.deletedWearMap[id] || 0,
-          ts
-        );
-      }
-    });
-  }
+  // 2. 着用履歴の個別削除マップの統合（保持済み復元時刻より新しい削除のみ反映）
+  integrateDeletedTimestampMap(
+    serverTombstones.deletedWearMap,
+    serverTombstones.restoredWearMap,
+    payload.deletedWearMap
+  );
 
-  // 3. 奥様NGの個別削除マップの統合（正当なタイムスタンプを持つ削除のみ統合）
-  if (payload.deletedWifeNgMap && typeof payload.deletedWifeNgMap === 'object') {
-    Object.keys(payload.deletedWifeNgMap).forEach(key => {
-      const ts = Number(payload.deletedWifeNgMap[key] || 0);
-      if (ts > 0) {
-        serverTombstones.deletedWifeNgMap[key] = Math.max(
-          serverTombstones.deletedWifeNgMap[key] || 0,
-          ts
-        );
-      }
-    });
-  }
+  // 3. 奥様NGの個別削除マップの統合（保持済み復元時刻より新しい削除のみ反映）
+  integrateDeletedTimestampMap(
+    serverTombstones.deletedWifeNgMap,
+    serverTombstones.restoredWifeNgMap,
+    payload.deletedWifeNgMap
+  );
 
-  // 4. バックアップ復元による明示的 Tombstone 解除（削除時刻以降の復元のみ解除）
+  // 4. バックアップ復元による明示的 Tombstone 解除（削除時刻以降の復元のみ解除し復元時刻を保持）
   if (payload.wearHistoryRestoredAt) {
     const restoreTs = Number(payload.wearHistoryRestoredAt) || 0;
     if (restoreTs > 0) {
@@ -360,23 +382,17 @@ function integrateIncomingTombstones(serverTombstones, payload) {
     }
   }
 
-  if (payload.restoredWearMap && typeof payload.restoredWearMap === 'object') {
-    Object.keys(payload.restoredWearMap).forEach(id => {
-      const restoreTs = Number(payload.restoredWearMap[id] || 0);
-      if (restoreTs > 0 && restoreTs >= Number(serverTombstones.deletedWearMap[id] || 0)) {
-        delete serverTombstones.deletedWearMap[id];
-      }
-    });
-  }
+  integrateRestoredTimestampMap(
+    serverTombstones.restoredWearMap,
+    serverTombstones.deletedWearMap,
+    payload.restoredWearMap
+  );
 
-  if (payload.restoredWifeNgMap && typeof payload.restoredWifeNgMap === 'object') {
-    Object.keys(payload.restoredWifeNgMap).forEach(key => {
-      const restoreTs = Number(payload.restoredWifeNgMap[key] || 0);
-      if (restoreTs > 0 && restoreTs >= Number(serverTombstones.deletedWifeNgMap[key] || 0)) {
-        delete serverTombstones.deletedWifeNgMap[key];
-      }
-    });
-  }
+  integrateRestoredTimestampMap(
+    serverTombstones.restoredWifeNgMap,
+    serverTombstones.deletedWifeNgMap,
+    payload.restoredWifeNgMap
+  );
 }
 
 /**

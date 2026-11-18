@@ -6987,6 +6987,62 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
     assert.equal(restoreRes.wifeNgPairs[0].pantsId, 'P8');
     assert.equal(restoreRes.wifeNgPairs[0].createdAt, ngToKeepInBackup.createdAt);
 
+    // サーバー側 syncTombstones に個別復元時刻が永続化されていること
+    const savedTombstonesAfterRestore = JSON.parse(
+      vm.runInContext('readConfigValue(SpreadsheetApp.getActiveSpreadsheet(), "syncTombstones")', context)
+    );
+    assert.equal(
+      savedTombstonesAfterRestore.restoredWearMap[wearToKeepInBackup.id],
+      tRestore,
+      'Server syncTombstones must persist restoredWearMap'
+    );
+    assert.equal(
+      savedTombstonesAfterRestore.restoredWifeNgMap.S1_P8,
+      tRestore,
+      'Server syncTombstones must persist restoredWifeNgMap'
+    );
+
+    // 8-4. 【再レビュー指摘】復元後に古いオフライン端末が削除前の古い deletedWearMap / deletedWifeNgMap (tDel < tRestore) を再送しても、
+    // サーバーに再登録されず復元データが定着すること（wearHistory / wifeNgPairs 両方）
+    const staleOfflineTombstonesPush = JSON.parse(
+      vm.runInContext(
+        `doPost({ postData: { contents: ${JSON.stringify(
+          JSON.stringify({
+            action: 'push',
+            token: 'sync-token-restore-b',
+            wearHistory: [],
+            wifeNgPairs: [],
+            deletedWearMap: { [wearToKeepInBackup.id]: tDel },
+            deletedWifeNgMap: { S1_P8: tDel },
+          })
+        )} } })`,
+        context
+      ).getContent()
+    );
+    assert.equal(staleOfflineTombstonesPush.ok, true);
+    assert.equal(
+      staleOfflineTombstonesPush.wearHistory.length,
+      1,
+      'Stale offline deletedWearMap must NOT re-delete restored wear record'
+    );
+    assert.equal(staleOfflineTombstonesPush.wearHistory[0].id, wearToKeepInBackup.id);
+    assert.equal(
+      staleOfflineTombstonesPush.wifeNgPairs.length,
+      1,
+      'Stale offline deletedWifeNgMap must NOT re-delete restored wife NG pair'
+    );
+    assert.equal(staleOfflineTombstonesPush.wifeNgPairs[0].pantsId, 'P8');
+    assert.equal(
+      staleOfflineTombstonesPush.tombstones.deletedWearMap[wearToKeepInBackup.id],
+      undefined,
+      'Stale deletedWearMap entry must NOT be re-registered on server'
+    );
+    assert.equal(
+      staleOfflineTombstonesPush.tombstones.deletedWifeNgMap.S1_P8,
+      undefined,
+      'Stale deletedWifeNgMap entry must NOT be re-registered on server'
+    );
+
     // バックアップに含まれない別項目の Tombstone は解除されていないため、古い端末が再送しても復活しないこと
     const nonBackupResurrectionTest = JSON.parse(
       vm.runInContext(
@@ -7015,6 +7071,39 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
     );
     assert.equal(pullRes.wearHistory.length, 1);
     assert.equal(pullRes.wifeNgPairs.length, 1);
+
+    // 8-5. 復元後に行われた新しい削除（tLaterDel > tRestore）は従来どおり優先されること
+    const tLaterDel = tRestore + 50000;
+    const newerDeleteAfterRestore = JSON.parse(
+      vm.runInContext(
+        `doPost({ postData: { contents: ${JSON.stringify(
+          JSON.stringify({
+            action: 'push',
+            token: 'sync-token-restore-b',
+            wearHistory: [],
+            wifeNgPairs: [],
+            deletedWearMap: { [wearToKeepInBackup.id]: tLaterDel },
+            deletedWifeNgMap: { S1_P8: tLaterDel },
+          })
+        )} } })`,
+        context
+      ).getContent()
+    );
+    assert.equal(newerDeleteAfterRestore.ok, true);
+    assert.equal(
+      newerDeleteAfterRestore.wearHistory.length,
+      0,
+      'Newer deletion after restore must delete wear record'
+    );
+    assert.equal(
+      newerDeleteAfterRestore.wifeNgPairs.length,
+      0,
+      'Newer deletion after restore must delete wife NG pair'
+    );
+    assert.equal(newerDeleteAfterRestore.tombstones.deletedWearMap[wearToKeepInBackup.id], tLaterDel);
+    assert.equal(newerDeleteAfterRestore.tombstones.deletedWifeNgMap.S1_P8, tLaterDel);
+    assert.equal(newerDeleteAfterRestore.tombstones.restoredWearMap[wearToKeepInBackup.id], undefined);
+    assert.equal(newerDeleteAfterRestore.tombstones.restoredWifeNgMap.S1_P8, undefined);
   }
 
   // 9. クライアント reconcileSyncResponse / pruneCompletedTombstones の解除マーカー調停検証
