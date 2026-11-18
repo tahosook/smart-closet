@@ -6518,11 +6518,9 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
     },
   ];
 
-  const mergedClosetData = mergeClosetDataWithWifeNg(rawCloset, sampleWifeNgPairs);
-
-  // 1. buildClosetBackupData によるエクスポート形式と往復検証
+  // 1. buildClosetBackupData によるエクスポート形式（items と wifeNgPairs の分離保持）と往復検証
   const backupObj = buildClosetBackupData({
-    mergedClosetData,
+    closetData: rawCloset,
     wearHistory: sampleWearHistory,
     wifeNgPairs: sampleWifeNgPairs,
   });
@@ -6532,9 +6530,10 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
   assert.deepEqual(backupObj.wearHistory, sampleWearHistory);
   assert.deepEqual(backupObj.wifeNgPairs, sampleWifeNgPairs);
 
-  // アイテム側の奥様NGマージ状態が従来どおり維持されていること
-  const mergedS2 = backupObj.items.find((it) => it.id === 'S2');
-  assert.ok(mergedS2.ngIds.includes('P8'), 'Backup items must preserve merged wife NG on item');
+  // アイテム側に奥様NGが混入（二重保持）されず、未マージの相性データが維持されていること
+  const exportedS2 = backupObj.items.find((it) => it.id === 'S2');
+  assert.equal(exportedS2.ngIds.includes('P8'), false, 'Backup items must NOT double-hold wife NG on item');
+  assert.ok(exportedS2.officeRecommendIds.includes('P8'), 'Backup items must preserve original officeRecommendIds');
 
   const roundTripJson = JSON.stringify(backupObj);
   const parsedRoundTrip = JSON.parse(roundTripJson);
@@ -7168,6 +7167,73 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
       false
     );
     assert.equal(hasRemainingTombstones(prunedAfterSend), false, 'Completed restore markers must be pruned');
+  }
+
+  // 10. 奥様NGの二重保持解消・相性NG維持・旧形式後方互換の3シナリオ検証
+  {
+    const dualNgWifePairs = [
+      // 奥様NGのみのペア（S2 × P8 は本来相性NGではなく officeRecommendIds 対象）
+      {
+        shirtId: 'S2',
+        pantsId: 'P8',
+        reason: '奥様NG指定（色味が重い）',
+        createdAt: '2026-11-10T08:30:00.000Z',
+      },
+      // 本来の相性NG（S1.ngIds に P1 あり）と奥様NGを兼ねるペア
+      {
+        shirtId: 'S1',
+        pantsId: 'P1',
+        reason: '奥様NG指定（重複登録）',
+        createdAt: '2026-11-11T09:00:00.000Z',
+      },
+    ];
+
+    // シナリオ1 & 2: 新形式バックアップをエクスポート → 復元 → 奥様NG解除
+    const newFormatBackup = buildClosetBackupData({
+      closetData: rawCloset,
+      wearHistory: sampleWearHistory,
+      wifeNgPairs: dualNgWifePairs,
+    });
+    const restoredNew = validateClosetBackupData(JSON.parse(JSON.stringify(newFormatBackup)));
+    assert.equal(restoredNew.valid, true);
+    const restoredItemMap = new Map(restoredNew.data.items.map((it) => [it.id, it]));
+
+    // 解除前: どちらも奥様NGとしてブロックされる
+    const beforeRemoveWifeOnly = checkIsNgPair('S2', 'P8', restoredItemMap, restoredNew.wifeNgPairs);
+    assert.equal(beforeRemoveWifeOnly.isNg, true);
+    assert.equal(beforeRemoveWifeOnly.isWifeNg, true);
+
+    const beforeRemoveDualNg = checkIsNgPair('S1', 'P1', restoredItemMap, restoredNew.wifeNgPairs);
+    assert.equal(beforeRemoveDualNg.isNg, true);
+    assert.equal(beforeRemoveDualNg.isWifeNg, true);
+
+    // UI の removeWifeNg 相当で wifeNgPairs から解除
+    const afterRemoveAllWifeNg = [];
+
+    // シナリオ1: 奥様NGのみのペア（S2 × P8）は NG ではなくなり、推奨IDも維持される
+    const afterRemoveWifeOnly = checkIsNgPair('S2', 'P8', restoredItemMap, afterRemoveAllWifeNg);
+    assert.equal(afterRemoveWifeOnly.isNg, false, 'Wife-NG-only pair must no longer be NG after removeWifeNg following backup restore');
+    assert.equal(afterRemoveWifeOnly.isWifeNg, false);
+    assert.ok(
+      restoredItemMap.get('S2').officeRecommendIds.includes('P8'),
+      'Original officeRecommendIds must remain intact after removing wife NG'
+    );
+
+    // シナリオ2: 相性NGと奥様NGを兼ねるペア（S1 × P1）は奥様NG解除後も本来の相性NGとして残る
+    const afterRemoveDualNg = checkIsNgPair('S1', 'P1', restoredItemMap, afterRemoveAllWifeNg);
+    assert.equal(afterRemoveDualNg.isNg, true, 'Genuine compatibility NG must remain NG after removing wife NG');
+    assert.equal(afterRemoveDualNg.isWifeNg, false, 'Dual NG must revert from wife NG to genuine compatibility NG');
+
+    // シナリオ3: 旧形式バックアップ（items のみ、wifeNgPairs なし、items[].ngIds に奥様NGマージ済み）の後方互換
+    const legacyMergedCloset = mergeClosetDataWithWifeNg(rawCloset, dualNgWifePairs);
+    const restoredLegacy = validateClosetBackupData(
+      JSON.parse(JSON.stringify({ items: legacyMergedCloset.items, updatedAt: legacyMergedCloset.updatedAt }))
+    );
+    assert.equal(restoredLegacy.valid, true);
+    assert.equal(restoredLegacy.wifeNgPairs, undefined);
+    const legacyItemMap = new Map(restoredLegacy.data.items.map((it) => [it.id, it]));
+    const legacyWifeOnlyNg = checkIsNgPair('S2', 'P8', legacyItemMap, []);
+    assert.equal(legacyWifeOnlyNg.isNg, true, 'Legacy items-only backup must continue preserving merged ngIds judgment');
   }
 
   console.log('  ✅ Backup JSON export, restore, backward compatibility, sync tombstone clearance & validation verified');

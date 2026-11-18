@@ -36,7 +36,7 @@ import { WardrobeRebuildModal } from './WardrobeRebuildModal';
 
 export const ManageView: React.FC = () => {
   const {
-    mergedClosetData,
+    closetData,
     wearHistory,
     wifeNgPairs,
     shirts,
@@ -73,7 +73,7 @@ export const ManageView: React.FC = () => {
 
   const handleDownloadJson = () => {
     const backupData = buildClosetBackupData({
-      mergedClosetData,
+      closetData,
       wearHistory,
       wifeNgPairs,
     });
@@ -90,7 +90,7 @@ export const ManageView: React.FC = () => {
 
   const handleCopyMergedJson = async () => {
     const backupData = buildClosetBackupData({
-      mergedClosetData,
+      closetData,
       wearHistory,
       wifeNgPairs,
     });

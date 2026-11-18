@@ -599,17 +599,18 @@ export interface ClosetBackupValidationResult {
 
 /**
  * バックアップ JSON 用のデータオブジェクトを生成する純粋関数
- * 既存のアイテム配列（奥様NGマージ済み）をそのまま維持しつつ、着用履歴・奥様NG一覧を付与する。
+ * 本来の相性データ（未マージの items）と独立した奥様NG一覧（wifeNgPairs）・着用履歴（wearHistory）を分離保持し、
+ * 二重保持による復元後の奥様NG解除不能を防ぐ。
  */
 export function buildClosetBackupData(params: {
-  mergedClosetData: ClosetData;
+  closetData: ClosetData;
   wearHistory: WearRecord[];
   wifeNgPairs: WifeNgPair[];
 }): ClosetBackupData {
-  const { mergedClosetData, wearHistory, wifeNgPairs } = params;
+  const { closetData, wearHistory, wifeNgPairs } = params;
   return {
-    items: mergedClosetData.items,
-    ...(mergedClosetData.updatedAt !== undefined ? { updatedAt: mergedClosetData.updatedAt } : {}),
+    items: closetData.items,
+    ...(closetData.updatedAt !== undefined ? { updatedAt: closetData.updatedAt } : {}),
     wearHistory: [...wearHistory],
     wifeNgPairs: [...wifeNgPairs],
   };

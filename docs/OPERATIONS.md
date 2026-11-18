@@ -228,7 +228,7 @@ flowchart TD
 #### 前提知識：バックアップ JSON の対象範囲と「全履歴をクリア」の伝播仕様
 1. **アプリのバックアップ JSON に含まれるもの:**
    - 管理タブ ＞「💾 データバックアップ（JSON保存・コピー・復元）」で出力される JSON は `ClosetBackupData` スキーマです。
-   - ここには服一覧（`items`、奥様NGマージ済み）に加えて、**着用履歴（`wearHistory`）** および **登録日（`createdAt`）を含む独立した奥様NG一覧（`wifeNgPairs`）** が含まれます。
+   - ここには本来の相性データ（未マージの `items`）と分離して、**着用履歴（`wearHistory`）** および **登録日（`createdAt`）を含む独立した奥様NG一覧（`wifeNgPairs`）** が含まれます（`items` のみで `ngIds` に奥様NGがマージされた旧形式のバックアップも従来どおり復元可能）。
    - 手元にバックアップ JSON がある場合は、管理タブ ＞「💾 データバックアップ」内の復元 UI から復元でき、対応する削除 Tombstone の解除マーカー（`wearHistoryRestoredAt`, `restoredWearMap`, `restoredWifeNgMap`）が GAS へ送信されるため、同期後も復元データが定着します。バックアップ JSON が手元にない場合は、以下の **Google スプレッドシート（`wear_history` シートおよび `wife_ng` シート）の版数履歴（変更履歴）** から復旧できます。
 2. **「全履歴をクリア」や個別削除が全端末・スプレッドシートへ伝播する仕組み（Sync Tombstone）:**
    - 着用履歴モーダルで **「全履歴をクリア」**（または履歴の個別削除、奥様NGの解除）を実行すると、端末の `localStorage`（`smart_closet_sync_tombstones`）に削除タイムスタンプ（墓標：`wearHistoryClearedAt`、`deletedWearMap`、`deletedWifeNgMap`）が記録され、バックグラウンド Push によってスプレッドシートの `meta_config` シート内の `syncTombstones` 行へ永続化されます。

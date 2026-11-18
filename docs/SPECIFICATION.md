@@ -182,9 +182,9 @@
      - **⚡ クイック見直し（写真不要・約1分）:** 登録済みデータから相性判定（出社/NG）および羽織り分類のみを高速に見直す2ステップウィザード（Step 1: プロンプト生成＆JSON取り込み → Step 2: 差分比較＆選択適用）。
      - **📸 フル見直し ＆ 重複統合（写真を正本）:** 保存写真を正本として全属性・相性を全面再導出する3ステップウィザード（Step 1: 重複検出・統合 → Step 2: 写真シート＆Gemini分析 → Step 3: 差分比較＆選択適用）。確定色・確定実寸は初期選択・一括選択では適用されず、差分を確認して個別に選択した場合のみ適用できる保護ロックを維持。
    - **💾 データバックアップ（アコーディオン）:**
-     - ［JSON保存］: マージ済み最新アイテム（`items`）・着用履歴（`wearHistory`）・登録日付き奥様NG一覧（`wifeNgPairs`）を含むバックアップJSON（`ClosetBackupData`）をダウンロード。
+     - ［JSON保存］: 本来の相性判定を保持した最新アイテム（`items`、奥様NG未マージ）・着用履歴（`wearHistory`）・登録日付き奥様NG一覧（`wifeNgPairs`）を分離保持したバックアップJSON（`ClosetBackupData`）をダウンロード。
      - ［JSONコピー］: 上記バックアップJSONをクリップボードにコピー。
-     - ［バックアップから復元（ファイル選択 / JSON貼り付け）］: バックアップJSONを取り込み、服データ・着用履歴・奥様NG一覧を復元（`wearHistory` / `wifeNgPairs` を含まない旧形式のバックアップJSONも後方互換でインポート可能）。復元操作時には、復元対象に対応する削除 Tombstone を解除するマーカー（`wearHistoryRestoredAt`, `restoredWearMap`, `restoredWifeNgMap`）を同期へ連携し、過去の全履歴クリアや個別削除後にバックアップ復元してもクラウド同期後に消えずに定着する。
+     - ［バックアップから復元（ファイル選択 / JSON貼り付け）］: バックアップJSONを取り込み、服データ・着用履歴・奥様NG一覧を復元（`wearHistory` / `wifeNgPairs` を含まず `items[].ngIds` に奥様NGがマージされていた旧形式のバックアップJSONも後方互換でインポート可能）。復元操作時には、復元対象に対応する削除 Tombstone を解除するマーカー（`wearHistoryRestoredAt`, `restoredWearMap`, `restoredWifeNgMap`）を同期へ連携し、過去の全履歴クリアや個別削除後にバックアップ復元してもクラウド同期後に消えずに定着する。
 
 ---
 
@@ -240,7 +240,7 @@
 | **`GarmentCropBox`** | 服本体のみの外接矩形座標型（0〜1000の正規化整数 `ymin`, `xmin`, `ymax`, `xmax`）。 |
 | **`BatchGarmentDraftItem` / `BatchGarments*`** | まとめ撮り一括登録（1〜3着）における着ごとの下書き・個別切り抜き座標・一括マージ結果用インターフェース。 |
 | **`ClosetData`** | 服アイテムのコレクション配列（`items: ClosetItem[]`）およびカスタムインポート更新タイムスタンプ（`updatedAt`）。 |
-| **`ClosetBackupData`** | バックアップJSONエクスポート・復元用のデータ構造（`ClosetData` に加えて任意の `wearHistory?: WearRecord[]` と `wifeNgPairs?: WifeNgPair[]` を保持）。 |
+| **`ClosetBackupData`** | バックアップJSONエクスポート・復元用のデータ構造（未マージの `ClosetData` に加えて任意の `wearHistory?: WearRecord[]` と `wifeNgPairs?: WifeNgPair[]` を分離保持。旧形式 `items` のみのバックアップとも互換）。 |
 | **`WearRecord`** | 日常の着用履歴（一意ID、日付 `YYYY-MM-DD`、シャツID、パンツID、任意羽織りID `outerwearId?: string`、シーン、タイムスタンプ）。 |
 | **`WifeNgPair`** | 奥様NGペア記録（シャツID、パンツID、登録理由、登録日時）。アプリ内判定で最優先除外される。 |
 | **`RecommendationResult`** | 朝モード計算結果（パンツアイテム実体、順位、前日着用フラグ、総合スコア、相性理由、出社/リモートフラグ）。 |
