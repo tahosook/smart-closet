@@ -84,6 +84,8 @@ const {
   isCollaredShirtTop,
   isTopMatchingScene,
   selectRecommendedShirtsForToday,
+  buildClosetBackupData,
+  validateClosetBackupData,
 } = closetDomain;
 
 const imageProcessorTsPath = path.join(projectRoot, 'src/utils/imageProcessor.ts');
@@ -6473,6 +6475,180 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
   assert.equal(recIds[recIds.length - 1], 'S2', 'Yesterday worn shirt S2 should be at the end');
 
   console.log('  ✅ Today top recommendation, scene binary partitioning & sleeve filtering logic verified');
+}
+
+// -------------------------------------------------------------
+// Test Case 38: バックアップ JSON（wearHistory & wifeNgPairs 同梱エクスポート・復元・後方互換）ロジック検証
+// -------------------------------------------------------------
+{
+  const rawCloset = JSON.parse(fs.readFileSync(path.join(projectRoot, 'src/data/closet.json'), 'utf-8'));
+
+  const sampleWearHistory = [
+    {
+      id: '2026-11-15_1731628800000',
+      date: '2026-11-15',
+      shirtId: 'S2',
+      pantsId: 'P8',
+      scene: 'office',
+      timestamp: 1731628800000,
+    },
+    {
+      id: '2026-11-17_1731801600000',
+      date: '2026-11-17',
+      shirtId: 'S3',
+      pantsId: 'P9',
+      outerwearId: 'S5',
+      scene: 'remote',
+      timestamp: 1731801600000,
+    },
+  ];
+
+  const sampleWifeNgPairs = [
+    {
+      shirtId: 'S2',
+      pantsId: 'P8',
+      reason: '奥様NG指定（色味が重い）',
+      createdAt: '2026-11-10T08:30:00.000Z',
+    },
+    {
+      shirtId: 'S1',
+      pantsId: 'P3',
+      reason: '奥様NG指定',
+      createdAt: '2026-11-12T09:15:00.000Z',
+    },
+  ];
+
+  const mergedClosetData = mergeClosetDataWithWifeNg(rawCloset, sampleWifeNgPairs);
+
+  // 1. buildClosetBackupData によるエクスポート形式と往復検証
+  const backupObj = buildClosetBackupData({
+    mergedClosetData,
+    wearHistory: sampleWearHistory,
+    wifeNgPairs: sampleWifeNgPairs,
+  });
+
+  assert.equal(Array.isArray(backupObj.items), true);
+  assert.equal(backupObj.items.length, rawCloset.items.length);
+  assert.deepEqual(backupObj.wearHistory, sampleWearHistory);
+  assert.deepEqual(backupObj.wifeNgPairs, sampleWifeNgPairs);
+
+  // アイテム側の奥様NGマージ状態が従来どおり維持されていること
+  const mergedS2 = backupObj.items.find((it) => it.id === 'S2');
+  assert.ok(mergedS2.ngIds.includes('P8'), 'Backup items must preserve merged wife NG on item');
+
+  const roundTripJson = JSON.stringify(backupObj);
+  const parsedRoundTrip = JSON.parse(roundTripJson);
+  const restored = validateClosetBackupData(parsedRoundTrip);
+
+  assert.equal(restored.valid, true, 'Round-trip backup JSON must pass validateClosetBackupData');
+  assert.equal(restored.data.items.length, rawCloset.items.length);
+  assert.equal(restored.wearHistory.length, 2);
+  // 日付降順で復元されること
+  assert.equal(restored.wearHistory[0].date, '2026-11-17');
+  assert.equal(restored.wearHistory[0].outerwearId, 'S5', 'outerwearId must be preserved');
+  assert.equal(restored.wearHistory[1].date, '2026-11-15');
+  assert.deepEqual(restored.wifeNgPairs, sampleWifeNgPairs, 'wifeNgPairs with createdAt must be preserved');
+
+  // 2. ClosetData（GAS同期用 customClosetData 等）に余剰プロパティが混入しないことの検証
+  assert.equal('wearHistory' in restored.data, false, 'ClosetData must NOT contain wearHistory');
+  assert.equal('wifeNgPairs' in restored.data, false, 'ClosetData must NOT contain wifeNgPairs');
+  const schemaOnly = validateClosetDataSchema(parsedRoundTrip);
+  assert.equal(schemaOnly.valid, true);
+  assert.equal('wearHistory' in schemaOnly.data, false, 'validateClosetDataSchema must strip wearHistory');
+  assert.equal('wifeNgPairs' in schemaOnly.data, false, 'validateClosetDataSchema must strip wifeNgPairs');
+
+  // 3. 旧形式バックアップ（wearHistory / wifeNgPairs なし）の後方互換検証
+  const legacyRes = validateClosetBackupData(rawCloset);
+  assert.equal(legacyRes.valid, true, 'Legacy backup without wearHistory/wifeNgPairs must be valid');
+  assert.equal(legacyRes.data.items.length, rawCloset.items.length);
+  assert.equal(legacyRes.wearHistory, undefined, 'Legacy backup must return wearHistory as undefined');
+  assert.equal(legacyRes.wifeNgPairs, undefined, 'Legacy backup must return wifeNgPairs as undefined');
+
+  // 片方のみ存在するケース
+  const partialRes = validateClosetBackupData({
+    items: rawCloset.items,
+    wifeNgPairs: sampleWifeNgPairs,
+  });
+  assert.equal(partialRes.valid, true);
+  assert.equal(partialRes.wearHistory, undefined);
+  assert.deepEqual(partialRes.wifeNgPairs, sampleWifeNgPairs);
+
+  // 明示的に空配列が指定された場合は [] として復元されること
+  const emptyArraysRes = validateClosetBackupData({
+    items: rawCloset.items,
+    wearHistory: [],
+    wifeNgPairs: [],
+  });
+  assert.equal(emptyArraysRes.valid, true);
+  assert.deepEqual(emptyArraysRes.wearHistory, []);
+  assert.deepEqual(emptyArraysRes.wifeNgPairs, []);
+
+  // 4. 重複ペアの正規化（新しい createdAt を優先）
+  const dupNgRes = validateClosetBackupData({
+    items: rawCloset.items,
+    wifeNgPairs: [
+      { shirtId: 'S2', pantsId: 'P8', reason: '古い理由', createdAt: '2026-11-01T00:00:00.000Z' },
+      { shirtId: 'S2', pantsId: 'P8', reason: '新しい理由', createdAt: '2026-11-18T00:00:00.000Z' },
+    ],
+  });
+  assert.equal(dupNgRes.valid, true);
+  assert.equal(dupNgRes.wifeNgPairs.length, 1);
+  assert.equal(dupNgRes.wifeNgPairs[0].reason, '新しい理由');
+  assert.equal(dupNgRes.wifeNgPairs[0].createdAt, '2026-11-18T00:00:00.000Z');
+
+  // 5. 不正な wearHistory / wifeNgPairs の拒否検証
+  assert.equal(
+    validateClosetBackupData({ items: rawCloset.items, wearHistory: 'not-array' }).valid,
+    false,
+    'Non-array wearHistory must be rejected'
+  );
+  assert.equal(
+    validateClosetBackupData({
+      items: rawCloset.items,
+      wearHistory: [{ id: 'w1', date: '2026/11/18', shirtId: 'S1', pantsId: 'P1', scene: 'office', timestamp: 100 }],
+    }).valid,
+    false,
+    'Invalid date format in wearHistory must be rejected'
+  );
+  assert.equal(
+    validateClosetBackupData({
+      items: rawCloset.items,
+      wearHistory: [{ id: 'w1', date: '2026-11-18', shirtId: 'S1', pantsId: 'P1', scene: 'casual', timestamp: 100 }],
+    }).valid,
+    false,
+    'Invalid scene in wearHistory must be rejected'
+  );
+  assert.equal(
+    validateClosetBackupData({
+      items: rawCloset.items,
+      wearHistory: [{ id: 'w1', date: '2026-11-18', shirtId: 'S1', pantsId: 'P1', scene: 'office', timestamp: '100' }],
+    }).valid,
+    false,
+    'Non-number timestamp in wearHistory must be rejected'
+  );
+  assert.equal(
+    validateClosetBackupData({ items: rawCloset.items, wifeNgPairs: {} }).valid,
+    false,
+    'Non-array wifeNgPairs must be rejected'
+  );
+  assert.equal(
+    validateClosetBackupData({
+      items: rawCloset.items,
+      wifeNgPairs: [{ shirtId: 'S1', pantsId: 'P1', reason: 'NG' }], // createdAt 欠落
+    }).valid,
+    false,
+    'Missing createdAt in wifeNgPairs must be rejected'
+  );
+  assert.equal(
+    validateClosetBackupData({
+      items: rawCloset.items,
+      wifeNgPairs: [{ shirtId: '', pantsId: 'P1', reason: 'NG', createdAt: '2026-11-18T00:00:00.000Z' }],
+    }).valid,
+    false,
+    'Empty shirtId in wifeNgPairs must be rejected'
+  );
+
+  console.log('  ✅ Backup JSON export, restore, backward compatibility & validation verified');
 }
 
 console.log('🎉 All GAS backend & sync logic tests passed successfully!');

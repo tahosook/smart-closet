@@ -91,6 +91,11 @@ export interface WifeNgPair {
   createdAt: string;
 }
 
+export interface ClosetBackupData extends ClosetData {
+  wearHistory?: WearRecord[];
+  wifeNgPairs?: WifeNgPair[];
+}
+
 export interface RecommendationResult {
   pants: ClosetItem;
   rank: number;

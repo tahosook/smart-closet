@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import {
   Archive,
   Package,
@@ -8,10 +8,12 @@ import {
   Copy,
   Check,
   AlertCircle,
+  CheckCircle2,
   FolderSync,
   Layers,
   Zap,
   ShieldCheck,
+  Upload,
 } from 'lucide-react';
 import {
   ShirtCategoryFilter,
@@ -24,18 +26,26 @@ import { FilterPillBar } from './FilterPillBar';
 import { ArchiveToggleButton, OuterwearToggleButton } from './GarmentActionButtons';
 import { TravelPlannerView } from './TravelPlannerView';
 import { ClosetGallerySection } from './ClosetGallerySection';
-import { copyTextToClipboard, CopyFeedbackStatus } from '../utils/closetDomain';
+import {
+  copyTextToClipboard,
+  CopyFeedbackStatus,
+  buildClosetBackupData,
+  validateClosetBackupData,
+} from '../utils/closetDomain';
 import { WardrobeRebuildModal } from './WardrobeRebuildModal';
 
 export const ManageView: React.FC = () => {
   const {
     mergedClosetData,
+    wearHistory,
+    wifeNgPairs,
     shirts,
     pants,
     archivedItems,
     archiveItem,
     unarchiveItem,
     toggleShirtOuterwear,
+    importCustomData,
   } = useClosetStore();
 
   const [isOrganizeOpen, setIsOrganizeOpen] = useState(false);
@@ -44,6 +54,12 @@ export const ManageView: React.FC = () => {
   const [isRebuildOpen, setIsRebuildOpen] = useState(false);
   const [rebuildModalMode, setRebuildModalMode] = useState<RebuildMode>('quick');
   const [copiedJsonStatus, setCopiedJsonStatus] = useState<CopyFeedbackStatus>('idle');
+  const [backupJsonInput, setBackupJsonInput] = useState('');
+  const [restoreStatus, setRestoreStatus] = useState<{
+    type: 'success' | 'error';
+    message: string;
+  } | null>(null);
+  const backupFileInputRef = useRef<HTMLInputElement>(null);
 
   const filterItemByOuterwear = (item: (typeof shirts)[0]) => {
     if (item.category !== 'shirt') return true;
@@ -56,7 +72,12 @@ export const ManageView: React.FC = () => {
   const displayedShirts = shirts.filter(filterItemByOuterwear);
 
   const handleDownloadJson = () => {
-    const blob = new Blob([JSON.stringify(mergedClosetData, null, 2)], {
+    const backupData = buildClosetBackupData({
+      mergedClosetData,
+      wearHistory,
+      wifeNgPairs,
+    });
+    const blob = new Blob([JSON.stringify(backupData, null, 2)], {
       type: 'application/json',
     });
     const url = URL.createObjectURL(blob);
@@ -68,11 +89,105 @@ export const ManageView: React.FC = () => {
   };
 
   const handleCopyMergedJson = async () => {
-    const ok = await copyTextToClipboard(JSON.stringify(mergedClosetData, null, 2));
+    const backupData = buildClosetBackupData({
+      mergedClosetData,
+      wearHistory,
+      wifeNgPairs,
+    });
+    const ok = await copyTextToClipboard(JSON.stringify(backupData, null, 2));
     setCopiedJsonStatus(ok ? 'success' : 'error');
     setTimeout(() => {
       setCopiedJsonStatus('idle');
     }, 3000);
+  };
+
+  const restoreFromJsonText = (rawText: string) => {
+    setRestoreStatus(null);
+    let cleaned = rawText.trim();
+    if (!cleaned) {
+      setRestoreStatus({
+        type: 'error',
+        message: '復元するバックアップJSONを指定してください。',
+      });
+      return;
+    }
+    if (cleaned.startsWith('```')) {
+      cleaned = cleaned.replace(/^```[a-zA-Z]*\n?/, '').replace(/\n?```$/, '').trim();
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(cleaned);
+    } catch {
+      setRestoreStatus({
+        type: 'error',
+        message: 'JSONの解析に失敗しました。バックアップファイルの形式を確認してください。',
+      });
+      return;
+    }
+
+    const previewValidation = validateClosetBackupData(parsed);
+    if (!previewValidation.valid) {
+      setRestoreStatus({
+        type: 'error',
+        message: previewValidation.error || 'バックアップJSONの検証に失敗しました。',
+      });
+      return;
+    }
+
+    const res = importCustomData(cleaned);
+    if (res.success) {
+      const itemsCount = res.restoredItemsCount ?? previewValidation.data?.items.length ?? 0;
+      const wearPart =
+        res.restoredWearCount !== undefined
+          ? `着用履歴 ${res.restoredWearCount}件`
+          : '着用履歴（既存維持）';
+      const ngPart =
+        res.restoredWifeNgCount !== undefined
+          ? `奥様NG ${res.restoredWifeNgCount}件`
+          : '奥様NG（既存維持）';
+      setRestoreStatus({
+        type: 'success',
+        message: `バックアップから復元しました（服データ ${itemsCount}着 / ${wearPart} / ${ngPart}）。`,
+      });
+      setBackupJsonInput('');
+    } else {
+      setRestoreStatus({
+        type: 'error',
+        message: res.error || 'バックアップからの復元に失敗しました。',
+      });
+    }
+  };
+
+  const handleRestoreFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setRestoreStatus(null);
+
+    try {
+      let text = '';
+      if (typeof file.text === 'function') {
+        text = await file.text();
+      } else {
+        text = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result as string);
+          reader.onerror = () => reject(new Error('ファイルの読み込みに失敗しました'));
+          reader.readAsText(file, 'UTF-8');
+        });
+      }
+      restoreFromJsonText(text);
+    } catch (err) {
+      console.error('Backup file read error:', err);
+      setRestoreStatus({
+        type: 'error',
+        message: 'バックアップファイルの読み取りに失敗しました。',
+      });
+    } finally {
+      if (backupFileInputRef.current) {
+        backupFileInputRef.current.value = '';
+      }
+    }
   };
 
   return (
@@ -392,7 +507,7 @@ export const ManageView: React.FC = () => {
             className="w-full min-h-[44px] py-2.5 px-3 rounded-xl bg-slate-900/60 hover:bg-slate-800 text-slate-400 hover:text-slate-300 flex items-center justify-between text-xs transition-colors border border-slate-800/80"
           >
             <span className="font-semibold text-slate-300 flex items-center gap-1.5">
-              <span>💾 データバックアップ（JSON保存・クリップボードコピー）</span>
+              <span>💾 データバックアップ（JSON保存・コピー・復元）</span>
             </span>
             {isBackupOpen ? (
               <ChevronUp className="w-4 h-4 text-slate-400" />
@@ -404,7 +519,7 @@ export const ManageView: React.FC = () => {
           {isBackupOpen && (
             <div className="mt-2 p-3 bg-slate-900/80 rounded-xl border border-slate-800 space-y-3 animate-fade-in">
               <p className="text-[11px] text-slate-400 leading-relaxed">
-                現在のワードローブデータ（奥様NGマージ済み）をJSONファイルとして保存したり、クリップボードにコピーできます。
+                現在の服データ・着用履歴（{wearHistory.length}件）・登録日付き奥様NG一覧（{wifeNgPairs.length}件）をまとめてJSONとして保存・コピーしたり、バックアップJSONから復元できます。
               </p>
 
               <div className="flex flex-col sm:flex-row gap-2">
@@ -412,7 +527,7 @@ export const ManageView: React.FC = () => {
                   type="button"
                   onClick={handleDownloadJson}
                   className="flex-1 min-h-[44px] py-2 px-3 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 flex items-center justify-center gap-1.5 transition-colors border border-slate-700"
-                  title="マージ済み最新JSONをダウンロード（src/data/closet.json差し替え用）"
+                  title="服データ・着用履歴・奥様NG一覧を含むバックアップJSONをダウンロード"
                 >
                   <Download className="w-4 h-4 text-blue-400" />
                   <span>JSON保存</span>
@@ -426,7 +541,7 @@ export const ManageView: React.FC = () => {
                       ? 'bg-rose-950/60 border-rose-800/80 text-rose-300'
                       : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700'
                   }`}
-                  title="マージ済みJSONをクリップボードにコピー"
+                  title="バックアップJSONをクリップボードにコピー"
                 >
                   {copiedJsonStatus === 'success' ? (
                     <>
@@ -445,6 +560,66 @@ export const ManageView: React.FC = () => {
                     </>
                   )}
                 </button>
+              </div>
+
+              <div className="pt-3 border-t border-slate-800/90 space-y-2.5">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[11px] font-bold text-slate-300">
+                    バックアップから復元（旧形式JSONも対応）
+                  </span>
+                </div>
+
+                <input
+                  ref={backupFileInputRef}
+                  type="file"
+                  accept=".json,application/json"
+                  onChange={handleRestoreFileSelect}
+                  className="hidden"
+                />
+
+                <button
+                  type="button"
+                  onClick={() => backupFileInputRef.current?.click()}
+                  className="w-full min-h-[44px] py-2 px-3 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 flex items-center justify-center gap-1.5 transition-colors border border-slate-700"
+                >
+                  <Upload className="w-4 h-4 text-emerald-400" />
+                  <span>バックアップファイル（.json）を選択して復元</span>
+                </button>
+
+                <textarea
+                  value={backupJsonInput}
+                  onChange={(e) => setBackupJsonInput(e.target.value)}
+                  placeholder="またはバックアップJSONテキストをここに貼り付けて復元..."
+                  rows={3}
+                  className="w-full p-2.5 rounded-xl bg-slate-950 border border-slate-800 text-[11px] font-mono text-slate-200 placeholder-slate-500 focus:outline-none focus:border-blue-500"
+                />
+
+                <button
+                  type="button"
+                  onClick={() => restoreFromJsonText(backupJsonInput)}
+                  disabled={!backupJsonInput.trim()}
+                  className="w-full min-h-[44px] py-2 px-3 rounded-xl text-xs font-semibold bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-800 disabled:text-slate-500 text-white flex items-center justify-center gap-1.5 transition-colors"
+                >
+                  <Upload className="w-4 h-4" />
+                  <span>貼り付けたJSONから復元</span>
+                </button>
+
+                {restoreStatus && (
+                  <div
+                    className={`p-2.5 rounded-xl text-xs flex items-start gap-2 ${
+                      restoreStatus.type === 'success'
+                        ? 'bg-emerald-950/70 border border-emerald-700/70 text-emerald-200'
+                        : 'bg-rose-950/70 border border-rose-700/70 text-rose-200'
+                    }`}
+                  >
+                    {restoreStatus.type === 'success' ? (
+                      <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                    ) : (
+                      <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                    )}
+                    <span className="leading-relaxed">{restoreStatus.message}</span>
+                  </div>
+                )}
               </div>
             </div>
           )}

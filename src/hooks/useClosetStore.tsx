@@ -27,6 +27,7 @@ import {
 } from '../utils/syncReconcile';
 import {
   validateClosetDataSchema,
+  validateClosetBackupData,
   validateSingleClosetItem,
   mergeSingleItemIntoClosetData,
   setShirtOuterwear,
@@ -107,6 +108,9 @@ export interface ClosetStoreContextType {
     mode?: 'single' | 'full' | 'batch_garments';
     addedItem?: ClosetItem;
     updatedPeersCount?: number;
+    restoredItemsCount?: number;
+    restoredWearCount?: number;
+    restoredWifeNgCount?: number;
     error?: string;
   };
   importBatchGarments: (
@@ -1013,6 +1017,9 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       mode?: 'single' | 'full' | 'batch_garments';
       addedItem?: ClosetItem;
       updatedPeersCount?: number;
+      restoredItemsCount?: number;
+      restoredWearCount?: number;
+      restoredWifeNgCount?: number;
       error?: string;
     } => {
       try {
@@ -1022,6 +1029,8 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         let mode: 'single' | 'full' | 'batch_garments' = 'full';
         let addedItem: ClosetItem | undefined = undefined;
         let updatedPeersCount = 0;
+        let restoredWearHistory: WearRecord[] | undefined = undefined;
+        let restoredWifeNgPairs: WifeNgPair[] | undefined = undefined;
 
         // まとめ撮り服形式（garments 配列を含むオブジェクト、または直接の服ドラフト配列）かどうかの判別
         const isBatchGarmentsCandidate =
@@ -1066,8 +1075,8 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
             singleRes.item.ngIds.length;
           finalData = mergeSingleItemIntoClosetData(stateRef.current.closetData, singleRes.item);
         } else {
-          // 全体データ形式
-          const validation = validateClosetDataSchema(parsed);
+          // 全体データ形式（旧形式 items のみ、および新形式 wearHistory / wifeNgPairs 付きバックアップ）
+          const validation = validateClosetBackupData(parsed);
           if (!validation.valid || !validation.data) {
             return {
               success: false,
@@ -1075,6 +1084,8 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
             };
           }
           finalData = validation.data;
+          restoredWearHistory = validation.wearHistory;
+          restoredWifeNgPairs = validation.wifeNgPairs;
         }
 
         mutationSeqRef.current++;
@@ -1090,8 +1101,40 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         };
         localStorage.setItem(STORAGE_KEYS.CUSTOM_DATA, JSON.stringify(dataWithTimestamp));
         stateRef.current.closetData = dataWithTimestamp;
+
+        const nextDeletedWearMap = { ...stateRef.current.tombstones.deletedWearMap };
+        const nextDeletedWifeNgMap = { ...stateRef.current.tombstones.deletedWifeNgMap };
+        let nextWearHistoryClearedAt = stateRef.current.tombstones.wearHistoryClearedAt;
+
+        if (restoredWearHistory !== undefined) {
+          localStorage.setItem(STORAGE_KEYS.WEAR_HISTORY, JSON.stringify(restoredWearHistory));
+          stateRef.current.wearHistory = restoredWearHistory;
+          setWearHistory(restoredWearHistory);
+          for (const rec of restoredWearHistory) {
+            delete nextDeletedWearMap[rec.id];
+          }
+          if (
+            nextWearHistoryClearedAt !== undefined &&
+            restoredWearHistory.some((rec) => rec.timestamp <= nextWearHistoryClearedAt!)
+          ) {
+            nextWearHistoryClearedAt = undefined;
+          }
+        }
+
+        if (restoredWifeNgPairs !== undefined) {
+          localStorage.setItem(STORAGE_KEYS.WIFE_NG, JSON.stringify(restoredWifeNgPairs));
+          stateRef.current.wifeNgPairs = restoredWifeNgPairs;
+          setWifeNgPairs(restoredWifeNgPairs);
+          for (const pair of restoredWifeNgPairs) {
+            delete nextDeletedWifeNgMap[`${pair.shirtId}_${pair.pantsId}`];
+          }
+        }
+
         const updatedTombstones: SyncTombstones = {
           ...stateRef.current.tombstones,
+          deletedWearMap: nextDeletedWearMap,
+          deletedWifeNgMap: nextDeletedWifeNgMap,
+          wearHistoryClearedAt: nextWearHistoryClearedAt,
           clearCustomClosetData: false,
           customClosetDataClearedAt: undefined,
         };
@@ -1099,7 +1142,15 @@ export const ClosetProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         setClosetData(dataWithTimestamp);
         setTombstones(updatedTombstones);
         triggerBackgroundPush();
-        return { success: true, mode, addedItem, updatedPeersCount };
+        return {
+          success: true,
+          mode,
+          addedItem,
+          updatedPeersCount,
+          ...(mode === 'full' ? { restoredItemsCount: finalData.items.length } : {}),
+          ...(restoredWearHistory !== undefined ? { restoredWearCount: restoredWearHistory.length } : {}),
+          ...(restoredWifeNgPairs !== undefined ? { restoredWifeNgCount: restoredWifeNgPairs.length } : {}),
+        };
       } catch (e: any) {
         return { success: false, error: e.message || 'JSONの解析に失敗しました。' };
       }
