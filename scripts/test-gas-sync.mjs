@@ -84,6 +84,8 @@ const {
   isCollaredShirtTop,
   isTopMatchingScene,
   selectRecommendedShirtsForToday,
+  buildClosetBackupData,
+  validateClosetBackupData,
 } = closetDomain;
 
 const imageProcessorTsPath = path.join(projectRoot, 'src/utils/imageProcessor.ts');
@@ -6473,6 +6475,768 @@ function createGasEnvironment(initialToken = 'test-secret-token-123', lockOption
   assert.equal(recIds[recIds.length - 1], 'S2', 'Yesterday worn shirt S2 should be at the end');
 
   console.log('  ✅ Today top recommendation, scene binary partitioning & sleeve filtering logic verified');
+}
+
+// -------------------------------------------------------------
+// Test Case 38: バックアップ JSON（wearHistory & wifeNgPairs 同梱エクスポート・復元・後方互換）ロジック検証
+// -------------------------------------------------------------
+{
+  const rawCloset = JSON.parse(fs.readFileSync(path.join(projectRoot, 'src/data/closet.json'), 'utf-8'));
+
+  const sampleWearHistory = [
+    {
+      id: '2026-11-15_1731628800000',
+      date: '2026-11-15',
+      shirtId: 'S2',
+      pantsId: 'P8',
+      scene: 'office',
+      timestamp: 1731628800000,
+    },
+    {
+      id: '2026-11-17_1731801600000',
+      date: '2026-11-17',
+      shirtId: 'S3',
+      pantsId: 'P9',
+      outerwearId: 'S5',
+      scene: 'remote',
+      timestamp: 1731801600000,
+    },
+  ];
+
+  const sampleWifeNgPairs = [
+    {
+      shirtId: 'S2',
+      pantsId: 'P8',
+      reason: '奥様NG指定（色味が重い）',
+      createdAt: '2026-11-10T08:30:00.000Z',
+    },
+    {
+      shirtId: 'S1',
+      pantsId: 'P3',
+      reason: '奥様NG指定',
+      createdAt: '2026-11-12T09:15:00.000Z',
+    },
+  ];
+
+  // 1. buildClosetBackupData によるエクスポート形式（items と wifeNgPairs の分離保持）と往復検証
+  const backupObj = buildClosetBackupData({
+    closetData: rawCloset,
+    wearHistory: sampleWearHistory,
+    wifeNgPairs: sampleWifeNgPairs,
+  });
+
+  assert.equal(Array.isArray(backupObj.items), true);
+  assert.equal(backupObj.items.length, rawCloset.items.length);
+  assert.deepEqual(backupObj.wearHistory, sampleWearHistory);
+  assert.deepEqual(backupObj.wifeNgPairs, sampleWifeNgPairs);
+
+  // アイテム側に奥様NGが混入（二重保持）されず、未マージの相性データが維持されていること
+  const exportedS2 = backupObj.items.find((it) => it.id === 'S2');
+  assert.equal(exportedS2.ngIds.includes('P8'), false, 'Backup items must NOT double-hold wife NG on item');
+  assert.ok(exportedS2.officeRecommendIds.includes('P8'), 'Backup items must preserve original officeRecommendIds');
+
+  const roundTripJson = JSON.stringify(backupObj);
+  const parsedRoundTrip = JSON.parse(roundTripJson);
+  const restored = validateClosetBackupData(parsedRoundTrip);
+
+  assert.equal(restored.valid, true, 'Round-trip backup JSON must pass validateClosetBackupData');
+  assert.equal(restored.data.items.length, rawCloset.items.length);
+  assert.equal(restored.wearHistory.length, 2);
+  // 日付降順で復元されること
+  assert.equal(restored.wearHistory[0].date, '2026-11-17');
+  assert.equal(restored.wearHistory[0].outerwearId, 'S5', 'outerwearId must be preserved');
+  assert.equal(restored.wearHistory[1].date, '2026-11-15');
+  assert.deepEqual(restored.wifeNgPairs, sampleWifeNgPairs, 'wifeNgPairs with createdAt must be preserved');
+
+  // 2. ClosetData（GAS同期用 customClosetData 等）に余剰プロパティが混入しないことの検証
+  assert.equal('wearHistory' in restored.data, false, 'ClosetData must NOT contain wearHistory');
+  assert.equal('wifeNgPairs' in restored.data, false, 'ClosetData must NOT contain wifeNgPairs');
+  const schemaOnly = validateClosetDataSchema(parsedRoundTrip);
+  assert.equal(schemaOnly.valid, true);
+  assert.equal('wearHistory' in schemaOnly.data, false, 'validateClosetDataSchema must strip wearHistory');
+  assert.equal('wifeNgPairs' in schemaOnly.data, false, 'validateClosetDataSchema must strip wifeNgPairs');
+
+  // 3. 旧形式バックアップ（wearHistory / wifeNgPairs なし）の後方互換検証
+  const legacyRes = validateClosetBackupData(rawCloset);
+  assert.equal(legacyRes.valid, true, 'Legacy backup without wearHistory/wifeNgPairs must be valid');
+  assert.equal(legacyRes.data.items.length, rawCloset.items.length);
+  assert.equal(legacyRes.wearHistory, undefined, 'Legacy backup must return wearHistory as undefined');
+  assert.equal(legacyRes.wifeNgPairs, undefined, 'Legacy backup must return wifeNgPairs as undefined');
+
+  // 片方のみ存在するケース
+  const partialRes = validateClosetBackupData({
+    items: rawCloset.items,
+    wifeNgPairs: sampleWifeNgPairs,
+  });
+  assert.equal(partialRes.valid, true);
+  assert.equal(partialRes.wearHistory, undefined);
+  assert.deepEqual(partialRes.wifeNgPairs, sampleWifeNgPairs);
+
+  // 明示的に空配列が指定された場合は [] として復元されること
+  const emptyArraysRes = validateClosetBackupData({
+    items: rawCloset.items,
+    wearHistory: [],
+    wifeNgPairs: [],
+  });
+  assert.equal(emptyArraysRes.valid, true);
+  assert.deepEqual(emptyArraysRes.wearHistory, []);
+  assert.deepEqual(emptyArraysRes.wifeNgPairs, []);
+
+  // 4. 重複ペアの正規化（新しい createdAt を優先）
+  const dupNgRes = validateClosetBackupData({
+    items: rawCloset.items,
+    wifeNgPairs: [
+      { shirtId: 'S2', pantsId: 'P8', reason: '古い理由', createdAt: '2026-11-01T00:00:00.000Z' },
+      { shirtId: 'S2', pantsId: 'P8', reason: '新しい理由', createdAt: '2026-11-18T00:00:00.000Z' },
+    ],
+  });
+  assert.equal(dupNgRes.valid, true);
+  assert.equal(dupNgRes.wifeNgPairs.length, 1);
+  assert.equal(dupNgRes.wifeNgPairs[0].reason, '新しい理由');
+  assert.equal(dupNgRes.wifeNgPairs[0].createdAt, '2026-11-18T00:00:00.000Z');
+
+  // 5. 不正な wearHistory / wifeNgPairs の拒否検証
+  assert.equal(
+    validateClosetBackupData({ items: rawCloset.items, wearHistory: 'not-array' }).valid,
+    false,
+    'Non-array wearHistory must be rejected'
+  );
+  assert.equal(
+    validateClosetBackupData({
+      items: rawCloset.items,
+      wearHistory: [{ id: 'w1', date: '2026/11/18', shirtId: 'S1', pantsId: 'P1', scene: 'office', timestamp: 100 }],
+    }).valid,
+    false,
+    'Invalid date format in wearHistory must be rejected'
+  );
+  assert.equal(
+    validateClosetBackupData({
+      items: rawCloset.items,
+      wearHistory: [{ id: 'w1', date: '2026-11-18', shirtId: 'S1', pantsId: 'P1', scene: 'casual', timestamp: 100 }],
+    }).valid,
+    false,
+    'Invalid scene in wearHistory must be rejected'
+  );
+  assert.equal(
+    validateClosetBackupData({
+      items: rawCloset.items,
+      wearHistory: [{ id: 'w1', date: '2026-11-18', shirtId: 'S1', pantsId: 'P1', scene: 'office', timestamp: '100' }],
+    }).valid,
+    false,
+    'Non-number timestamp in wearHistory must be rejected'
+  );
+  assert.equal(
+    validateClosetBackupData({ items: rawCloset.items, wifeNgPairs: {} }).valid,
+    false,
+    'Non-array wifeNgPairs must be rejected'
+  );
+  assert.equal(
+    validateClosetBackupData({
+      items: rawCloset.items,
+      wifeNgPairs: [{ shirtId: 'S1', pantsId: 'P1', reason: 'NG' }], // createdAt 欠落
+    }).valid,
+    false,
+    'Missing createdAt in wifeNgPairs must be rejected'
+  );
+  assert.equal(
+    validateClosetBackupData({
+      items: rawCloset.items,
+      wifeNgPairs: [{ shirtId: '', pantsId: 'P1', reason: 'NG', createdAt: '2026-11-18T00:00:00.000Z' }],
+    }).valid,
+    false,
+    'Empty shirtId in wifeNgPairs must be rejected'
+  );
+  // 5b. createdAt が日付として解釈できない文字列・epoch 0 を拒否すること
+  assert.equal(
+    validateClosetBackupData({
+      items: rawCloset.items,
+      wifeNgPairs: [{ shirtId: 'S1', pantsId: 'P1', reason: 'NG', createdAt: 'not-a-date' }],
+    }).valid,
+    false,
+    'Unparseable createdAt string in wifeNgPairs must be rejected'
+  );
+  assert.equal(
+    validateClosetBackupData({
+      items: rawCloset.items,
+      wifeNgPairs: [{ shirtId: 'S1', pantsId: 'P1', reason: 'NG', createdAt: '1970-01-01T00:00:00.000Z' }],
+    }).valid,
+    false,
+    'Epoch 0 createdAt in wifeNgPairs must be rejected'
+  );
+
+  // 6. GAS mergeWifeNg およびクライアント調停での NaN createdAt 防御検証
+  {
+    const { context: ngNanContext } = createGasEnvironment('sync-token-nan');
+    vm.runInContext('setupSpreadsheet()', ngNanContext);
+
+    const tInitNg = 1700000000000;
+    const tDeleteNg = 1700010000000;
+
+    // 登録 -> 削除
+    vm.runInContext(
+      `doPost({ postData: { contents: ${JSON.stringify(
+        JSON.stringify({
+          action: 'push',
+          token: 'sync-token-nan',
+          wifeNgPairs: [
+            { shirtId: 'S1', pantsId: 'P1', reason: 'NG', createdAt: new Date(tInitNg).toISOString() },
+          ],
+        })
+      )} } })`,
+      ngNanContext
+    );
+    vm.runInContext(
+      `doPost({ postData: { contents: ${JSON.stringify(
+        JSON.stringify({
+          action: 'push',
+          token: 'sync-token-nan',
+          wifeNgPairs: [],
+          deletedWifeNgMap: { S1_P1: tDeleteNg },
+        })
+      )} } })`,
+      ngNanContext
+    );
+
+    // 不正 createdAt ("not-a-date") を含むペアを直接 Push しても NaN すり抜けで復活しないこと
+    const nanPushRes = JSON.parse(
+      vm.runInContext(
+        `doPost({ postData: { contents: ${JSON.stringify(
+          JSON.stringify({
+            action: 'push',
+            token: 'sync-token-nan',
+            wifeNgPairs: [
+              { shirtId: 'S1', pantsId: 'P1', reason: '不正日付NG', createdAt: 'not-a-date' },
+            ],
+          })
+        )} } })`,
+        ngNanContext
+      ).getContent()
+    );
+    assert.equal(nanPushRes.ok, true);
+    assert.equal(
+      nanPushRes.wifeNgPairs.length,
+      0,
+      'GAS mergeWifeNg must NOT allow invalid createdAt (NaN) to bypass deletedWifeNgMap'
+    );
+
+    // クライアント調停 reconcileSyncResponse でも NaN createdAt が Tombstone をすり抜けないこと
+    const nanReconcile = reconcileSyncResponse({
+      serverResponse: {
+        ok: true,
+        wearHistory: [],
+        wifeNgPairs: [],
+        tombstones: { deletedWearMap: {}, deletedWifeNgMap: { S1_P1: tDeleteNg } },
+      },
+      currentLocal: {
+        wearHistory: [],
+        wifeNgPairs: [
+          { shirtId: 'S1', pantsId: 'P1', reason: '不正日付', createdAt: 'invalid-date' },
+        ],
+        closetData: rawCloset,
+        hasCustomData: false,
+        tombstones: { deletedWearMap: {}, deletedWifeNgMap: {} },
+      },
+      sentTombstones: { deletedWearMap: {}, deletedWifeNgMap: {} },
+      hasInFlightMutations: true,
+      defaultClosetData: rawCloset,
+    });
+    assert.equal(
+      nanReconcile.wifeNgPairs.length,
+      0,
+      'Client reconcileSyncResponse must block NaN createdAt against deletedWifeNgMap'
+    );
+  }
+
+  // 7. シナリオ (a): 全履歴クリア -> GAS同期 -> クリア前のバックアップ復元 -> GAS同期（定着検証）
+  {
+    const { context } = createGasEnvironment('sync-token-restore-a');
+    vm.runInContext('setupSpreadsheet()', context);
+
+    const tOrig1 = 1700000001000;
+    const tOrig2 = 1700000002000;
+    const tClear = 1700050000000;
+    const tRestore = 1700100000000;
+    const tLaterDelete = 1700200000000;
+
+    const backupWear = [
+      { id: '2026-11-15_1700000001000', date: '2026-11-15', shirtId: 'S1', pantsId: 'P3', scene: 'office', timestamp: tOrig1 },
+      { id: '2026-11-16_1700000002000', date: '2026-11-16', shirtId: 'S2', pantsId: 'P8', outerwearId: 'S5', scene: 'remote', timestamp: tOrig2 },
+    ];
+
+    // 7-1. 初期履歴を GAS へ Push
+    const initRes = JSON.parse(
+      vm.runInContext(
+        `doPost({ postData: { contents: ${JSON.stringify(
+          JSON.stringify({
+            action: 'push',
+            token: 'sync-token-restore-a',
+            wearHistory: backupWear,
+          })
+        )} } })`,
+        context
+      ).getContent()
+    );
+    assert.equal(initRes.ok, true);
+    assert.equal(initRes.wearHistory.length, 2);
+
+    // 7-2. 全履歴クリアを GAS へ Push
+    const clearRes = JSON.parse(
+      vm.runInContext(
+        `doPost({ postData: { contents: ${JSON.stringify(
+          JSON.stringify({
+            action: 'push',
+            token: 'sync-token-restore-a',
+            wearHistory: [],
+            wearHistoryClearedAt: tClear,
+          })
+        )} } })`,
+        context
+      ).getContent()
+    );
+    assert.equal(clearRes.ok, true);
+    assert.equal(clearRes.wearHistory.length, 0);
+    assert.equal(clearRes.tombstones.wearHistoryClearedAt, tClear);
+
+    // 7-3. 解除マーカーなしで古い履歴を通常 Push しても復活しない（通常同期の安全性維持）
+    const normalStaleRes = JSON.parse(
+      vm.runInContext(
+        `doPost({ postData: { contents: ${JSON.stringify(
+          JSON.stringify({
+            action: 'push',
+            token: 'sync-token-restore-a',
+            wearHistory: backupWear,
+          })
+        )} } })`,
+        context
+      ).getContent()
+    );
+    assert.equal(normalStaleRes.wearHistory.length, 0, 'Without explicit restore markers, old wearHistory must stay blocked');
+
+    // 7-4. バックアップ復元（wearHistoryRestoredAt & restoredWearMap 付き）で Push -> 復元データが定着
+    const restoredWearMap = {
+      '2026-11-15_1700000001000': tRestore,
+      '2026-11-16_1700000002000': tRestore,
+    };
+    const restorePushRes = JSON.parse(
+      vm.runInContext(
+        `doPost({ postData: { contents: ${JSON.stringify(
+          JSON.stringify({
+            action: 'push',
+            token: 'sync-token-restore-a',
+            wearHistory: backupWear,
+            wearHistoryRestoredAt: tRestore,
+            restoredWearMap,
+          })
+        )} } })`,
+        context
+      ).getContent()
+    );
+    assert.equal(restorePushRes.ok, true);
+    assert.equal(restorePushRes.wearHistory.length, 2, 'Restored wearHistory must survive server sync');
+    assert.equal(restorePushRes.tombstones.wearHistoryClearedAt, 0, 'Server wearHistoryClearedAt must be cleared');
+    assert.equal(restorePushRes.wearHistory[0].id, '2026-11-16_1700000002000');
+    assert.equal(restorePushRes.wearHistory[0].timestamp, tOrig2, 'Original timestamp must be preserved');
+    assert.equal(restorePushRes.wearHistory[0].outerwearId, 'S5');
+
+    // 7-5. 続けて Pull / 古いオフライン端末の旧 wearHistoryClearedAt (tClear < tRestore) が届いても復元履歴が消えないこと
+    const staleClearFromOfflineRes = JSON.parse(
+      vm.runInContext(
+        `doPost({ postData: { contents: ${JSON.stringify(
+          JSON.stringify({
+            action: 'push',
+            token: 'sync-token-restore-a',
+            wearHistory: [],
+            wearHistoryClearedAt: tClear,
+          })
+        )} } })`,
+        context
+      ).getContent()
+    );
+    assert.equal(staleClearFromOfflineRes.wearHistory.length, 2, 'Older offline wearHistoryClearedAt must NOT wipe restored history');
+
+    const pullAfterRestore = JSON.parse(
+      vm.runInContext(
+        'doGet({ parameter: { token: "sync-token-restore-a", action: "pull" } })',
+        context
+      ).getContent()
+    );
+    assert.equal(pullAfterRestore.ok, true);
+    assert.equal(pullAfterRestore.wearHistory.length, 2, 'Subsequent pull must retain restored wearHistory');
+
+    // 7-6. 復元後に新しく全履歴クリア (tLaterDelete > tRestore) が来た場合は削除が勝つこと
+    const laterClearRes = JSON.parse(
+      vm.runInContext(
+        `doPost({ postData: { contents: ${JSON.stringify(
+          JSON.stringify({
+            action: 'push',
+            token: 'sync-token-restore-a',
+            wearHistory: [],
+            wearHistoryClearedAt: tLaterDelete,
+          })
+        )} } })`,
+        context
+      ).getContent()
+    );
+    assert.equal(laterClearRes.ok, true);
+    assert.equal(laterClearRes.wearHistory.length, 0, 'Newer clear after restore must clear wearHistory');
+  }
+
+  // 8. シナリオ (b): 個別削除（履歴・奥様NG） -> GAS同期 -> 削除前のバックアップ復元 -> GAS同期（定着検証）
+  {
+    const { context } = createGasEnvironment('sync-token-restore-b');
+    vm.runInContext('setupSpreadsheet()', context);
+
+    const tWearOrig = 1700000010000;
+    const tWearOtherDeleted = 1700000020000;
+    const tNgOrig = 1700000030000;
+    const tNgOtherDeleted = 1700000040000;
+    const tDel = 1700050000000;
+    const tRestore = 1700100000000;
+
+    const wearToKeepInBackup = {
+      id: '2026-11-10_1700000010000',
+      date: '2026-11-10',
+      shirtId: 'S1',
+      pantsId: 'P3',
+      scene: 'office',
+      timestamp: tWearOrig,
+    };
+    const wearNotInBackup = {
+      id: '2026-11-11_1700000020000',
+      date: '2026-11-11',
+      shirtId: 'S2',
+      pantsId: 'P9',
+      scene: 'office',
+      timestamp: tWearOtherDeleted,
+    };
+    const ngToKeepInBackup = {
+      shirtId: 'S1',
+      pantsId: 'P8',
+      reason: '奥様NG指定（色重め）',
+      createdAt: new Date(tNgOrig).toISOString(),
+    };
+    const ngNotInBackup = {
+      shirtId: 'S3',
+      pantsId: 'P4',
+      reason: '奥様NG（水色被り）',
+      createdAt: new Date(tNgOtherDeleted).toISOString(),
+    };
+
+    // 8-1. 初期データを Push
+    vm.runInContext(
+      `doPost({ postData: { contents: ${JSON.stringify(
+        JSON.stringify({
+          action: 'push',
+          token: 'sync-token-restore-b',
+          wearHistory: [wearToKeepInBackup, wearNotInBackup],
+          wifeNgPairs: [ngToKeepInBackup, ngNotInBackup],
+        })
+      )} } })`,
+      context
+    );
+
+    // 8-2. 全件個別削除して Push
+    const delRes = JSON.parse(
+      vm.runInContext(
+        `doPost({ postData: { contents: ${JSON.stringify(
+          JSON.stringify({
+            action: 'push',
+            token: 'sync-token-restore-b',
+            wearHistory: [],
+            wifeNgPairs: [],
+            deletedWearMap: {
+              [wearToKeepInBackup.id]: tDel,
+              [wearNotInBackup.id]: tDel,
+            },
+            deletedWifeNgMap: {
+              S1_P8: tDel,
+              S3_P4: tDel,
+            },
+          })
+        )} } })`,
+        context
+      ).getContent()
+    );
+    assert.equal(delRes.wearHistory.length, 0);
+    assert.equal(delRes.wifeNgPairs.length, 0);
+
+    // 8-3. バックアップ復元（wearToKeepInBackup と ngToKeepInBackup のみ含むバックアップ）で Push
+    const restoreRes = JSON.parse(
+      vm.runInContext(
+        `doPost({ postData: { contents: ${JSON.stringify(
+          JSON.stringify({
+            action: 'push',
+            token: 'sync-token-restore-b',
+            wearHistory: [wearToKeepInBackup],
+            wifeNgPairs: [ngToKeepInBackup],
+            wearHistoryRestoredAt: tRestore,
+            restoredWearMap: { [wearToKeepInBackup.id]: tRestore },
+            restoredWifeNgMap: { S1_P8: tRestore },
+          })
+        )} } })`,
+        context
+      ).getContent()
+    );
+    assert.equal(restoreRes.ok, true);
+    assert.equal(restoreRes.wearHistory.length, 1);
+    assert.equal(restoreRes.wearHistory[0].id, wearToKeepInBackup.id);
+    assert.equal(restoreRes.wearHistory[0].timestamp, tWearOrig);
+    assert.equal(restoreRes.wifeNgPairs.length, 1);
+    assert.equal(restoreRes.wifeNgPairs[0].shirtId, 'S1');
+    assert.equal(restoreRes.wifeNgPairs[0].pantsId, 'P8');
+    assert.equal(restoreRes.wifeNgPairs[0].createdAt, ngToKeepInBackup.createdAt);
+
+    // サーバー側 syncTombstones に個別復元時刻が永続化されていること
+    const savedTombstonesAfterRestore = JSON.parse(
+      vm.runInContext('readConfigValue(SpreadsheetApp.getActiveSpreadsheet(), "syncTombstones")', context)
+    );
+    assert.equal(
+      savedTombstonesAfterRestore.restoredWearMap[wearToKeepInBackup.id],
+      tRestore,
+      'Server syncTombstones must persist restoredWearMap'
+    );
+    assert.equal(
+      savedTombstonesAfterRestore.restoredWifeNgMap.S1_P8,
+      tRestore,
+      'Server syncTombstones must persist restoredWifeNgMap'
+    );
+
+    // 8-4. 【再レビュー指摘】復元後に古いオフライン端末が削除前の古い deletedWearMap / deletedWifeNgMap (tDel < tRestore) を再送しても、
+    // サーバーに再登録されず復元データが定着すること（wearHistory / wifeNgPairs 両方）
+    const staleOfflineTombstonesPush = JSON.parse(
+      vm.runInContext(
+        `doPost({ postData: { contents: ${JSON.stringify(
+          JSON.stringify({
+            action: 'push',
+            token: 'sync-token-restore-b',
+            wearHistory: [],
+            wifeNgPairs: [],
+            deletedWearMap: { [wearToKeepInBackup.id]: tDel },
+            deletedWifeNgMap: { S1_P8: tDel },
+          })
+        )} } })`,
+        context
+      ).getContent()
+    );
+    assert.equal(staleOfflineTombstonesPush.ok, true);
+    assert.equal(
+      staleOfflineTombstonesPush.wearHistory.length,
+      1,
+      'Stale offline deletedWearMap must NOT re-delete restored wear record'
+    );
+    assert.equal(staleOfflineTombstonesPush.wearHistory[0].id, wearToKeepInBackup.id);
+    assert.equal(
+      staleOfflineTombstonesPush.wifeNgPairs.length,
+      1,
+      'Stale offline deletedWifeNgMap must NOT re-delete restored wife NG pair'
+    );
+    assert.equal(staleOfflineTombstonesPush.wifeNgPairs[0].pantsId, 'P8');
+    assert.equal(
+      staleOfflineTombstonesPush.tombstones.deletedWearMap[wearToKeepInBackup.id],
+      undefined,
+      'Stale deletedWearMap entry must NOT be re-registered on server'
+    );
+    assert.equal(
+      staleOfflineTombstonesPush.tombstones.deletedWifeNgMap.S1_P8,
+      undefined,
+      'Stale deletedWifeNgMap entry must NOT be re-registered on server'
+    );
+
+    // バックアップに含まれない別項目の Tombstone は解除されていないため、古い端末が再送しても復活しないこと
+    const nonBackupResurrectionTest = JSON.parse(
+      vm.runInContext(
+        `doPost({ postData: { contents: ${JSON.stringify(
+          JSON.stringify({
+            action: 'push',
+            token: 'sync-token-restore-b',
+            wearHistory: [wearNotInBackup],
+            wifeNgPairs: [ngNotInBackup],
+          })
+        )} } })`,
+        context
+      ).getContent()
+    );
+    assert.equal(nonBackupResurrectionTest.wearHistory.length, 1, 'Non-backup deleted wear record must remain blocked');
+    assert.equal(nonBackupResurrectionTest.wearHistory[0].id, wearToKeepInBackup.id);
+    assert.equal(nonBackupResurrectionTest.wifeNgPairs.length, 1, 'Non-backup deleted wife NG pair must remain blocked');
+    assert.equal(nonBackupResurrectionTest.wifeNgPairs[0].pantsId, 'P8');
+
+    // Pull 後も復元データが維持されること
+    const pullRes = JSON.parse(
+      vm.runInContext(
+        'doGet({ parameter: { token: "sync-token-restore-b", action: "pull" } })',
+        context
+      ).getContent()
+    );
+    assert.equal(pullRes.wearHistory.length, 1);
+    assert.equal(pullRes.wifeNgPairs.length, 1);
+
+    // 8-5. 復元後に行われた新しい削除（tLaterDel > tRestore）は従来どおり優先されること
+    const tLaterDel = tRestore + 50000;
+    const newerDeleteAfterRestore = JSON.parse(
+      vm.runInContext(
+        `doPost({ postData: { contents: ${JSON.stringify(
+          JSON.stringify({
+            action: 'push',
+            token: 'sync-token-restore-b',
+            wearHistory: [],
+            wifeNgPairs: [],
+            deletedWearMap: { [wearToKeepInBackup.id]: tLaterDel },
+            deletedWifeNgMap: { S1_P8: tLaterDel },
+          })
+        )} } })`,
+        context
+      ).getContent()
+    );
+    assert.equal(newerDeleteAfterRestore.ok, true);
+    assert.equal(
+      newerDeleteAfterRestore.wearHistory.length,
+      0,
+      'Newer deletion after restore must delete wear record'
+    );
+    assert.equal(
+      newerDeleteAfterRestore.wifeNgPairs.length,
+      0,
+      'Newer deletion after restore must delete wife NG pair'
+    );
+    assert.equal(newerDeleteAfterRestore.tombstones.deletedWearMap[wearToKeepInBackup.id], tLaterDel);
+    assert.equal(newerDeleteAfterRestore.tombstones.deletedWifeNgMap.S1_P8, tLaterDel);
+    assert.equal(newerDeleteAfterRestore.tombstones.restoredWearMap[wearToKeepInBackup.id], undefined);
+    assert.equal(newerDeleteAfterRestore.tombstones.restoredWifeNgMap.S1_P8, undefined);
+  }
+
+  // 9. クライアント reconcileSyncResponse / pruneCompletedTombstones の解除マーカー調停検証
+  {
+    const tRestore = 1700100000000;
+    const tServerClear = 1700050000000;
+    const restoredRec = {
+      id: '2026-11-10_1700000010000',
+      date: '2026-11-10',
+      shirtId: 'S1',
+      pantsId: 'P3',
+      scene: 'office',
+      timestamp: 1700000010000,
+    };
+    const restoredNg = {
+      shirtId: 'S1',
+      pantsId: 'P8',
+      reason: '復元NG',
+      createdAt: '2026-11-10T00:00:00.000Z',
+    };
+
+    const localTombstonesWithRestore = {
+      deletedWearMap: {},
+      deletedWifeNgMap: {},
+      restoredWearMap: { [restoredRec.id]: tRestore },
+      wearHistoryRestoredAt: tRestore,
+      restoredWifeNgMap: { S1_P8: tRestore },
+    };
+
+    assert.equal(hasRemainingTombstones(localTombstonesWithRestore), true);
+
+    // 通信中に別の操作が発生し、サーバーがまだ古い Tombstone を返した場合でも復元データが保護されること
+    const inFlightReconcile = reconcileSyncResponse({
+      serverResponse: {
+        ok: true,
+        wearHistory: [],
+        wifeNgPairs: [],
+        tombstones: {
+          deletedWearMap: { [restoredRec.id]: tServerClear },
+          deletedWifeNgMap: { S1_P8: tServerClear },
+          wearHistoryClearedAt: tServerClear,
+        },
+      },
+      currentLocal: {
+        wearHistory: [restoredRec],
+        wifeNgPairs: [restoredNg],
+        closetData: rawCloset,
+        hasCustomData: false,
+        tombstones: localTombstonesWithRestore,
+      },
+      sentTombstones: { deletedWearMap: {}, deletedWifeNgMap: {} },
+      hasInFlightMutations: true,
+      defaultClosetData: rawCloset,
+    });
+    assert.equal(inFlightReconcile.wearHistory.length, 1, 'Pending restore marker must protect wearHistory during in-flight sync');
+    assert.equal(inFlightReconcile.wifeNgPairs.length, 1, 'Pending restore marker must protect wifeNgPairs during in-flight sync');
+
+    // 送信完了後は解除マーカーがプルーニングされること
+    const prunedAfterSend = pruneCompletedTombstones(
+      localTombstonesWithRestore,
+      localTombstonesWithRestore,
+      false
+    );
+    assert.equal(hasRemainingTombstones(prunedAfterSend), false, 'Completed restore markers must be pruned');
+  }
+
+  // 10. 奥様NGの二重保持解消・相性NG維持・旧形式後方互換の3シナリオ検証
+  {
+    const dualNgWifePairs = [
+      // 奥様NGのみのペア（S2 × P8 は本来相性NGではなく officeRecommendIds 対象）
+      {
+        shirtId: 'S2',
+        pantsId: 'P8',
+        reason: '奥様NG指定（色味が重い）',
+        createdAt: '2026-11-10T08:30:00.000Z',
+      },
+      // 本来の相性NG（S1.ngIds に P1 あり）と奥様NGを兼ねるペア
+      {
+        shirtId: 'S1',
+        pantsId: 'P1',
+        reason: '奥様NG指定（重複登録）',
+        createdAt: '2026-11-11T09:00:00.000Z',
+      },
+    ];
+
+    // シナリオ1 & 2: 新形式バックアップをエクスポート → 復元 → 奥様NG解除
+    const newFormatBackup = buildClosetBackupData({
+      closetData: rawCloset,
+      wearHistory: sampleWearHistory,
+      wifeNgPairs: dualNgWifePairs,
+    });
+    const restoredNew = validateClosetBackupData(JSON.parse(JSON.stringify(newFormatBackup)));
+    assert.equal(restoredNew.valid, true);
+    const restoredItemMap = new Map(restoredNew.data.items.map((it) => [it.id, it]));
+
+    // 解除前: どちらも奥様NGとしてブロックされる
+    const beforeRemoveWifeOnly = checkIsNgPair('S2', 'P8', restoredItemMap, restoredNew.wifeNgPairs);
+    assert.equal(beforeRemoveWifeOnly.isNg, true);
+    assert.equal(beforeRemoveWifeOnly.isWifeNg, true);
+
+    const beforeRemoveDualNg = checkIsNgPair('S1', 'P1', restoredItemMap, restoredNew.wifeNgPairs);
+    assert.equal(beforeRemoveDualNg.isNg, true);
+    assert.equal(beforeRemoveDualNg.isWifeNg, true);
+
+    // UI の removeWifeNg 相当で wifeNgPairs から解除
+    const afterRemoveAllWifeNg = [];
+
+    // シナリオ1: 奥様NGのみのペア（S2 × P8）は NG ではなくなり、推奨IDも維持される
+    const afterRemoveWifeOnly = checkIsNgPair('S2', 'P8', restoredItemMap, afterRemoveAllWifeNg);
+    assert.equal(afterRemoveWifeOnly.isNg, false, 'Wife-NG-only pair must no longer be NG after removeWifeNg following backup restore');
+    assert.equal(afterRemoveWifeOnly.isWifeNg, false);
+    assert.ok(
+      restoredItemMap.get('S2').officeRecommendIds.includes('P8'),
+      'Original officeRecommendIds must remain intact after removing wife NG'
+    );
+
+    // シナリオ2: 相性NGと奥様NGを兼ねるペア（S1 × P1）は奥様NG解除後も本来の相性NGとして残る
+    const afterRemoveDualNg = checkIsNgPair('S1', 'P1', restoredItemMap, afterRemoveAllWifeNg);
+    assert.equal(afterRemoveDualNg.isNg, true, 'Genuine compatibility NG must remain NG after removing wife NG');
+    assert.equal(afterRemoveDualNg.isWifeNg, false, 'Dual NG must revert from wife NG to genuine compatibility NG');
+
+    // シナリオ3: 旧形式バックアップ（items のみ、wifeNgPairs なし、items[].ngIds に奥様NGマージ済み）の後方互換
+    const legacyMergedCloset = mergeClosetDataWithWifeNg(rawCloset, dualNgWifePairs);
+    const restoredLegacy = validateClosetBackupData(
+      JSON.parse(JSON.stringify({ items: legacyMergedCloset.items, updatedAt: legacyMergedCloset.updatedAt }))
+    );
+    assert.equal(restoredLegacy.valid, true);
+    assert.equal(restoredLegacy.wifeNgPairs, undefined);
+    const legacyItemMap = new Map(restoredLegacy.data.items.map((it) => [it.id, it]));
+    const legacyWifeOnlyNg = checkIsNgPair('S2', 'P8', legacyItemMap, []);
+    assert.equal(legacyWifeOnlyNg.isNg, true, 'Legacy items-only backup must continue preserving merged ngIds judgment');
+  }
+
+  console.log('  ✅ Backup JSON export, restore, backward compatibility, sync tombstone clearance & validation verified');
 }
 
 console.log('🎉 All GAS backend & sync logic tests passed successfully!');

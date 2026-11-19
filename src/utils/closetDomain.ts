@@ -1,5 +1,6 @@
 import type {
   Category,
+  ClosetBackupData,
   ClosetData,
   ClosetItem,
   SceneMode,
@@ -582,9 +583,195 @@ export function validateClosetDataSchema(data: unknown): {
   return {
     valid: true,
     data: {
-      ...candidate,
       items: sanitizedItems,
-    } as ClosetData,
+      ...(candidate.updatedAt !== undefined ? { updatedAt: candidate.updatedAt } : {}),
+    },
+  };
+}
+
+export interface ClosetBackupValidationResult {
+  valid: boolean;
+  data?: ClosetData;
+  wearHistory?: WearRecord[];
+  wifeNgPairs?: WifeNgPair[];
+  error?: string;
+}
+
+/**
+ * バックアップ JSON 用のデータオブジェクトを生成する純粋関数
+ * 本来の相性データ（未マージの items）と独立した奥様NG一覧（wifeNgPairs）・着用履歴（wearHistory）を分離保持し、
+ * 二重保持による復元後の奥様NG解除不能を防ぐ。
+ */
+export function buildClosetBackupData(params: {
+  closetData: ClosetData;
+  wearHistory: WearRecord[];
+  wifeNgPairs: WifeNgPair[];
+}): ClosetBackupData {
+  const { closetData, wearHistory, wifeNgPairs } = params;
+  return {
+    items: closetData.items,
+    ...(closetData.updatedAt !== undefined ? { updatedAt: closetData.updatedAt } : {}),
+    wearHistory: [...wearHistory],
+    wifeNgPairs: [...wifeNgPairs],
+  };
+}
+
+function validateBackupWearHistory(raw: unknown): {
+  valid: boolean;
+  wearHistory?: WearRecord[];
+  error?: string;
+} {
+  if (!Array.isArray(raw)) {
+    return { valid: false, error: '"wearHistory" は配列である必要があります。' };
+  }
+
+  const recordMap = new Map<string, WearRecord>();
+  for (let i = 0; i < raw.length; i++) {
+    const entry = raw[i];
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+      return { valid: false, error: `wearHistory[${i}] の形式が不正です。` };
+    }
+    const r = entry as Record<string, unknown>;
+    if (typeof r.id !== 'string' || r.id.trim() === '') {
+      return { valid: false, error: `wearHistory[${i}] の id が不正です。` };
+    }
+    if (typeof r.date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(r.date)) {
+      return { valid: false, error: `wearHistory[${i}] の date ("${String(r.date)}") は YYYY-MM-DD 形式である必要があります。` };
+    }
+    if (typeof r.shirtId !== 'string' || r.shirtId.trim() === '') {
+      return { valid: false, error: `wearHistory[${i}] の shirtId が不正です。` };
+    }
+    if (typeof r.pantsId !== 'string' || r.pantsId.trim() === '') {
+      return { valid: false, error: `wearHistory[${i}] の pantsId が不正です。` };
+    }
+    if (r.scene !== 'office' && r.scene !== 'remote') {
+      return { valid: false, error: `wearHistory[${i}] の scene ("${String(r.scene)}") が不正です（"office" または "remote"）。` };
+    }
+    if (typeof r.timestamp !== 'number' || !Number.isFinite(r.timestamp)) {
+      return { valid: false, error: `wearHistory[${i}] の timestamp は数値である必要があります。` };
+    }
+    if (r.outerwearId !== undefined && typeof r.outerwearId !== 'string') {
+      return { valid: false, error: `wearHistory[${i}] の outerwearId は文字列である必要があります。` };
+    }
+
+    const shirtId = r.shirtId.trim();
+    const pantsId = r.pantsId.trim();
+    const rawOuterwear = typeof r.outerwearId === 'string' ? r.outerwearId.trim() : '';
+    const outerwearId = rawOuterwear && rawOuterwear !== shirtId ? rawOuterwear : undefined;
+
+    const sanitized: WearRecord = {
+      id: r.id.trim(),
+      date: r.date,
+      shirtId,
+      pantsId,
+      ...(outerwearId ? { outerwearId } : {}),
+      scene: r.scene,
+      timestamp: r.timestamp,
+    };
+    recordMap.set(sanitized.id, sanitized);
+  }
+
+  const sorted = Array.from(recordMap.values()).sort((a, b) => b.date.localeCompare(a.date));
+  return { valid: true, wearHistory: sorted };
+}
+
+function validateBackupWifeNgPairs(raw: unknown): {
+  valid: boolean;
+  wifeNgPairs?: WifeNgPair[];
+  error?: string;
+} {
+  if (!Array.isArray(raw)) {
+    return { valid: false, error: '"wifeNgPairs" は配列である必要があります。' };
+  }
+
+  const pairMap = new Map<string, WifeNgPair>();
+  for (let i = 0; i < raw.length; i++) {
+    const entry = raw[i];
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+      return { valid: false, error: `wifeNgPairs[${i}] の形式が不正です。` };
+    }
+    const p = entry as Record<string, unknown>;
+    if (typeof p.shirtId !== 'string' || p.shirtId.trim() === '') {
+      return { valid: false, error: `wifeNgPairs[${i}] の shirtId が不正です。` };
+    }
+    if (typeof p.pantsId !== 'string' || p.pantsId.trim() === '') {
+      return { valid: false, error: `wifeNgPairs[${i}] の pantsId が不正です。` };
+    }
+    if (typeof p.reason !== 'string') {
+      return { valid: false, error: `wifeNgPairs[${i}] の reason は文字列である必要があります。` };
+    }
+    if (typeof p.createdAt !== 'string' || p.createdAt.trim() === '') {
+      return { valid: false, error: `wifeNgPairs[${i}] の createdAt が不正です。` };
+    }
+    const createdAtTs = new Date(p.createdAt.trim()).getTime();
+    if (!Number.isFinite(createdAtTs) || createdAtTs <= 0) {
+      return {
+        valid: false,
+        error: `wifeNgPairs[${i}] の createdAt ("${p.createdAt}") は有効な日時文字列である必要があります。`,
+      };
+    }
+
+    const shirtId = p.shirtId.trim();
+    const pantsId = p.pantsId.trim();
+    const key = `${shirtId}_${pantsId}`;
+    const sanitized: WifeNgPair = {
+      shirtId,
+      pantsId,
+      reason: p.reason,
+      createdAt: p.createdAt,
+    };
+
+    const existing = pairMap.get(key);
+    if (!existing) {
+      pairMap.set(key, sanitized);
+    } else {
+      const nextTs = new Date(sanitized.createdAt).getTime();
+      const prevTs = new Date(existing.createdAt).getTime();
+      if (Number.isFinite(nextTs) && (!Number.isFinite(prevTs) || nextTs > prevTs)) {
+        pairMap.set(key, sanitized);
+      }
+    }
+  }
+
+  return { valid: true, wifeNgPairs: Array.from(pairMap.values()) };
+}
+
+/**
+ * バックアップ JSON（旧形式の items のみ、および新形式の wearHistory / wifeNgPairs 付き）を検証する純粋関数
+ * - wearHistory / wifeNgPairs が未定義の場合は undefined のまま返し、旧形式バックアップとして後方互換で受理する
+ * - 返却される data (ClosetData) には items と updatedAt のみを含め、wearHistory / wifeNgPairs を混入させない
+ */
+export function validateClosetBackupData(data: unknown): ClosetBackupValidationResult {
+  const schemaResult = validateClosetDataSchema(data);
+  if (!schemaResult.valid || !schemaResult.data) {
+    return { valid: false, error: schemaResult.error };
+  }
+
+  const raw = data as Record<string, unknown>;
+  let validatedWearHistory: WearRecord[] | undefined = undefined;
+  let validatedWifeNgPairs: WifeNgPair[] | undefined = undefined;
+
+  if (raw.wearHistory !== undefined) {
+    const wearResult = validateBackupWearHistory(raw.wearHistory);
+    if (!wearResult.valid) {
+      return { valid: false, error: wearResult.error };
+    }
+    validatedWearHistory = wearResult.wearHistory;
+  }
+
+  if (raw.wifeNgPairs !== undefined) {
+    const ngResult = validateBackupWifeNgPairs(raw.wifeNgPairs);
+    if (!ngResult.valid) {
+      return { valid: false, error: ngResult.error };
+    }
+    validatedWifeNgPairs = ngResult.wifeNgPairs;
+  }
+
+  return {
+    valid: true,
+    data: schemaResult.data,
+    ...(validatedWearHistory !== undefined ? { wearHistory: validatedWearHistory } : {}),
+    ...(validatedWifeNgPairs !== undefined ? { wifeNgPairs: validatedWifeNgPairs } : {}),
   };
 }
 

@@ -6,6 +6,27 @@ import {
   WifeNgPair,
 } from '../types/closet';
 
+function pruneTimestampMap(
+  currentMap: Record<string, number> | undefined,
+  sentMap: Record<string, number> | undefined
+): Record<string, number> {
+  const nextMap: Record<string, number> = {};
+  for (const [key, currentTs] of Object.entries(currentMap || {})) {
+    const sentTs = sentMap ? sentMap[key] : undefined;
+    // 送信対象に含まれていなかったか、送信開始後にさらに新しいタイムスタンプで更新された場合は保持
+    if (sentTs === undefined || currentTs > sentTs) {
+      nextMap[key] = currentTs;
+    }
+  }
+  return nextMap;
+}
+
+function pruneTimestampValue(currentTs: number | undefined, sentTs: number | undefined): number | undefined {
+  if (currentTs === undefined) return undefined;
+  if (sentTs === undefined || currentTs > sentTs) return currentTs;
+  return undefined;
+}
+
 /**
  * 送信済み Tombstones のタイムスタンプと比較し、通信完了後に残すべき未送信 Tombstones のみを抽出する
  */
@@ -14,32 +35,19 @@ export function pruneCompletedTombstones(
   sent: SyncTombstones,
   hasInFlightCustomDataChange = false
 ): SyncTombstones {
-  const nextDeletedWearMap: Record<string, number> = {};
-  for (const [id, currentTs] of Object.entries(current.deletedWearMap || {})) {
-    const sentTs = sent.deletedWearMap ? sent.deletedWearMap[id] : undefined;
-    // 送信対象に含まれていなかったか、送信開始後にさらに新しいタイムスタンプで更新された場合は保持
-    if (sentTs === undefined || currentTs > sentTs) {
-      nextDeletedWearMap[id] = currentTs;
-    }
-  }
+  const nextDeletedWearMap = pruneTimestampMap(current.deletedWearMap, sent.deletedWearMap);
+  const nextDeletedWifeNgMap = pruneTimestampMap(current.deletedWifeNgMap, sent.deletedWifeNgMap);
+  const nextRestoredWearMap = pruneTimestampMap(current.restoredWearMap, sent.restoredWearMap);
+  const nextRestoredWifeNgMap = pruneTimestampMap(current.restoredWifeNgMap, sent.restoredWifeNgMap);
 
-  const nextDeletedWifeNgMap: Record<string, number> = {};
-  for (const [key, currentTs] of Object.entries(current.deletedWifeNgMap || {})) {
-    const sentTs = sent.deletedWifeNgMap ? sent.deletedWifeNgMap[key] : undefined;
-    if (sentTs === undefined || currentTs > sentTs) {
-      nextDeletedWifeNgMap[key] = currentTs;
-    }
-  }
-
-  let nextWearHistoryClearedAt: number | undefined = undefined;
-  if (current.wearHistoryClearedAt !== undefined) {
-    if (
-      sent.wearHistoryClearedAt === undefined ||
-      current.wearHistoryClearedAt > sent.wearHistoryClearedAt
-    ) {
-      nextWearHistoryClearedAt = current.wearHistoryClearedAt;
-    }
-  }
+  const nextWearHistoryClearedAt = pruneTimestampValue(
+    current.wearHistoryClearedAt,
+    sent.wearHistoryClearedAt
+  );
+  const nextWearHistoryRestoredAt = pruneTimestampValue(
+    current.wearHistoryRestoredAt,
+    sent.wearHistoryRestoredAt
+  );
 
   let nextCustomClosetDataClearedAt: number | undefined = undefined;
   if (current.clearCustomClosetData || current.customClosetDataClearedAt !== undefined) {
@@ -60,6 +68,9 @@ export function pruneCompletedTombstones(
     deletedWearMap: nextDeletedWearMap,
     wearHistoryClearedAt: nextWearHistoryClearedAt,
     deletedWifeNgMap: nextDeletedWifeNgMap,
+    ...(Object.keys(nextRestoredWearMap).length > 0 ? { restoredWearMap: nextRestoredWearMap } : {}),
+    ...(nextWearHistoryRestoredAt !== undefined ? { wearHistoryRestoredAt: nextWearHistoryRestoredAt } : {}),
+    ...(Object.keys(nextRestoredWifeNgMap).length > 0 ? { restoredWifeNgMap: nextRestoredWifeNgMap } : {}),
     clearCustomClosetData: nextClearCustomClosetData,
     customClosetDataClearedAt: nextCustomClosetDataClearedAt,
   };
@@ -72,6 +83,9 @@ export function hasRemainingTombstones(tombstones: SyncTombstones): boolean {
   if (tombstones.deletedWearMap && Object.keys(tombstones.deletedWearMap).length > 0) return true;
   if (tombstones.deletedWifeNgMap && Object.keys(tombstones.deletedWifeNgMap).length > 0) return true;
   if (tombstones.wearHistoryClearedAt !== undefined) return true;
+  if (tombstones.restoredWearMap && Object.keys(tombstones.restoredWearMap).length > 0) return true;
+  if (tombstones.restoredWifeNgMap && Object.keys(tombstones.restoredWifeNgMap).length > 0) return true;
+  if (tombstones.wearHistoryRestoredAt !== undefined) return true;
   if (Boolean(tombstones.clearCustomClosetData) || tombstones.customClosetDataClearedAt !== undefined) return true;
   return false;
 }
@@ -168,7 +182,11 @@ export function reconcileSyncResponse({
     if (
       serverTombstones &&
       serverTombstones.wearHistoryClearedAt !== undefined &&
-      ts <= serverTombstones.wearHistoryClearedAt
+      ts <= serverTombstones.wearHistoryClearedAt &&
+      !(
+        remainingTombstones.wearHistoryRestoredAt !== undefined &&
+        remainingTombstones.wearHistoryRestoredAt >= serverTombstones.wearHistoryClearedAt
+      )
     ) {
       return false;
     }
@@ -183,7 +201,12 @@ export function reconcileSyncResponse({
       serverTombstones &&
       serverTombstones.deletedWearMap &&
       serverTombstones.deletedWearMap[rec.id] !== undefined &&
-      ts <= serverTombstones.deletedWearMap[rec.id]
+      ts <= serverTombstones.deletedWearMap[rec.id] &&
+      !(
+        remainingTombstones.restoredWearMap &&
+        remainingTombstones.restoredWearMap[rec.id] !== undefined &&
+        remainingTombstones.restoredWearMap[rec.id] >= serverTombstones.deletedWearMap[rec.id]
+      )
     ) {
       return false;
     }
@@ -209,10 +232,16 @@ export function reconcileSyncResponse({
   );
 
   // 2. WifeNgPairs の調停 (LWW + Tombstone フィルタ)
+  const parseCreatedAtTs = (createdAt?: string): number => {
+    if (!createdAt) return 0;
+    const rawTs = new Date(createdAt).getTime();
+    return Number.isFinite(rawTs) ? rawTs : 0;
+  };
+
   const isWifeNgValid = (pair: WifeNgPair): boolean => {
     if (!pair || !pair.shirtId || !pair.pantsId) return false;
     const key = `${pair.shirtId}_${pair.pantsId}`;
-    const createdTs = pair.createdAt ? new Date(pair.createdAt).getTime() : 0;
+    const createdTs = parseCreatedAtTs(pair.createdAt);
     if (
       remainingTombstones.deletedWifeNgMap &&
       remainingTombstones.deletedWifeNgMap[key] !== undefined &&
@@ -224,7 +253,12 @@ export function reconcileSyncResponse({
       serverTombstones &&
       serverTombstones.deletedWifeNgMap &&
       serverTombstones.deletedWifeNgMap[key] !== undefined &&
-      createdTs <= serverTombstones.deletedWifeNgMap[key]
+      createdTs <= serverTombstones.deletedWifeNgMap[key] &&
+      !(
+        remainingTombstones.restoredWifeNgMap &&
+        remainingTombstones.restoredWifeNgMap[key] !== undefined &&
+        remainingTombstones.restoredWifeNgMap[key] >= serverTombstones.deletedWifeNgMap[key]
+      )
     ) {
       return false;
     }
@@ -241,8 +275,8 @@ export function reconcileSyncResponse({
     if (!isWifeNgValid(pair)) continue;
     const key = `${pair.shirtId}_${pair.pantsId}`;
     const existing = ngMap.get(key);
-    const pairTs = pair.createdAt ? new Date(pair.createdAt).getTime() : 0;
-    const existingTs = existing && existing.createdAt ? new Date(existing.createdAt).getTime() : 0;
+    const pairTs = parseCreatedAtTs(pair.createdAt);
+    const existingTs = existing ? parseCreatedAtTs(existing.createdAt) : 0;
     if (!existing || pairTs >= existingTs) {
       ngMap.set(key, pair);
     }
